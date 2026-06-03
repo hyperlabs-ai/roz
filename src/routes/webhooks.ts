@@ -1,0 +1,61 @@
+// Webhooks entrantes (afuera -> roz). Se verifica la firma sobre el cuerpo CRUDO antes
+// de parsear. Cada webhook traduce a un OutboxEvent y responde 200 rápido: el trabajo
+// pesado ocurre async: lo drena el cron del outbox (/v1/internal/drain).
+import { Hono } from 'hono';
+import type { RozContext } from '../types/hono.js';
+import { config } from '../config.js';
+import { verifyGithub, verifyLinear } from '../utils/webhooks.js';
+import { emit } from '../events/outbox.js';
+
+export const webhookRoutes = new Hono<RozContext>();
+
+// --- Linear: cambios de estado de issues (fuente de verdad del trabajo). ---
+webhookRoutes.post('/linear', async (c) => {
+  const raw = await c.req.text();
+  const sig = c.req.header('linear-signature');
+  if (!verifyLinear(raw, sig ?? null, config.linear.webhookSecret)) {
+    return c.json({ error: 'bad signature' }, 401);
+  }
+  const evt = JSON.parse(raw) as { type?: string; action?: string; data?: any };
+
+  // Issue completado -> documentar/actualizar brain + avisar a quien propuso.
+  if (evt.type === 'Issue' && evt.data?.state?.type === 'completed') {
+    await emit(
+      'work_item.done',
+      { linearId: evt.data.id, identifier: evt.data.identifier },
+      { idempotencyKey: `done:${evt.data.id}` },
+    );
+  } else if (evt.type === 'Issue') {
+    await emit('work_item.state_changed', { linearId: evt.data?.id, action: evt.action });
+  }
+  return c.json({ ok: true });
+});
+
+// --- GitHub: push/commits (fuente de verdad del código). ---
+webhookRoutes.post('/github', async (c) => {
+  const raw = await c.req.text();
+  const sig = c.req.header('x-hub-signature-256');
+  if (!verifyGithub(raw, sig ?? null, config.github.webhookSecret)) {
+    return c.json({ error: 'bad signature' }, 401);
+  }
+  const event = c.req.header('x-github-event');
+  const payload = JSON.parse(raw) as { repository?: { full_name?: string }; commits?: any[] };
+
+  if (event === 'push' && payload.repository?.full_name) {
+    const repo = payload.repository.full_name;
+    for (const commit of payload.commits ?? []) {
+      await emit(
+        'commit.received',
+        { repo, sha: commit.id },
+        { idempotencyKey: `commit:${repo}:${commit.id}` },
+      );
+    }
+  }
+  return c.json({ ok: true });
+});
+
+// --- Twilio: callbacks de estado de mensajes WhatsApp (opcional). ---
+webhookRoutes.post('/twilio', async (c) => {
+  // TODO fase 3: verificar X-Twilio-Signature y actualizar notification.status.
+  return c.json({ ok: true });
+});
