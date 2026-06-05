@@ -18,15 +18,23 @@ webhookRoutes.post('/linear', async (c) => {
   }
   const evt = JSON.parse(raw) as { type?: string; action?: string; data?: any };
 
-  // Issue completado -> documentar/actualizar brain + avisar a quien propuso.
-  if (evt.type === 'Issue' && evt.data?.state?.type === 'completed') {
-    await emit(
-      'work_item.done',
-      { linearId: evt.data.id, identifier: evt.data.identifier },
-      { idempotencyKey: `done:${evt.data.id}` },
-    );
-  } else if (evt.type === 'Issue') {
-    await emit('work_item.state_changed', { linearId: evt.data?.id, action: evt.action });
+  if (evt.type === 'Issue') {
+    if (evt.action === 'remove') {
+      await emit('linear.issue_removed', { linearId: evt.data?.id });
+    } else {
+      // create | update: espejar SIEMPRE (sin idempotency_key — cada update es legítimo;
+      // el upsert por linear_id es idempotente, así que reprocesar es seguro).
+      await emit('linear.issue_upserted', { data: evt.data });
+
+      // Completado -> disparar efectos de cierre (fase 4: documentar + avisar al proposer).
+      if (evt.data?.state?.type === 'completed') {
+        await emit(
+          'work_item.done',
+          { linearId: evt.data.id, identifier: evt.data.identifier },
+          { idempotencyKey: `done:${evt.data.id}` },
+        );
+      }
+    }
   }
   return c.json({ ok: true });
 });
@@ -51,11 +59,5 @@ webhookRoutes.post('/github', async (c) => {
       );
     }
   }
-  return c.json({ ok: true });
-});
-
-// --- Twilio: callbacks de estado de mensajes WhatsApp (opcional). ---
-webhookRoutes.post('/twilio', async (c) => {
-  // TODO fase 3: verificar X-Twilio-Signature y actualizar notification.status.
   return c.json({ ok: true });
 });

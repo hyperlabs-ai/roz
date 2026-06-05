@@ -1,88 +1,178 @@
 // Intake [fase 1]: propuesta -> evaluación de optimalidad -> (al confirmar) issue en Linear.
-// evaluateProposal NO crea nada en Linear: guarda un borrador de propuesta, recupera
-// contexto, pide a Claude un veredicto y corre el router. confirmProposal materializa.
+// evaluateProposal NO crea nada en Linear: valida estrictamente, compone una spec bien
+// documentada (según el tipo), guarda el borrador, recupera contexto, pide el veredicto de
+// Claude y rankea candidatos. confirmProposal materializa el issue (asignado + con prioridad).
 import { db } from '../db/supabase.js';
 import { complete } from '../adapters/anthropic.js';
 import { getProjectContext } from '../brain/retrieval.js';
-import { suggestAssignee } from '../router/assign.js';
-import { createIssue } from '../adapters/linear.js';
+import { rankAssignees, type AssigneeSuggestion } from '../router/assign.js';
+import { createIssue, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
 import { emit } from '../events/outbox.js';
 import { ValidationError } from '../utils/errors.js';
 
 export type ProposalKind = 'feature' | 'bug' | 'chore' | 'ticket' | 'refactor';
+export type Priority = 'urgent' | 'high' | 'medium' | 'low';
+
+/** Procedencia de la propuesta: de dónde vino (para documentarlo en Linear). */
+export interface ProposalSource {
+  channel: 'chat' | 'app';
+  app?: string; // nombre del proyecto/app que la originó
+  customer?: string; // identificador del cliente que la envió (nombre/email)
+}
 
 export interface ProposeInput {
   projectKey: string;
-  kind: ProposalKind;
-  title: string;
-  spec: string;
+  /** Opcional: en apps no hay humano que elija → roz lo infiere con Claude. */
+  kind?: ProposalKind;
+  /** Opcional: idem. roz infiere prioridad cuando no se da. */
+  priority?: Priority;
+  /** Lo que el usuario quiere o lo que falla, en sus palabras. roz documenta el resto. */
+  description: string;
+  /** Opcional: si el usuario ya lo dio, se respeta; si no, roz lo genera. */
+  title?: string;
   requester?: string;
+  /** Opcional: refs de capturas/logs/video (bugs). */
+  attachments?: string[];
+  /** Opcional: procedencia (apps de clientes). */
+  source?: ProposalSource;
 }
 
 export interface ProposalVerdict {
   proposalId: string;
-  optimality: string; // veredicto en prosa de Claude
-  suggestedAssignee: { devId: string; name: string; score: number; reason: string } | null;
-  context: { id: string; title: string }[];
+  title: string; // generado por roz si no se dio
+  kind: ProposalKind; // resuelto (dado o inferido)
+  priority: Priority; // resuelto (dado o inferido)
+  spec: string; // descripción documentada (markdown) que irá a Linear
+  optimality: string;
+  missing: string[]; // info crítica que falta — preguntar DESPUÉS, no antes
+  suggestedAssignee: AssigneeSuggestion | null;
+  candidates: AssigneeSuggestion[];
   note: string;
 }
 
-// Estrictez: roz rechaza propuestas vagas. El que propone (el chat) debe traer algo
-// concreto; no se infiere el alcance. Umbrales mínimos deliberados.
-const MIN_TITLE = 6;
-const MIN_SPEC = 30;
+const KINDS: ProposalKind[] = ['feature', 'bug', 'chore', 'ticket', 'refactor'];
+const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low'];
+
+const KIND_GUIDE: Record<ProposalKind, string> = {
+  feature: 'Secciones: ## Objetivo (el "para qué"), ## Criterio de aceptación, ## Alcance.',
+  bug: 'Secciones: ## Pasos para reproducir, ## Resultado esperado, ## Resultado actual, ## Adjuntos.',
+  refactor: 'Secciones: ## Motivación (deuda técnica), ## Alcance, ## Criterio (sin cambiar comportamiento).',
+  chore: 'Secciones: ## Descripción, ## Criterio de aceptación.',
+  ticket: 'Secciones: ## Descripción, ## Criterio de aceptación.',
+};
+
+function extractJson(s: string): any | null {
+  const a = s.indexOf('{');
+  const b = s.lastIndexOf('}');
+  if (a < 0 || b <= a) return null;
+  try {
+    return JSON.parse(s.slice(a, b + 1));
+  } catch {
+    return null;
+  }
+}
 
 export async function evaluateProposal(input: ProposeInput): Promise<ProposalVerdict> {
   const supabase = db();
 
-  // 0. Validación estricta de la entrada (no inferir lo que falta).
-  const title = (input.title ?? '').trim();
-  const spec = (input.spec ?? '').trim();
-  if (title.length < MIN_TITLE) {
+  // Único requisito de fondo: una descripción mínima. Lo demás lo redacta roz.
+  const description = (input.description ?? '').trim();
+  if (description.length < 8) {
     throw new ValidationError(
-      `Título demasiado corto (mín ${MIN_TITLE}). Pide al usuario un título concreto; no lo inventes.`,
-    );
-  }
-  if (spec.length < MIN_SPEC) {
-    throw new ValidationError(
-      `Spec demasiado vaga (mín ${MIN_SPEC} caracteres). roz no infiere el alcance: pide al ` +
-        `usuario qué se quiere, criterio de aceptación y contexto antes de proponer.`,
+      'Necesito una frase de qué se quiere o qué falla. Pídesela al usuario (no la inventes).',
     );
   }
 
-  // 1. Proyecto canónico.
+  // Proyecto canónico (selector).
   const { data: project } = await supabase
     .from('project')
     .select('id, key, name')
     .eq('key', input.projectKey)
     .single();
-  if (!project) throw new ValidationError(`Proyecto desconocido: ${input.projectKey}`);
+  if (!project) {
+    throw new ValidationError(
+      `Proyecto desconocido: ${input.projectKey}. Usa list_projects para elegir uno válido.`,
+    );
+  }
 
-  // Spec persistida con encabezado de tipo (fluye a Linear como descripción).
-  const storedSpec = `Tipo: ${input.kind}\n\n${spec}`;
+  // Contexto del brain.
+  const context = await getProjectContext(input.projectKey, description);
 
-  // 2. Contexto relevante del brain.
-  const context = await getProjectContext(input.projectKey, `${title}\n${spec}`);
+  // ¿Hay que inferir tipo/prioridad? (apps de clientes: no hay humano que elija).
+  const inferKind = !input.kind;
+  const inferPriority = !input.priority;
+  const kindGuide = input.kind
+    ? KIND_GUIDE[input.kind]
+    : 'Primero elige el "kind" más adecuado y usa SUS secciones — feature: Objetivo/Criterio de ' +
+      'aceptación/Alcance; bug: Pasos para reproducir/Resultado esperado/Resultado actual/Adjuntos; ' +
+      'refactor: Motivación/Alcance/Criterio; chore|ticket: Descripción/Criterio de aceptación.';
 
-  // 3. Veredicto de optimalidad (Claude). El contexto va como bloque cacheado.
-  const optimality = await complete({
+  // Una sola pasada de Claude: (infiere tipo/prioridad si faltan), genera título, DOCUMENTA
+  // según el tipo marcando lo asumido con «(a confirmar)», lista lo que falta y da veredicto.
+  const attachmentsBlock = input.attachments?.length
+    ? `\nAdjuntos provistos:\n${input.attachments.map((a) => `- ${a}`).join('\n')}`
+    : '';
+  const raw = await complete({
     system:
-      'Eres roz. Evalúa si una propuesta de cambio es coherente con el contexto del ' +
-      'proyecto. Responde con secciones: ¿es óptima?, ¿debe/puede hacerse?, ¿colisiona con ' +
-      'algo existente?, ¿riesgos? Sé breve y directo. Si la propuesta es ambigua, dilo ' +
-      'explícitamente y enumera qué falta definir.',
+      'Eres roz. Conviertes una propuesta CRUDA en un ticket bien documentado, con CERO ' +
+      'fricción. A partir de una descripción libre, redacta. Reglas:\n' +
+      (inferKind ? '- Decide "kind" ∈ [feature,bug,chore,ticket,refactor] según la descripción.\n' : '') +
+      (inferPriority
+        ? '- Decide "priority" ∈ [urgent,high,medium,low]: urgent solo si algo está caído/bloquea.\n'
+        : '') +
+      '- Genera un "title" corto y claro (si te dieron uno, respétalo).\n' +
+      '- Escribe "spec" en markdown con las secciones del tipo. ' +
+      kindGuide +
+      '\n- Infiere un borrador razonable a partir de la descripción; marca lo que asumes con ' +
+      '«(a confirmar)». NO inventes datos como números de versión o nombres específicos.\n' +
+      '- "missing": lista CORTA (máx 3) de info crítica que de verdad falta para que un dev ' +
+      'arranque. Vacío si está suficiente.\n' +
+      '- "verdict": 2-4 líneas: ¿es óptima/debe hacerse?, ¿colisiona?, ¿riesgos?\n' +
+      'Responde SOLO con JSON: {"kind":"","priority":"","title":"","spec":"","missing":[],"verdict":""}.',
     cachedContext: context.map((c) => `# ${c.title}\n${c.body}`).join('\n\n'),
-    user: `Propuesta para ${project.name} (tipo: ${input.kind}):\nTítulo: ${title}\nSpec:\n${spec}`,
+    user:
+      `Proyecto: ${project.name}\n` +
+      (input.kind ? `Tipo: ${input.kind}\n` : '') +
+      (input.priority ? `Prioridad: ${input.priority}\n` : '') +
+      (input.title ? `Título sugerido: ${input.title}\n` : '') +
+      `Descripción del usuario:\n${description}${attachmentsBlock}`,
+    maxTokens: 1500,
   });
 
-  // 4. Persistir borrador de propuesta (no es Linear todavía).
+  const parsed = extractJson(raw) ?? {};
+  const kind: ProposalKind =
+    input.kind ?? (KINDS.includes(parsed.kind) ? parsed.kind : 'ticket');
+  const priority: Priority =
+    input.priority ?? (PRIORITIES.includes(parsed.priority) ? parsed.priority : 'medium');
+  const title: string = (parsed.title || input.title || description.slice(0, 60)).trim();
+  const body: string = (parsed.spec || description).trim();
+  const missing: string[] = Array.isArray(parsed.missing) ? parsed.missing.slice(0, 3) : [];
+  const optimality: string = (parsed.verdict || '').trim();
+
+  // Bloque de procedencia (apps de clientes) — queda documentado en la descripción de Linear.
+  const provenance =
+    input.source?.channel === 'app'
+      ? `> 📥 **Solicitud externa** recibida vía ${input.source.app ?? 'app de cliente'}` +
+        (input.source.customer ? ` · Cliente: ${input.source.customer}` : '') +
+        `\n> Documentada, priorizada y enrutada automáticamente por roz.\n\n`
+      : '';
+
+  // Spec final documentada (procedencia + encabezado + cuerpo + adjuntos).
+  const header = `**Tipo:** ${kind}  ·  **Prioridad:** ${priority}`;
+  const attachMd = input.attachments?.length
+    ? `\n\n## Adjuntos\n${input.attachments.map((a) => `- ${a}`).join('\n')}`
+    : '';
+  const spec = `${provenance}${header}\n\n${body}${attachMd}`;
+
+  // Persistir borrador.
   const { data: proposal, error } = await supabase
     .from('proposal')
     .insert({
       project_id: project.id,
       title,
-      spec: storedSpec,
-      requester: input.requester ?? null,
+      spec,
+      priority,
+      requester: input.requester ?? input.source?.customer ?? null,
       optimality,
       status: 'evaluated',
     })
@@ -90,19 +180,23 @@ export async function evaluateProposal(input: ProposeInput): Promise<ProposalVer
     .single();
   if (error) throw error;
 
-  // 5. Sugerencia de asignado (router). Es SOLO sugerencia: la asignación se decide
-  // explícitamente con confirm_proposal(proposalId, assigneeDevId).
-  const suggestedAssignee = await suggestAssignee(project.id, `${title}\n${spec}`);
+  // Candidatos (varios) — recomendación, no decisión.
+  const candidates = await rankAssignees(project.id, `${title}\n${spec}`, 3);
 
   return {
     proposalId: proposal.id,
+    title,
+    kind,
+    priority,
+    spec,
     optimality,
-    suggestedAssignee,
-    context: context.map((c) => ({ id: c.id, title: c.title })),
+    missing,
+    suggestedAssignee: candidates[0] ?? null,
+    candidates,
     note:
-      'suggestedAssignee es SOLO una sugerencia del router (skill×disponibilidad÷carga). ' +
-      'NADA se asigna hasta llamar confirm_proposal con un assigneeDevId explícito elegido ' +
-      'por el usuario.',
+      'roz ya documentó la propuesta (título + spec). Muestra el borrador al usuario para ' +
+      'confirmar/editar. Si "missing" trae algo, pregúntalo AHORA (breve). "candidates" son ' +
+      'sugerencias ordenadas; nada se asigna hasta confirm_proposal con un dev elegido.',
   };
 }
 
@@ -125,7 +219,6 @@ export async function confirmProposal(
     .single();
   if (!proposal) throw new ValidationError(`Propuesta no encontrada: ${proposalId}`);
 
-  // Guarda: no re-promover una propuesta ya convertida en issue.
   if (proposal.status === 'promoted') {
     throw new ValidationError(
       `La propuesta ${proposalId} ya fue promovida a Linear; no se crea un issue duplicado.`,
@@ -133,7 +226,7 @@ export async function confirmProposal(
   }
   if (!proposal.project?.linear_team_id) {
     throw new ValidationError(
-      `El proyecto ${proposal.project?.key} no tiene linear_team_id configurado; no se puede crear el issue.`,
+      `El proyecto ${proposal.project?.key} no tiene linear_team_id configurado; corre sync_projects o configúralo.`,
     );
   }
 
@@ -145,38 +238,47 @@ export async function confirmProposal(
   if (!dev) throw new ValidationError(`Dev no encontrado: ${assigneeDevId}`);
   if (dev.active === false) throw new ValidationError(`El dev ${assigneeDevId} está inactivo.`);
 
-  // Crear el issue en Linear, ya asignado.
+  // Crear el issue en Linear: asignado + prioridad nativa + estado inicial "Todo".
+  const stateId = await resolveInitialStateId(proposal.project.linear_team_id);
   const issue = await createIssue({
     teamId: proposal.project.linear_team_id,
     title: proposal.title,
     description: proposal.spec,
     assigneeId: dev.linear_user_id ?? undefined,
+    priority: priorityToLinear(proposal.priority),
+    stateId: stateId ?? undefined,
   });
 
-  // Espejo local del WorkItem.
+  // Upsert por linear_id: si el webhook de "create" de Linear llegó primero (carrera), no
+  // duplica ni falla — actualiza el espejo que el webhook ya creó.
   const { data: workItem, error } = await supabase
     .from('work_item')
-    .insert({
-      linear_id: issue.id,
-      identifier: issue.identifier,
-      project_id: proposal.project.id,
-      title: proposal.title,
-      spec: proposal.spec,
-      state: 'backlog',
-      requester: proposal.requester,
-      assignee_dev_id: dev.id,
-    })
+    .upsert(
+      {
+        linear_id: issue.id,
+        identifier: issue.identifier,
+        project_id: proposal.project.id,
+        title: proposal.title,
+        spec: proposal.spec,
+        state: 'unstarted',
+        priority: proposal.priority,
+        requester: proposal.requester,
+        assignee_dev_id: dev.id,
+        url: issue.url,
+      },
+      { onConflict: 'linear_id' },
+    )
     .select('id')
     .single();
   if (error) throw error;
 
   await supabase.from('proposal').update({ status: 'promoted' }).eq('id', proposalId);
 
-  // Efecto async: notificar asignación.
+  // Misma clave que el espejo (sync) → quien gane la carrera notifica; el otro se deduplica.
   await emit(
     'work_item.assigned',
     { workItemId: workItem.id, devId: dev.id, identifier: issue.identifier },
-    { idempotencyKey: `assigned:${issue.id}` },
+    { idempotencyKey: `assigned:${issue.id}:${dev.id}` },
   );
 
   return { workItemId: workItem.id, identifier: issue.identifier, url: issue.url };

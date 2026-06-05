@@ -24,11 +24,11 @@ const raw = z
     GITHUB_TOKEN: z.string().default(''),
     GITHUB_WEBHOOK_SECRET: z.string().default(''),
 
-    TWILIO_ACCOUNT_SID: z.string().default(''),
-    TWILIO_AUTH_TOKEN: z.string().default(''),
-    TWILIO_WHATSAPP_FROM: z.string().default(''),
+    RESEND_API_KEY: z.string().default(''),
+    RESEND_FROM: z.string().default('roz <onboarding@resend.dev>'),
 
     ROZ_MCP_TOKEN: z.string().default(''),
+    ROZ_INGEST_TOKEN: z.string().default(''),
   })
   .parse(process.env);
 
@@ -46,12 +46,9 @@ export const config = {
   },
   linear: { apiKey: raw.LINEAR_API_KEY, webhookSecret: raw.LINEAR_WEBHOOK_SECRET },
   github: { token: raw.GITHUB_TOKEN, webhookSecret: raw.GITHUB_WEBHOOK_SECRET },
-  twilio: {
-    accountSid: raw.TWILIO_ACCOUNT_SID,
-    authToken: raw.TWILIO_AUTH_TOKEN,
-    whatsappFrom: raw.TWILIO_WHATSAPP_FROM,
-  },
+  resend: { apiKey: raw.RESEND_API_KEY, from: raw.RESEND_FROM },
   mcp: { token: raw.ROZ_MCP_TOKEN },
+  ingest: { token: raw.ROZ_INGEST_TOKEN },
 } as const;
 
 export type Config = typeof config;

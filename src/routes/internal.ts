@@ -28,7 +28,7 @@ internalRoutes.get('/brain-sweep', async (c) => {
   return c.json({ ok: true, swept: 0 });
 });
 
-// Digest semanal por WhatsApp/email.
+// Digest semanal por email.
 internalRoutes.get('/digest', async (c) => {
   if (!isVercelCron(c)) return c.json({ error: 'forbidden' }, 403);
   // TODO fase 3.

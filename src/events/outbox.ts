@@ -4,12 +4,15 @@
 // procesa de forma idempotente, con reintentos (backoff exponencial) y dead-letter.
 import { db } from '../db/supabase.js';
 import { notifyAssignment } from '../notify/notifications.js';
+import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
+import { reconcileCommit } from '../reconcile/commits.js';
 
 export type OutboxEventType =
   | 'work_item.created'
   | 'work_item.assigned'
-  | 'work_item.state_changed'
   | 'work_item.done'
+  | 'linear.issue_upserted'
+  | 'linear.issue_removed'
   | 'commit.received'
   | 'notification.requested';
 
@@ -139,16 +142,34 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
     case 'work_item.assigned':
       await notifyAssignment(payload as { workItemId?: string; devId?: string; identifier?: string });
       return;
+
+    // Espejo bidireccional: issue creado/actualizado en Linear (de cualquier origen).
+    case 'linear.issue_upserted': {
+      const r = await syncIssueFromWebhook(payload.data);
+      // Si Linear asignó a un dev conocido, notifícalo (misma vía que el chat). La clave
+      // de idempotencia es compartida con confirm_proposal → nunca hay doble aviso.
+      if (r.assigneeToNotify) {
+        await emit('work_item.assigned', r.assigneeToNotify, {
+          idempotencyKey: `assigned:${(payload.data as any)?.id}:${r.assigneeToNotify.devId}`,
+        });
+      }
+      return;
+    }
+    case 'linear.issue_removed':
+      await removeMirror(String(payload.linearId ?? ''));
+      return;
+
     case 'work_item.done':
       // fase 4: actualizar brain + notificar a quien propuso
       return;
     case 'commit.received':
-      // fase 5: reconciliación de commits
+      await reconcileCommit({
+        repo: String(payload.repo ?? ''),
+        sha: String(payload.sha ?? ''),
+      });
       return;
     case 'notification.requested':
       // fase 3: enviar la notificación encolada
-      return;
-    case 'work_item.state_changed':
       return;
     default:
       return;

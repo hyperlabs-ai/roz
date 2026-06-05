@@ -4,6 +4,7 @@ import { loggerMiddleware } from './middleware/logger.js';
 import { AppError } from './utils/errors.js';
 import { mcpRoutes } from './routes/mcp.js';
 import { webhookRoutes } from './routes/webhooks.js';
+import { intakeRoutes } from './routes/intake.js';
 import { internalRoutes } from './routes/internal.js';
 
 const app = new Hono<RozContext>();
@@ -19,6 +20,8 @@ app.use('*', loggerMiddleware);
 app.route('/mcp', mcpRoutes);
 // Afuera -> roz.
 app.route('/webhooks', webhookRoutes);
+// Ingesta automática desde apps de clientes (sin humano en el loop).
+app.route('/v1/intake', intakeRoutes);
 // Drenado de la cola (outbox) y barridas — disparado por Vercel Cron.
 app.route('/v1/internal', internalRoutes);
 

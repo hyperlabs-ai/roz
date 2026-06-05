@@ -13,7 +13,12 @@ import {
   setAvailability,
   setDevSkills,
   suggestAssignee,
+  syncLinearMembers,
+  listProjects,
+  syncProjects,
 } from '../router/assign.js';
+import { intakeForm } from '../intake/form.js';
+import { listUsers } from '../adapters/linear.js';
 import { getProjectContext } from '../brain/retrieval.js';
 
 export interface McpTool {
@@ -26,22 +31,35 @@ export interface McpTool {
 export const tools: McpTool[] = [
   // ---------- Intake ----------
   {
+    name: 'get_intake_form',
+    description:
+      'PRIMER paso para proponer un cambio. Devuelve el guion de preguntas (con opciones de ' +
+      'opción múltiple) que debes hacerle al usuario, según el tipo. Llámalo sin kind para las ' +
+      'preguntas comunes y de nuevo con {kind} cuando el usuario elija el tipo. Conduce la ' +
+      'entrevista con esas preguntas y luego llama propose_change.',
+    schema: z.object({
+      kind: z.enum(['feature', 'bug', 'chore', 'ticket', 'refactor']).optional(),
+    }),
+    handler: (args) => Promise.resolve(intakeForm(args.kind)),
+  },
+  {
     name: 'propose_change',
     description:
-      'Envía una propuesta de cambio/feature/bug/ticket para un proyecto. roz la evalúa ' +
-      'contra el contexto del proyecto y SUGIERE (no asigna) un dev. IMPORTANTE: no inventes ' +
-      'el alcance — si el usuario no dio título y spec concretos (qué se quiere, criterio de ' +
-      'aceptación, contexto), PÍDESELOS antes de llamar esta tool. roz rechaza propuestas vagas.',
+      'Crea una propuesta con CERO fricción. Solo necesitas 4 cosas: projectKey (de ' +
+      'list_projects), kind, priority y una description libre de lo que el usuario quiere/falla. ' +
+      'roz GENERA el título y DOCUMENTA el detalle (estructura según el tipo) — NO le pidas al ' +
+      'usuario el título ni cada campo. Devuelve un borrador + "missing" (lo crítico que falte) y ' +
+      'recomienda varios devs. Nada se asigna aquí.',
     schema: z.object({
-      projectKey: z.string().describe('Clave del proyecto, p.ej. "ROZ"'),
-      kind: z
-        .enum(['feature', 'bug', 'chore', 'ticket', 'refactor'])
-        .describe('Tipo de trabajo. Explícito; no lo infieras si el usuario no lo dijo.'),
-      title: z.string().describe('Título concreto (mín. 6 caracteres)'),
-      spec: z
+      projectKey: z.string().describe('Clave del proyecto. Obtenla de list_projects; no la inventes.'),
+      kind: z.enum(['feature', 'bug', 'chore', 'ticket', 'refactor']).describe('Tipo (elección rápida del usuario).'),
+      priority: z.enum(['urgent', 'high', 'medium', 'low']).describe('Prioridad (elección rápida; no la infieras).'),
+      description: z
         .string()
-        .describe('Spec concreta: qué se quiere, criterio de aceptación, contexto (mín. 30 caracteres)'),
-      requester: z.string().optional().describe('Quién origina la propuesta (para notificar al cerrar)'),
+        .describe('Lo que el usuario quiere o lo que falla, en sus palabras. Una o dos frases bastan.'),
+      title: z.string().optional().describe('Opcional. Si el usuario no lo dio, OMÍTELO: roz lo genera.'),
+      attachments: z.array(z.string()).optional().describe('Opcional (bugs): URLs/refs de capturas, logs o video.'),
+      requester: z.string().optional().describe('Quién origina la propuesta (para notificar al cerrar).'),
     }),
     handler: (args) => evaluateProposal(args),
   },
@@ -56,6 +74,22 @@ export const tools: McpTool[] = [
       assigneeDevId: z.string().describe('id del dev elegido por el usuario'),
     }),
     handler: (args) => confirmProposal(args.proposalId, args.assigneeDevId),
+  },
+  {
+    name: 'list_projects',
+    description:
+      'Lista los proyectos disponibles (selector). Úsalo para que el usuario ELIJA el proyecto; ' +
+      'no aceptes una clave escrita a mano. `linked:false` = aún sin team de Linear configurado.',
+    schema: z.object({}),
+    handler: () => listProjects(),
+  },
+  {
+    name: 'sync_projects',
+    description:
+      'Importa los equipos del workspace de Linear como proyectos (upsert por clave). Corre esto ' +
+      'si falta un proyecto en list_projects.',
+    schema: z.object({}),
+    handler: () => syncProjects(),
   },
   {
     name: 'suggest_assignee',
@@ -77,15 +111,32 @@ export const tools: McpTool[] = [
     handler: () => listDevs(),
   },
   {
+    name: 'list_linear_members',
+    description:
+      'Lista los miembros reales del workspace de Linear (id, nombre, email). Útil para vincular ' +
+      'un dev de roz con la persona correcta antes de asignar.',
+    schema: z.object({}),
+    handler: () => listUsers(),
+  },
+  {
+    name: 'sync_linear_members',
+    description:
+      'Importa/vincula los miembros del workspace de Linear como devs de roz: vincula por ' +
+      'linear_user_id o email y crea los que falten. Así el nombre del dev SÍ apunta a la ' +
+      'persona real de Linear y las asignaciones funcionan automáticamente.',
+    schema: z.object({}),
+    handler: () => syncLinearMembers(),
+  },
+  {
     name: 'upsert_dev',
     description:
       'Crea o actualiza un dev. Para actualizar, pasa su id. Mapea linearUserId para que los ' +
-      'issues queden asignados a la persona real y whatsapp (E.164, p.ej. +52...) para notificar.',
+      'issues queden asignados a la persona real y email para notificar (Resend).',
     schema: z.object({
       id: z.string().optional().describe('id del dev para actualizar; omitir para crear'),
       name: z.string(),
-      email: z.string().optional(),
-      whatsapp: z.string().optional().describe('E.164, p.ej. +526441976008'),
+      email: z.string().optional().describe('correo del dev — canal de notificación actual'),
+      whatsapp: z.string().optional().describe('E.164 (guardado para uso futuro; aún no se notifica por aquí)'),
       linearUserId: z.string().optional(),
       githubLogin: z.string().optional(),
       availability: z.number().min(0).max(1).optional().describe('0 saturado .. 1 libre'),
