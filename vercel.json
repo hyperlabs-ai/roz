@@ -6,7 +6,6 @@
   },
   "crons": [
     { "path": "/v1/internal/drain", "schedule": "* * * * *" },
-    { "path": "/v1/internal/brain-sweep", "schedule": "0 9 * * *" },
-    { "path": "/v1/internal/digest", "schedule": "0 14 * * 1" }
+    { "path": "/v1/internal/brain-sweep", "schedule": "0 9 * * *" }
   ]
 }

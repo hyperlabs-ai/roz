@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import type { RozContext } from '../types/hono.js';
 import { config } from '../config.js';
 import { drainOutbox } from '../events/outbox.js';
+import { brainSweep } from '../brain/sweep.js';
 
 export const internalRoutes = new Hono<RozContext>();
 
@@ -21,16 +22,18 @@ internalRoutes.get('/drain', async (c) => {
   return c.json({ ok: true, ...result });
 });
 
-// Barrida diaria de consistencia del brain (reindex pendientes, detectar contradicciones).
+// Barrida diaria de consistencia del brain: rellena embeddings faltantes (skills/átomos).
 internalRoutes.get('/brain-sweep', async (c) => {
   if (!isVercelCron(c)) return c.json({ error: 'forbidden' }, 403);
-  // TODO fase 4.
-  return c.json({ ok: true, swept: 0 });
+  const result = await brainSweep();
+  c.get('logger')?.info(result, 'brain swept');
+  return c.json({ ok: true, ...result });
 });
 
-// Digest semanal por email.
+// Digest semanal por email — aún no implementado (no hay modelo de destinatarios). El cron
+// NO está agendado en vercel.json para no ejecutar un no-op; el endpoint queda para correrlo
+// a mano cuando se defina el alcance.
 internalRoutes.get('/digest', async (c) => {
   if (!isVercelCron(c)) return c.json({ error: 'forbidden' }, 403);
-  // TODO fase 3.
-  return c.json({ ok: true });
+  return c.json({ ok: true, implemented: false });
 });

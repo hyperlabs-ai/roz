@@ -2,7 +2,7 @@
 
 Capa de **contexto, enrutamiento y notificación** alrededor del trabajo de desarrollo. **No es
 un gestor de tareas** — esa es Linear. roz: gestiona el *second brain*, enruta propuestas al dev
-correcto y notifica por WhatsApp.
+correcto y notifica por **email** (Resend).
 
 La ingesta es **conversacional**: el Claude conversacional redacta una propuesta y la envía a roz
 **vía MCP**; roz la evalúa contra el contexto del proyecto, sugiere asignado, y —tras la
@@ -15,7 +15,7 @@ Arquitectura completa: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 **TypeScript + Hono** sobre **Vercel serverless** (mismo patrón que `hyperflow-core`) ·
 **Supabase Postgres + pgvector** · cola async = **outbox en Postgres drenado por Vercel Cron**
-(sin servicio externo) · **Claude** (razonamiento) · **OpenAI** (embeddings) · **Linear / GitHub / Twilio**.
+(sin servicio externo) · **Claude** (razonamiento) · **OpenAI** (embeddings) · **Linear / GitHub / Resend** (email).
 
 > Versión anterior (Python/FastAPI/Railway): `../roz-legacy-api`. Frontend React: `../roz-legacy`.
 
@@ -32,7 +32,13 @@ outbox; puedes drenarlos manualmente con `GET /v1/internal/drain` (en dev no exi
 
 ## Migración
 
-Aplica `migrations/0001_init.sql` en tu proyecto Supabase (SQL editor o `supabase db push`).
+Aplica `migrations/0001_roz_schema.sql` y luego `migrations/0002_project_links.sql` en tu
+proyecto Supabase (SQL editor o `supabase db push`). El schema vive aislado en `roz`; asegúrate
+de que `roz` esté en los *exposed schemas* de la API de Supabase (Settings → API).
+
+Después del primer despliegue, siembra los datos base desde el MCP: `sync_projects` (importa los
+Linear Projects), `sync_linear_members` (vincula devs con Linear) y corre
+`npx tsx scripts/backfill-embeddings.ts` para generar los embeddings de skills.
 
 ## Superficie HTTP
 
@@ -40,13 +46,15 @@ Aplica `migrations/0001_init.sql` en tu proyecto Supabase (SQL editor o `supabas
 |---|---|---|
 | `GET /health` | — | healthcheck |
 | `POST /mcp` | Claude conversacional (bearer) | tools: `propose_change`, `confirm_proposal`, `list_devs`, `get_project_context` |
-| `POST /webhooks/linear` | Linear | cambios de estado de issues |
-| `POST /webhooks/github` | GitHub | push/commits |
-| `POST /webhooks/twilio` | Twilio | estado de mensajes WhatsApp |
+| `POST /webhooks/linear` | Linear | cambios de estado de issues (espejo + cierre) |
+| `POST /webhooks/github` | GitHub | push/commits (reconciliación) |
+| `POST /v1/intake` | Apps de clientes (bearer) | ingesta auto-documentada y auto-asignada |
 | `GET /v1/internal/drain` | Vercel Cron (cada min) | drena el outbox (idempotente, con reintentos) |
-| `GET /v1/internal/*` | Vercel Cron | barridas/digest |
+| `GET /v1/internal/brain-sweep` | Vercel Cron (diario) | rellena embeddings faltantes |
 
 ## Estado
 
-Fase 0 (scaffold) listo: estructura, MCP, outbox+drain (cron), webhooks, migración. Lógica de negocio
-de cada fase marcada con `TODO fase N` (ver tabla de fases en `ARCHITECTURE.md`).
+Fases 1–5 implementadas: intake (MCP + apps), router por skill, notificación por email,
+second brain (documentación al cierre + retrieval híbrido + barrida de embeddings) y
+reconciliación de commits. El digest semanal queda pendiente (sin modelo de destinatarios).
+Ver `ARCHITECTURE.md` para el detalle por fase.

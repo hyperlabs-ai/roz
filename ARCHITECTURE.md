@@ -7,12 +7,12 @@ cosas y solo tres:
 1. **Gestionar contexto** (el *second brain*): Claude *lee* contexto del proyecto vía MCP;
    roz *escribe* contexto (casi siempre al completarse el trabajo).
 2. **Enrutar**: decide a qué dev se asigna una propuesta (skill + carga).
-3. **Notificar**: WhatsApp / email.
+3. **Notificar**: email (Resend).
 
 El **Claude conversacional** redacta la propuesta (usando contexto del brain si lo necesita) y la
 envía a roz **vía MCP**; roz la evalúa contra el contexto del proyecto, sugiere asignado, y —tras
 la confirmación del humano en el chat— crea el issue en Linear (ya asignado) y notifica por
-WhatsApp. De ahí en adelante el trabajo vive en Linear. Lo posterior (al completarse): documentar
+email. De ahí en adelante el trabajo vive en Linear. Lo posterior (al completarse): documentar
 / actualizar contexto, reconciliar commits de GitHub y avisar a quien propuso. La pieza más
 difícil — y la razón de varias decisiones de diseño — es **no duplicar**: ni tickets, ni
 documentación, ni conocimiento.
@@ -37,7 +37,7 @@ Cuatro patrones se repiten en TODOS los dominios de roz:
    - *Adentro* (Claude/humanos → roz): roz **expone un servidor MCP** (Streamable HTTP). Así se
      "implementa un feature desde Claude": el chat llama herramientas de roz.
    - *Afuera* (roz → herramientas): roz consume **APIs/webhooks directos** de Linear, GitHub,
-     Twilio (WhatsApp) y OpenAI/Anthropic.
+     Resend (email) y OpenAI/Anthropic.
 
 ---
 
@@ -53,7 +53,7 @@ Cuatro patrones se repiten en TODOS los dominios de roz:
 | Embeddings | **OpenAI** `text-embedding-3-small` (1536 dims) — vía API |
 | Cola async | **Outbox en Postgres drenado por Vercel Cron** — sin servicio externo |
 | Cara interactiva | **Servidor MCP** sobre HTTP (JSON-RPC stateless propio) |
-| Integraciones | **Linear** (verdad del trabajo), **GitHub** (verdad del código), **WhatsApp/Twilio** |
+| Integraciones | **Linear** (verdad del trabajo), **GitHub** (verdad del código), **Resend** (email) |
 
 > **No hay worker persistente.** En serverless no existe un proceso de larga vida (adiós
 > procrastinate). El rol del worker lo cumple el **outbox en Postgres + Vercel Cron**: cada
@@ -100,16 +100,17 @@ roz/
     utils/              # errores, verificación de firmas de webhook
     events/
       outbox.ts         # escribir evento (emit) + drenar idempotente con reintentos (drainOutbox)
-    adapters/           # linear, github, whatsapp(twilio), anthropic, embeddings(openai)
+    adapters/           # linear, github, email(resend), anthropic, embeddings(openai)
     mcp/
       server.ts         # servidor MCP: define las tools (cara interactiva)
     intake/             # propuesta -> evaluación -> Linear     [fase 1]
     router/             # sugiere asignado por skill + carga     [fase 2]
     brain/              # second brain: átomos, embeddings, grafo, retrieval [fase 4]
     reconcile/          # dedup de commits / auto-doc            [fase 5]
-    routes/             # health, mcp, webhooks (linear/github/twilio), queue, internal
+    routes/             # health, mcp, webhooks (linear/github), intake, internal
   migrations/
-    0001_init.sql       # schema completo (pgvector, outbox, idempotencia)
+    0001_roz_schema.sql # schema completo (pgvector, outbox, idempotencia)
+    0002_project_links.sql # alinea project (linear_project_id, hyperops_project_id, active)
 ```
 
 ---
@@ -129,11 +130,11 @@ roz/
                                                   Vercel Cron     │ cada minuto
                                                  ┌───────────────▼─────────────────┐
                                                  │ /v1/internal/drain (outbox)     │
-                                                 │  · WhatsApp al dev asignado     │
+                                                 │  · email al dev asignado        │
                                                  └─────────────────────────────────┘
 
 Webhooks entrantes:
-  Linear   → issue pasa a Done  → documenta/actualiza brain + WhatsApp a quien propuso
+  Linear   → issue pasa a Done  → documenta/actualiza brain + email a quien propuso
   GitHub   → push/commit        → ¿apunta a un issue? si no, ¿es trabajo huérfano sustantivo?
                                   → enlaza/dedup contra Linear + brain
 ```
@@ -156,15 +157,18 @@ roz tiene contexto de todos los devs: skills (con embedding de perfil), disponib
 **propone** y un humano confirma (humano-en-el-loop al inicio; auto tras calibrar).
 
 ### 3. Notificaciones (vía outbox → drain)
-Adapter de **WhatsApp (Twilio)** con plantillas pre-aprobadas por Meta (asignación, cambio de
-estado, nudge, digest). Cada notificación es un efecto idempotente disparado por el drain.
+Adapter de **email (Resend)** con plantillas HTML branded (asignación y cierre). Cada
+notificación es un efecto idempotente disparado por el drain; reclama una llave por (issue, dev)
+para no enviar duplicados aunque el evento se reintente. El campo `whatsapp` del dev queda
+guardado para un canal futuro, pero hoy no se notifica por ahí.
 
 ### 4. Second brain (al completarse)
-Disparado por `work_item.done` (webhook de Linear). roz junta el **delta** (spec + diff del PR +
-descripción), pide a Claude **extracción + reconciliación**: crea átomos nuevos, **supersede** los
-obsoletos, busca por similitud antes de crear para no duplicar. Análisis de impacto cross-project
-vía el grafo (`AtomEdge`); reindexa embeddings; procedencia ligada al issue. **Y notifica por
-WhatsApp a quien hizo la propuesta** que su cambio quedó cerrado y documentado.
+Disparado por `work_item.done` (webhook de Linear). roz toma el **delta** del work_item (título +
+spec) y crea/actualiza un **átomo de conocimiento** con embedding y procedencia ligada al
+identifier; si ya había un átomo para ese issue con otro contenido, lo marca **superseded** en vez
+de duplicar. Reindexación de embeddings faltantes vía la barrida diaria (`/v1/internal/brain-sweep`).
+**Y notifica por email a quien hizo la propuesta** (si el requester es un correo) que su cambio
+quedó cerrado y documentado. *(Pendiente: extracción multi-átomo con Claude y grafo `atom_edge`.)*
 
 ### 5. Reconciliación de commits (el reto principal)
 Por cada commit (webhook de GitHub):
@@ -199,13 +203,13 @@ Todo cambio de estado escribe un `OutboxEvent` en la **misma transacción** que 
 
 ## Modelo de datos (resumen)
 
-Mismo dominio que roz-legacy, portado a SQL/pgvector (ver `migrations/0001_init.sql`):
+Mismo dominio que roz-legacy, portado a SQL/pgvector (ver `migrations/0001_roz_schema.sql`):
 
 - **dev / skill / dev_skill** — router: persona, perfil de skill (con `embedding`), nivel y carga.
 - **project / work_item** — espejo de Linear; `linear_id`/`identifier` (ROZ-123) es canónico.
 - **knowledge_atom / atom_edge** — second brain: átomo direccionable (`status`, `superseded_by`,
   `provenance[]`, `embedding`) y el grafo de relaciones (`references`/`derived_from`/`project`).
-- **notification** — saliente WhatsApp/email con estado de envío y `provider_id`.
+- **notification** — saliente email (Resend) con estado de envío y `provider_id`.
 - **outbox_event / idempotency_key** — núcleo de eventos e idempotencia.
 
 ### Recuperación híbrida
@@ -218,8 +222,10 @@ atrapa el duplicado disfrazado. A escala chica, KNN exacto basta (sin HNSW).
 ## Seguridad / superficie pública
 
 - **MCP** (`/mcp`): protegido por bearer `ROZ_MCP_TOKEN` que presenta el Claude conversacional.
+- **Intake de apps** (`/v1/intake`): bearer `ROZ_INGEST_TOKEN`, compartido entre apps (el proyecto
+  se distingue por `projectKey`). Para producción a escala conviene token por app + rate limiting.
 - **Webhooks**: firma verificada por proveedor (Linear `LINEAR_WEBHOOK_SECRET`, GitHub HMAC
-  `GITHUB_WEBHOOK_SECRET`, Twilio firma de request).
+  `GITHUB_WEBHOOK_SECRET`).
 - **Internal/cron** (`/v1/internal/*`, incluye el drain del outbox): solo invocable por Vercel
   Cron (header `x-vercel-cron`) en producción.
 - roz usa la **service role key** de Supabase: corre server-side, sin sesión de usuario.
@@ -233,6 +239,6 @@ atrapa el duplicado disfrazado. A escala chica, KNN exacto basta (sin HNSW).
 | 0 | Scaffold: Hono+Vercel, config, db, outbox+drain (cron), MCP, webhooks stub, migración. |
 | 1 | **Intake**: `propose_change` / `confirm_proposal` → Linear + notificación. |
 | 2 | **Router**: skills, carga derivada de Linear, sugerencia de asignado. |
-| 3 | **Notificaciones**: plantillas WhatsApp aprobadas + cambios de estado. |
-| 4 | **Brain**: átomos, embeddings (OpenAI), grafo, retrieval híbrido; loop de actualización. |
+| 3 | **Notificaciones**: plantillas email (Resend) de asignación y cierre, idempotentes. |
+| 4 | **Brain**: átomos con embeddings (OpenAI), retrieval híbrido, documentación al cierre + barrida. |
 | 5 | **Reconciliación**: commits huérfanos, clasificación, dedup, auto-doc. |

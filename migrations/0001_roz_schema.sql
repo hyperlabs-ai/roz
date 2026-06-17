@@ -9,17 +9,25 @@ create schema if not exists roz;
 create extension if not exists vector with schema extensions;
 
 -- ---------- Proyectos y trabajo (espejo de Linear) ----------
+-- El repo NO vive aquí: el mapeo repo→proyecto se resuelve EN VIVO contra
+-- public.github_repositories de HyperOps (ver src/projects/resolve.ts), por eso el ancla
+-- canónica es `hyperops_project_id`. `linear_project_id` ancla el lado de Linear.
 create table if not exists roz.project (
-  id              uuid primary key default gen_random_uuid(),
-  name            text not null,
-  key             text not null unique,
-  linear_team_id  text,
-  github_repo     text,
-  created_at      timestamptz not null default now(),
-  updated_at      timestamptz not null default now()
+  id                  uuid primary key default gen_random_uuid(),
+  name                text not null,
+  key                 text not null unique,
+  linear_team_id      text,
+  linear_project_id   text,
+  hyperops_project_id uuid,
+  active              boolean not null default true,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
 );
 create index if not exists idx_roz_project_linear_team on roz.project(linear_team_id);
-create index if not exists idx_roz_project_github_repo on roz.project(github_repo);
+create index if not exists idx_roz_project_hyperops on roz.project(hyperops_project_id);
+-- Un Linear Project ↔ un roz.project (parcial: permite varios proyectos sin enlazar).
+create unique index if not exists uq_roz_project_linear_project
+  on roz.project(linear_project_id) where linear_project_id is not null;
 
 -- ---------- Router de devs ----------
 create table if not exists roz.dev (

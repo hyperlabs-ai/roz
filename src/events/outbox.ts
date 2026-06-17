@@ -7,6 +7,7 @@ import { notifyAssignment } from '../notify/notifications.js';
 import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit } from '../reconcile/commits.js';
 import { upsertLinearProject } from '../projects/resolve.js';
+import { documentCompletedWork } from '../brain/document.js';
 
 export type OutboxEventType =
   | 'work_item.created'
@@ -20,6 +21,9 @@ export type OutboxEventType =
 
 const MAX_ATTEMPTS = 5;
 const BACKOFF_BASE_SEC = 60; // 1er reintento ~2min, luego 4, 8, 16... tope 1h
+// Un evento que lleva más de esto en `processing` se considera huérfano (la función
+// serverless murió a media ejecución; maxDuration son 120s). El reaper lo devuelve a `failed`.
+const STUCK_PROCESSING_SEC = 300;
 
 export interface EmitOptions {
   /** Llave de deduplicación a nivel de evento (única). */
@@ -67,6 +71,17 @@ export interface DrainResult {
  */
 export async function drainOutbox(batchSize = 20): Promise<DrainResult> {
   const supabase = db();
+
+  // Reaper: rescata eventos atascados en `processing` (proceso muerto a media ejecución) y los
+  // devuelve a `failed` para que este mismo tick (o el siguiente) los reintente. Sin esto
+  // quedarían colgados para siempre, porque el drain solo toma pending/failed.
+  const stuckBefore = new Date(Date.now() - STUCK_PROCESSING_SEC * 1000).toISOString();
+  await supabase
+    .from('outbox_event')
+    .update({ status: 'failed', next_attempt_at: new Date().toISOString() })
+    .eq('status', 'processing')
+    .lt('updated_at', stuckBefore);
+
   const { data: events, error } = await supabase
     .from('outbox_event')
     .select('*')
@@ -103,10 +118,11 @@ export async function consume(eventId: string): Promise<void> {
 async function processEvent(ev: any): Promise<boolean | null> {
   const supabase = db();
 
-  // Reclamar: pasar a `processing` solo si sigue pending/failed.
+  // Reclamar: pasar a `processing` solo si sigue pending/failed. Sella `updated_at` para que
+  // el reaper pueda medir cuánto lleva un evento atascado (no hay trigger que lo bumpee).
   const { data: claimed } = await supabase
     .from('outbox_event')
-    .update({ status: 'processing' })
+    .update({ status: 'processing', updated_at: new Date().toISOString() })
     .eq('id', ev.id)
     .in('status', ['pending', 'failed'])
     .select('id')
@@ -173,7 +189,7 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
     }
 
     case 'work_item.done':
-      // fase 4: actualizar brain + notificar a quien propuso
+      await documentCompletedWork(payload as { linearId?: string; identifier?: string });
       return;
     case 'commit.received':
       await reconcileCommit({
@@ -200,4 +216,13 @@ export async function claimOnce(key: string, scope: string): Promise<boolean> {
     throw error;
   }
   return true;
+}
+
+/**
+ * Libera una llave reclamada. Úsalo cuando el efecto idempotente FALLA después de reclamar:
+ * sin esto, el reintento ve la llave ocupada y se salta el trabajo para siempre. Llamar solo
+ * tras un fallo, antes de relanzar, y nunca después de un efecto NO idempotente ya aplicado.
+ */
+export async function releaseOnce(key: string): Promise<void> {
+  await db().from('idempotency_key').delete().eq('key', key);
 }

@@ -33,10 +33,14 @@ export async function getProjectContext(projectKey: string, query: string): Prom
     embedding = null;
   }
 
+  // pgvector espera el literal `[a,b,c]` (no un array JSON crudo) al castear el arg `vector`
+  // del RPC desde PostgREST. Pasar el array tal cual hace que el cast falle silenciosamente.
+  const pEmbedding = embedding ? `[${embedding.join(',')}]` : null;
+
   const { data, error } = await supabase.rpc('search_atoms_hybrid', {
     p_project_id: project.id,
     p_query: query,
-    p_embedding: embedding,
+    p_embedding: pEmbedding,
     p_limit: 8,
   });
 

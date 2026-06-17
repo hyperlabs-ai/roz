@@ -11,7 +11,7 @@ import { db } from '../db/supabase.js';
 import { complete } from '../adapters/anthropic.js';
 import { getCommit, referencesLinearIssue, type CommitMeta } from '../adapters/github.js';
 import { createIssue, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
-import { claimOnce } from '../events/outbox.js';
+import { claimOnce, releaseOnce } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
 
 export interface ReconcileInput {
@@ -56,13 +56,31 @@ function extractJson(s: string): any | null {
 
 export async function reconcileCommit(input: ReconcileInput): Promise<ReconcileResult> {
   const supabase = db();
+  const claimKey = `commit:${input.repo}:${input.sha}`;
 
-  // Exactamente-una-vez por commit.
-  const first = await claimOnce(`commit:${input.repo}:${input.sha}`, 'commit');
+  // Exactamente-una-vez por commit. La llave se reclama ANTES del trabajo para no procesar
+  // el mismo commit dos veces; pero si algo falla ANTES de crear el issue en Linear, se
+  // LIBERA (releaseOnce) para que el reintento del outbox vuelva a intentarlo. Una vez creado
+  // el issue (efecto no idempotente), ya no se libera: el espejo posterior es best-effort.
+  const first = await claimOnce(claimKey, 'commit');
   if (!first) return { action: 'skipped:already-processed' };
 
-  const commit = input.commit ?? (await getCommit(input.repo, input.sha));
+  const state = { issueCreated: false };
+  try {
+    const commit = input.commit ?? (await getCommit(input.repo, input.sha));
+    return await reconcileBody(input, supabase, commit, state);
+  } catch (err) {
+    if (!state.issueCreated) await releaseOnce(claimKey).catch(() => {});
+    throw err;
+  }
+}
 
+async function reconcileBody(
+  input: ReconcileInput,
+  supabase: ReturnType<typeof db>,
+  commit: CommitMeta,
+  state: { issueCreated: boolean },
+): Promise<ReconcileResult> {
   // 1. ¿Referencia un issue de Linear? La integración nativa lo enlaza; roz documenta.
   const linked = referencesLinearIssue(commit.message);
   if (linked) {
@@ -176,8 +194,11 @@ export async function reconcileCommit(input: ReconcileInput): Promise<ReconcileR
     priority: priorityToLinear(a.priority),
     stateId: stateId ?? undefined,
   });
+  // A partir de aquí el issue YA existe en Linear: no liberar la llave (evita duplicados).
+  state.issueCreated = true;
 
-  // Espejo (upsert por linear_id; idempotente con el webhook eventual).
+  // Espejo (upsert por linear_id; idempotente con el webhook eventual). Best-effort: si falla,
+  // el webhook de Linear creará/actualizará el espejo igualmente — no re-crear el issue.
   await supabase.from('work_item').upsert(
     {
       linear_id: issue.id,
@@ -191,7 +212,7 @@ export async function reconcileCommit(input: ReconcileInput): Promise<ReconcileR
       url: issue.url,
     },
     { onConflict: 'linear_id' },
-  );
+  ); // se ignora el error: el issue ya existe; el webhook reconciliará el espejo.
 
   return { action: 'documented', identifier: issue.identifier, detail: 'issue creado desde commit huérfano' };
 }
