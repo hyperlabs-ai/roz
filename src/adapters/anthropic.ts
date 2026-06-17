@@ -1,8 +1,13 @@
 // Claude para el razonamiento de roz: veredicto de optimalidad de una propuesta,
 // clasificación de commits huérfanos, extracción/reconciliación de átomos. Prompt
 // caching sobre el contexto del proyecto (que se repite entre llamadas).
-import Anthropic from '@anthropic-ai/sdk';
+// Import NOMBRADO (no default): funciona con o sin esModuleInterop.
+import { Anthropic } from '@anthropic-ai/sdk';
 import { config } from '../config.js';
+
+// Tipo estructural para no depender de los namespaces del SDK (que varían entre versiones y
+// rompen el type-check de Vercel). Estructuralmente compatible con los params del SDK.
+type SystemBlock = { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } };
 
 let client: Anthropic | null = null;
 
@@ -20,7 +25,7 @@ export interface CompleteInput {
 }
 
 export async function complete(input: CompleteInput): Promise<string> {
-  const system: Anthropic.TextBlockParam[] = [{ type: 'text', text: input.system }];
+  const system: SystemBlock[] = [{ type: 'text', text: input.system }];
   if (input.cachedContext) {
     system.push({
       type: 'text',
@@ -36,8 +41,10 @@ export async function complete(input: CompleteInput): Promise<string> {
     messages: [{ role: 'user', content: input.user }],
   });
 
-  return res.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n');
+  // Extraer el texto sin type-predicate (evita depender de los tipos ContentBlock del SDK).
+  const parts: string[] = [];
+  for (const b of res.content as Array<{ type: string; text?: string }>) {
+    if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+  }
+  return parts.join('\n');
 }

@@ -1,7 +1,9 @@
 // Embeddings vía OpenAI (sustituye al FastEmbed local del roz-legacy). Costo por uso →
 // el caller debe cachear el vector por hash de contenido y solo reindexar al cambiar el
 // cuerpo del átomo. La dimensión debe coincidir con vector(N) en la migración.
-import OpenAI from 'openai';
+// Import NOMBRADO (no default): funciona con o sin esModuleInterop, así el build no depende
+// de la config del compilador (Vercel type-chequea con sus propios defaults).
+import { OpenAI } from 'openai';
 import { config } from '../config.js';
 
 let client: OpenAI | null = null;

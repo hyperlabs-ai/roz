@@ -33,12 +33,25 @@ intakeRoutes.post('/', async (c) => {
   if (!parsed.success) {
     return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   }
+  // Tomar `data` y guardar con `!data`: narrowing robusto a cualquier config del compilador
+  // (no depende de la inferencia del discriminated-union ni de strictNullChecks).
+  const data = parsed.data;
+  if (!data) {
+    return c.json({ error: { code: 'VALIDATION_ERROR', message: 'cuerpo inválido' } }, 400);
+  }
 
   // El nombre de la app puede venir en el body o en un header (cómodo para los SDKs).
-  const app = parsed.data.app ?? c.req.header('x-roz-app') ?? 'app de cliente';
+  const app = data.app ?? c.req.header('x-roz-app') ?? 'app de cliente';
 
   try {
-    const result = await autoIngest({ ...parsed.data, app });
+    const result = await autoIngest({
+      projectKey: data.projectKey,
+      description: data.description,
+      app,
+      customer: data.customer,
+      title: data.title,
+      attachments: data.attachments,
+    });
     c.get('logger')?.info({ identifier: result.identifier, app }, 'auto-ingest ok');
     return c.json({ ok: true, ...result }, 201);
   } catch (err) {

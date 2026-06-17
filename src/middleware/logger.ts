@@ -1,4 +1,4 @@
-import pino from 'pino';
+import { pino } from 'pino';
 import type { MiddlewareHandler } from 'hono';
 import { config } from '../config.js';
 import type { RozContext } from '../types/hono.js';
