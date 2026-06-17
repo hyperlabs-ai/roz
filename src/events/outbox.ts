@@ -6,6 +6,7 @@ import { db } from '../db/supabase.js';
 import { notifyAssignment } from '../notify/notifications.js';
 import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit } from '../reconcile/commits.js';
+import { upsertLinearProject } from '../projects/resolve.js';
 
 export type OutboxEventType =
   | 'work_item.created'
@@ -13,6 +14,7 @@ export type OutboxEventType =
   | 'work_item.done'
   | 'linear.issue_upserted'
   | 'linear.issue_removed'
+  | 'linear.project_upserted'
   | 'commit.received'
   | 'notification.requested';
 
@@ -158,6 +160,17 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
     case 'linear.issue_removed':
       await removeMirror(String(payload.linearId ?? ''));
       return;
+
+    // Auto-onboarding de proyectos: Linear Project nuevo/actualizado → roz.project.
+    case 'linear.project_upserted': {
+      const d = payload.data as { id: string; name?: string; teamIds?: string[]; team?: { id?: string } };
+      await upsertLinearProject({
+        id: d.id,
+        name: d.name,
+        teamId: d.team?.id ?? d.teamIds?.[0] ?? null,
+      });
+      return;
+    }
 
     case 'work_item.done':
       // fase 4: actualizar brain + notificar a quien propuso

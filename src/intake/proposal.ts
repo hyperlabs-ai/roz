@@ -214,7 +214,7 @@ export async function confirmProposal(
 
   const { data: proposal } = await supabase
     .from('proposal')
-    .select('*, project:project_id(id, key, name, linear_team_id)')
+    .select('*, project:project_id(id, key, name, linear_team_id, linear_project_id)')
     .eq('id', proposalId)
     .single();
   if (!proposal) throw new ValidationError(`Propuesta no encontrada: ${proposalId}`);
@@ -226,7 +226,7 @@ export async function confirmProposal(
   }
   if (!proposal.project?.linear_team_id) {
     throw new ValidationError(
-      `El proyecto ${proposal.project?.key} no tiene linear_team_id configurado; corre sync_projects o configúralo.`,
+      `El proyecto ${proposal.project?.key} no tiene linear_team_id configurado.`,
     );
   }
 
@@ -238,10 +238,11 @@ export async function confirmProposal(
   if (!dev) throw new ValidationError(`Dev no encontrado: ${assigneeDevId}`);
   if (dev.active === false) throw new ValidationError(`El dev ${assigneeDevId} está inactivo.`);
 
-  // Crear el issue en Linear: asignado + prioridad nativa + estado inicial "Todo".
+  // Crear el issue en Linear: en su team + Linear Project + asignado + prioridad + estado "Todo".
   const stateId = await resolveInitialStateId(proposal.project.linear_team_id);
   const issue = await createIssue({
     teamId: proposal.project.linear_team_id,
+    projectId: proposal.project.linear_project_id ?? undefined,
     title: proposal.title,
     description: proposal.spec,
     assigneeId: dev.linear_user_id ?? undefined,

@@ -21,14 +21,15 @@ export interface CommitMeta {
   sha: string;
   message: string;
   url: string;
-  author: string | null;
+  author: string | null; // login de GitHub (si se resolvió)
+  authorEmail: string | null; // email del autor del commit (git config) — match más confiable
 }
 
 export async function getCommit(repo: string, sha: string): Promise<CommitMeta> {
   const data = await gh<{
     sha: string;
     html_url: string;
-    commit: { message: string };
+    commit: { message: string; author?: { email?: string } };
     author: { login: string } | null;
   }>(`/repos/${repo}/commits/${sha}`);
   return {
@@ -36,6 +37,7 @@ export async function getCommit(repo: string, sha: string): Promise<CommitMeta> 
     message: data.commit.message,
     url: data.html_url,
     author: data.author?.login ?? null,
+    authorEmail: data.commit.author?.email ?? null,
   };
 }
 

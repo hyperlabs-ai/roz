@@ -7,6 +7,7 @@
 // misma notificación por correo que el flujo del chat — sin doble aviso (idempotencia).
 import { db } from '../db/supabase.js';
 import { linearToPriority } from '../adapters/linear.js';
+import { resolveProjectByLinear } from '../projects/resolve.js';
 
 export interface SyncResult {
   skipped?: boolean;
@@ -28,17 +29,11 @@ export async function syncIssueFromWebhook(data: any): Promise<SyncResult> {
   const linearId: string | undefined = data?.id;
   if (!linearId || !data?.identifier) return { skipped: true };
 
-  // Mapear proyecto por team de Linear.
+  // Mapear al roz.project por Linear Project (un team con varios projects); fallback a team.
   const teamId = data.team?.id ?? data.teamId ?? null;
-  let projectId: string | null = null;
-  if (teamId) {
-    const { data: p } = await supabase
-      .from('project')
-      .select('id')
-      .eq('linear_team_id', teamId)
-      .maybeSingle();
-    projectId = p?.id ?? null;
-  }
+  const linearProjectId = data.project?.id ?? data.projectId ?? null;
+  const proj = await resolveProjectByLinear(linearProjectId, teamId);
+  const projectId: string | null = proj?.id ?? null;
 
   // Mapear assignee de Linear a un dev de roz por linear_user_id.
   const userId = assigneeUserId(data);

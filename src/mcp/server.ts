@@ -78,16 +78,18 @@ export const tools: McpTool[] = [
   {
     name: 'list_projects',
     description:
-      'Lista los proyectos disponibles (selector). Úsalo para que el usuario ELIJA el proyecto; ' +
-      'no aceptes una clave escrita a mano. `linked:false` = aún sin team de Linear configurado.',
+      'Lista los proyectos (selector). Úsalo para que el usuario ELIJA el proyecto; no aceptes ' +
+      'una clave escrita a mano. `linkedHyperops:false` = aún sin enlazar a HyperOps (sus commits ' +
+      'no se reconciliarán hasta enlazarlo).',
     schema: z.object({}),
     handler: () => listProjects(),
   },
   {
     name: 'sync_projects',
     description:
-      'Importa los equipos del workspace de Linear como proyectos (upsert por clave). Corre esto ' +
-      'si falta un proyecto en list_projects.',
+      'Importa los Linear Projects como proyectos de roz (upsert por linear_project_id; intenta ' +
+      'enlazar HyperOps por nombre). roz también los auto-onboarda vía webhook cuando se crean en ' +
+      'Linear; corre esto para importar los existentes.',
     schema: z.object({}),
     handler: () => syncProjects(),
   },

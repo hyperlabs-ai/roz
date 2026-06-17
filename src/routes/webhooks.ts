@@ -18,6 +18,14 @@ webhookRoutes.post('/linear', async (c) => {
   }
   const evt = JSON.parse(raw) as { type?: string; action?: string; data?: any };
 
+  // Auto-onboarding: proyecto nuevo en Linear → roz empieza a trackearlo.
+  if (evt.type === 'Project') {
+    if (evt.action !== 'remove') {
+      await emit('linear.project_upserted', { data: evt.data });
+    }
+    return c.json({ ok: true });
+  }
+
   if (evt.type === 'Issue') {
     if (evt.action === 'remove') {
       await emit('linear.issue_removed', { linearId: evt.data?.id });

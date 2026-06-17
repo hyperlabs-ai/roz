@@ -15,8 +15,9 @@ const raw = z
     ROZ_CLAUDE_MODEL: z.string().default('claude-opus-4-8'),
 
     OPENAI_API_KEY: z.string().default(''),
-    ROZ_EMBEDDING_MODEL: z.string().default('text-embedding-3-small'),
-    ROZ_EMBEDDING_DIM: z.coerce.number().default(1536),
+    // Alineado con el RAG de hyperflow-llm para no reindexar: text-embedding-3-large / 3072.
+    ROZ_EMBEDDING_MODEL: z.string().default('text-embedding-3-large'),
+    ROZ_EMBEDDING_DIM: z.coerce.number().default(3072),
 
     LINEAR_API_KEY: z.string().default(''),
     LINEAR_WEBHOOK_SECRET: z.string().default(''),

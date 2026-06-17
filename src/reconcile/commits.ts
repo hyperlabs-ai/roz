@@ -12,6 +12,7 @@ import { complete } from '../adapters/anthropic.js';
 import { getCommit, referencesLinearIssue, type CommitMeta } from '../adapters/github.js';
 import { createIssue, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
 import { claimOnce } from '../events/outbox.js';
+import { resolveProjectByRepo } from '../projects/resolve.js';
 
 export interface ReconcileInput {
   repo: string; // "owner/name"
@@ -72,12 +73,8 @@ export async function reconcileCommit(input: ReconcileInput): Promise<ReconcileR
     return { action: 'linked', identifier: linked, detail: 'enlazado por la integración nativa' };
   }
 
-  // 2. Mapear repo → proyecto.
-  const { data: project } = await supabase
-    .from('project')
-    .select('id, key, name, linear_team_id')
-    .eq('github_repo', input.repo)
-    .maybeSingle();
+  // 2. Mapear repo → proyecto (vía github_repositories de HyperOps; muchos repos → 1 proyecto).
+  const project = await resolveProjectByRepo(input.repo);
 
   // Issues ABIERTOS del proyecto (candidatos a que el commit los resuelva).
   const openItems = project
@@ -149,9 +146,18 @@ export async function reconcileCommit(input: ReconcileInput): Promise<ReconcileR
     (commit.author ? ` · autor: ${commit.author}` : '') +
     `\n\n${a.summary || commit.message}`;
 
-  // Autor del commit → dev (por github_login) para asignar, si se puede.
+  // Autor del commit → dev para asignar. Match preferente por email (git config), con
+  // fallback al login de GitHub.
   let assigneeId: string | undefined;
-  if (commit.author) {
+  if (commit.authorEmail) {
+    const { data: dev } = await supabase
+      .from('dev')
+      .select('linear_user_id')
+      .eq('github_email', commit.authorEmail)
+      .maybeSingle();
+    assigneeId = dev?.linear_user_id ?? undefined;
+  }
+  if (!assigneeId && commit.author) {
     const { data: dev } = await supabase
       .from('dev')
       .select('linear_user_id')
@@ -163,6 +169,7 @@ export async function reconcileCommit(input: ReconcileInput): Promise<ReconcileR
   const stateId = await resolveInitialStateId(project.linear_team_id);
   const issue = await createIssue({
     teamId: project.linear_team_id,
+    projectId: project.linear_project_id ?? undefined,
     title,
     description,
     assigneeId,

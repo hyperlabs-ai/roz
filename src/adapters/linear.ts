@@ -26,6 +26,8 @@ export interface CreateIssueInput {
   priority?: number;
   /** Estado en el que se crea (workflow state id). Si se omite, Linear usa el default del team. */
   stateId?: string;
+  /** Linear Project al que pertenece (un team con varios projects). */
+  projectId?: string;
 }
 
 export interface WorkflowState {
@@ -72,12 +74,30 @@ export interface LinearTeam {
   name: string;
 }
 
-/** Equipos del workspace — fuente del selector de proyectos. */
+/** Equipos del workspace. */
 export async function listTeams(): Promise<LinearTeam[]> {
   const data = await gql<{ teams: { nodes: LinearTeam[] } }>(
     `query { teams { nodes { id key name } } }`,
   );
   return data.teams.nodes;
+}
+
+export interface LinearProject {
+  id: string;
+  name: string;
+  teamId: string | null;
+}
+
+/** Linear Projects (un team con varios projects) — fuente del selector y del auto-onboarding. */
+export async function listLinearProjects(): Promise<LinearProject[]> {
+  const data = await gql<{
+    projects: { nodes: { id: string; name: string; teams: { nodes: { id: string }[] } }[] };
+  }>(`query { projects { nodes { id name teams { nodes { id } } } } }`);
+  return data.projects.nodes.map((p) => ({
+    id: p.id,
+    name: p.name,
+    teamId: p.teams.nodes[0]?.id ?? null,
+  }));
 }
 
 const PRIORITY_TO_LINEAR: Record<string, number> = { urgent: 1, high: 2, medium: 3, low: 4 };
@@ -115,6 +135,7 @@ export async function createIssue(input: CreateIssueInput): Promise<LinearIssue>
         assigneeId: input.assigneeId,
         priority: input.priority,
         stateId: input.stateId,
+        projectId: input.projectId,
       },
     },
   );

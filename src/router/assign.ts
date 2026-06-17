@@ -6,7 +6,8 @@
 // setDevSkills) para manejarlo desde el MCP sin tocar la base a mano.
 import { db } from '../db/supabase.js';
 import { embed } from '../adapters/embeddings.js';
-import { inProgressCountByAssignee, listUsers, listTeams } from '../adapters/linear.js';
+import { inProgressCountByAssignee, listUsers, listLinearProjects } from '../adapters/linear.js';
+import { upsertLinearProject } from '../projects/resolve.js';
 
 // ---------- utilidades de vectores ----------
 function parseVec(v: unknown): number[] | null {
@@ -154,39 +155,30 @@ export async function suggestAssignee(
 
 // ---------- Proyectos (selector) ----------
 export async function listProjects(): Promise<
-  { key: string; name: string; linked: boolean }[]
+  { key: string; name: string; linkedLinear: boolean; linkedHyperops: boolean }[]
 > {
-  const { data } = await db().from('project').select('key, name, linear_team_id').order('key');
+  const { data } = await db()
+    .from('project')
+    .select('key, name, linear_project_id, hyperops_project_id')
+    .eq('active', true)
+    .order('key');
   return (data ?? []).map((p: any) => ({
     key: p.key,
     name: p.name,
-    linked: !!p.linear_team_id,
+    linkedLinear: !!p.linear_project_id,
+    linkedHyperops: !!p.hyperops_project_id, // necesario para reconciliar commits del proyecto
   }));
 }
 
-/** Importa los equipos de Linear como proyectos (upsert por key). */
-export async function syncProjects(): Promise<{ created: string[]; updated: string[] }> {
-  const supabase = db();
-  const teams = await listTeams();
-  const created: string[] = [];
-  const updated: string[] = [];
-
-  for (const t of teams) {
-    const { data: existing } = await supabase
-      .from('project')
-      .select('id')
-      .eq('key', t.key)
-      .maybeSingle();
-    if (existing) {
-      await supabase
-        .from('project')
-        .update({ name: t.name, linear_team_id: t.id })
-        .eq('id', existing.id);
-      updated.push(t.key);
-    } else {
-      await supabase.from('project').insert({ key: t.key, name: t.name, linear_team_id: t.id });
-      created.push(t.key);
-    }
+/** Importa los Linear Projects como roz.project (upsert por linear_project_id). */
+export async function syncProjects(): Promise<{ created: number; updated: number }> {
+  const projects = await listLinearProjects();
+  let created = 0;
+  let updated = 0;
+  for (const p of projects) {
+    const r = await upsertLinearProject({ id: p.id, name: p.name, teamId: p.teamId });
+    if (r?.created) created++;
+    else if (r) updated++;
   }
   return { created, updated };
 }
