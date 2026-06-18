@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
-import { serveStatic } from '@hono/node-server/serve-static';
+import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join, extname } from 'node:path';
 import type { RozContext } from './types/hono.js';
 import { loggerMiddleware } from './middleware/logger.js';
 import { AppError } from './utils/errors.js';
@@ -31,10 +33,47 @@ app.route('/v1/internal', internalRoutes);
 
 // --- SPA del dashboard ---
 // La función sirve el build de web/dist (incluido en el bundle vía vercel.json includeFiles).
-// Va DESPUÉS de las rutas de API (tienen prioridad). Los estáticos hasheados desde /assets;
-// cualquier otra ruta GET cae al index.html para que funcione el router del SPA.
-app.use('/assets/*', serveStatic({ root: './web/dist' }));
-app.get('*', serveStatic({ path: './web/dist/index.html' }));
+// Resolución robusta del directorio: el cwd de la función serverless en Vercel no es fijo, así
+// que probamos rutas candidatas (LAMBDA_TASK_ROOT, cwd, ..) y elegimos donde exista index.html.
+// Lectura manual por ruta absoluta (no serveStatic, que depende del cwd).
+const SPA_DIST = (() => {
+  const candidates = [
+    process.env.LAMBDA_TASK_ROOT ? join(process.env.LAMBDA_TASK_ROOT, 'web/dist') : '',
+    join(process.cwd(), 'web/dist'),
+    join(process.cwd(), '../web/dist'),
+  ].filter(Boolean);
+  return candidates.find((c) => existsSync(join(c, 'index.html'))) ?? candidates[candidates.length - 1]!;
+})();
+
+const MIME: Record<string, string> = {
+  '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.ico': 'image/x-icon', '.json': 'application/json', '.woff': 'font/woff', '.woff2': 'font/woff2',
+  '.map': 'application/json', '.webp': 'image/webp', '.gif': 'image/gif', '.txt': 'text/plain',
+};
+
+// Estáticos hasheados (inmutables) desde /assets.
+app.get('/assets/*', async (c) => {
+  const rel = c.req.path.replace(/^\/+/, ''); // "assets/xxx"
+  try {
+    const buf = await readFile(join(SPA_DIST, rel));
+    return c.body(buf, 200, {
+      'content-type': MIME[extname(rel)] ?? 'application/octet-stream',
+      'cache-control': 'public, max-age=31536000, immutable',
+    });
+  } catch {
+    return c.notFound();
+  }
+});
+
+// Fallback del SPA: cualquier otra ruta GET sirve index.html (router del lado cliente).
+app.get('*', async (c) => {
+  try {
+    return c.html(await readFile(join(SPA_DIST, 'index.html'), 'utf8'));
+  } catch {
+    return c.text('SPA build no encontrado', 500);
+  }
+});
 
 app.onError((err, c) => {
   const logger = c.get('logger');
