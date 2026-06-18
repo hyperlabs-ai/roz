@@ -1,18 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "version": 2,
-  "builds": [
-    { "src": "web/package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } },
-    { "src": "api/index.ts", "use": "@vercel/node" }
-  ],
-  "routes": [
-    { "src": "/webhooks/(.*)", "dest": "/api/index" },
-    { "src": "/mcp/(.*)", "dest": "/api/index" },
-    { "src": "/v1/(.*)", "dest": "/api/index" },
-    { "src": "/api/(.*)", "dest": "/api/index" },
-    { "src": "/health", "dest": "/api/index" },
-    { "handle": "filesystem" },
-    { "src": "/.*", "dest": "/index.html" }
+  "buildCommand": "npm install --prefix web && npm run build --prefix web",
+  "functions": {
+    "api/index.ts": { "maxDuration": 120, "includeFiles": "web/dist/**" }
+  },
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index" }
   ],
   "crons": [
     { "path": "/v1/internal/drain", "schedule": "* * * * *" },

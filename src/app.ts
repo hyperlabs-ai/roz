@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { serveStatic } from '@hono/node-server/serve-static';
 import type { RozContext } from './types/hono.js';
 import { loggerMiddleware } from './middleware/logger.js';
 import { AppError } from './utils/errors.js';
@@ -27,6 +28,13 @@ app.route('/v1/intake', intakeRoutes);
 app.route('/api/dashboard', dashboardRoutes);
 // Drenado de la cola (outbox) y barridas — disparado por Vercel Cron.
 app.route('/v1/internal', internalRoutes);
+
+// --- SPA del dashboard ---
+// La función sirve el build de web/dist (incluido en el bundle vía vercel.json includeFiles).
+// Va DESPUÉS de las rutas de API (tienen prioridad). Los estáticos hasheados desde /assets;
+// cualquier otra ruta GET cae al index.html para que funcione el router del SPA.
+app.use('/assets/*', serveStatic({ root: './web/dist' }));
+app.get('*', serveStatic({ path: './web/dist/index.html' }));
 
 app.onError((err, c) => {
   const logger = c.get('logger');
