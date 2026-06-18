@@ -13,7 +13,7 @@
     "lint": "eslint src --ext .ts",
     "test": "vitest",
     "test:run": "vitest run",
-    "vercel-build": "npm --prefix web install && npm --prefix web run build"
+    "vercel-build": "npm run build"
   },
   "keywords": [
     "roz",
