@@ -9,6 +9,7 @@ import { getCommit } from '../src/adapters/github.js';
 import { config } from '../src/config.js';
 
 const DAYS = Number(process.argv[2] ?? 30);
+const REPO_FILTER = process.argv[3] ?? ''; // opcional: solo repos cuyo full_name incluya esto
 const API = 'https://api.github.com';
 const MAX_STATS_CALLS = 4500; // techo para no agotar el rate limit (5000/h) de GitHub
 
@@ -46,6 +47,7 @@ async function main() {
 
   for (const link of (links ?? []) as any[]) {
     const repo = link.repo as string;
+    if (REPO_FILTER && !repo.includes(REPO_FILTER)) continue;
     let page = 1;
     let repoCount = 0;
     while (page <= 10) {

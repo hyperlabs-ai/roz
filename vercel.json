@@ -1,18 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "version": 2,
-  "builds": [
-    { "src": "web/package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } },
-    { "src": "api/index.ts", "use": "@vercel/node", "config": { "maxDuration": 120 } }
-  ],
-  "routes": [
-    { "src": "/webhooks/(.*)", "dest": "/api/index" },
-    { "src": "/mcp/(.*)", "dest": "/api/index" },
-    { "src": "/v1/(.*)", "dest": "/api/index" },
-    { "src": "/api/(.*)", "dest": "/api/index" },
-    { "src": "/health", "dest": "/api/index" },
-    { "handle": "filesystem" },
-    { "src": "/(.*)", "dest": "/index.html" }
+  "outputDirectory": "web/dist",
+  "functions": {
+    "api/index.ts": { "maxDuration": 120 }
+  },
+  "rewrites": [
+    { "source": "/webhooks/(.*)", "destination": "/api/index" },
+    { "source": "/mcp/(.*)", "destination": "/api/index" },
+    { "source": "/v1/(.*)", "destination": "/api/index" },
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/health", "destination": "/api/index" },
+    { "source": "/(.*)", "destination": "/index.html" }
   ],
   "crons": [
     { "path": "/v1/internal/drain", "schedule": "* * * * *" },
