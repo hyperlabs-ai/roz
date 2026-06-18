@@ -9,10 +9,18 @@ import { config } from '../config.js';
 import { dbPublic } from '../db/supabase.js';
 import type { RozContext } from '../types/hono.js';
 
+// Cliente para validar el JWT del usuario. getUser(token) valida el token contra Supabase;
+// el apikey del cliente solo debe ser una key válida del proyecto, así que el anon key o el
+// service_role sirven igual. Usamos el anon key si está, y caemos al service_role (que el
+// backend siempre tiene) para NO depender de SUPABASE_ANON_KEY en runtime.
 let authClient: ReturnType<typeof createClient> | null = null;
 function authApi() {
   if (!authClient) {
-    authClient = createClient(config.supabase.url, config.supabase.anonKey, {
+    const key = config.supabase.anonKey || config.supabase.serviceRoleKey;
+    if (!config.supabase.url || !key) {
+      throw new Error('Supabase no configurado (falta SUPABASE_URL o alguna key)');
+    }
+    authClient = createClient(config.supabase.url, key, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
   }
