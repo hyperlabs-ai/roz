@@ -5,6 +5,7 @@ import type { RozContext } from '../types/hono.js';
 import { config } from '../config.js';
 import { drainOutbox } from '../events/outbox.js';
 import { brainSweep } from '../brain/sweep.js';
+import { sendWeeklyDigest } from '../notify/digest.js';
 
 export const internalRoutes = new Hono<RozContext>();
 
@@ -30,10 +31,12 @@ internalRoutes.get('/brain-sweep', async (c) => {
   return c.json({ ok: true, ...result });
 });
 
-// Digest semanal por email — aún no implementado (no hay modelo de destinatarios). El cron
-// NO está agendado en vercel.json para no ejecutar un no-op; el endpoint queda para correrlo
-// a mano cuando se defina el alcance.
-internalRoutes.get('/digest', async (c) => {
+// Digest semanal por email: resumen de la semana con botón al dashboard. Lo dispara el cron
+// los viernes en la noche (vercel.json). Destinatarios y URL en config (DIGEST_RECIPIENTS,
+// DASHBOARD_URL).
+internalRoutes.get('/weekly-digest', async (c) => {
   if (!isVercelCron(c)) return c.json({ error: 'forbidden' }, 403);
-  return c.json({ ok: true, implemented: false });
+  const result = await sendWeeklyDigest();
+  c.get('logger')?.info(result, 'weekly digest sent');
+  return c.json({ ok: true, ...result });
 });

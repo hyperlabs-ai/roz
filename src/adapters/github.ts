@@ -23,14 +23,18 @@ export interface CommitMeta {
   url: string;
   author: string | null; // login de GitHub (si se resolvió)
   authorEmail: string | null; // email del autor del commit (git config) — match más confiable
+  committedAt: string | null; // fecha del commit (ISO), para métricas time-series del dashboard
+  additions: number | null; // líneas agregadas (stats de la API)
+  deletions: number | null; // líneas eliminadas
 }
 
 export async function getCommit(repo: string, sha: string): Promise<CommitMeta> {
   const data = await gh<{
     sha: string;
     html_url: string;
-    commit: { message: string; author?: { email?: string } };
+    commit: { message: string; author?: { email?: string; date?: string } };
     author: { login: string } | null;
+    stats?: { additions?: number; deletions?: number };
   }>(`/repos/${repo}/commits/${sha}`);
   return {
     sha: data.sha,
@@ -38,6 +42,9 @@ export async function getCommit(repo: string, sha: string): Promise<CommitMeta> 
     url: data.html_url,
     author: data.author?.login ?? null,
     authorEmail: data.commit.author?.email ?? null,
+    committedAt: data.commit.author?.date ?? null,
+    additions: data.stats?.additions ?? null,
+    deletions: data.stats?.deletions ?? null,
   };
 }
 

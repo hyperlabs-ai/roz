@@ -6,6 +6,7 @@ import { mcpRoutes } from './routes/mcp.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { intakeRoutes } from './routes/intake.js';
 import { internalRoutes } from './routes/internal.js';
+import { dashboardRoutes } from './routes/dashboard.js';
 
 const app = new Hono<RozContext>();
 
@@ -22,6 +23,8 @@ app.route('/mcp', mcpRoutes);
 app.route('/webhooks', webhookRoutes);
 // Ingesta automática desde apps de clientes (sin humano en el loop).
 app.route('/v1/intake', intakeRoutes);
+// Dashboard de visibilidad de ingeniería (auth de OpsHyper). Lo consume el SPA en web/.
+app.route('/api/dashboard', dashboardRoutes);
 // Drenado de la cola (outbox) y barridas — disparado por Vercel Cron.
 app.route('/v1/internal', internalRoutes);
 

@@ -71,6 +71,13 @@ export async function syncIssueFromWebhook(data: any): Promise<SyncResult> {
   // No pisar la spec rica de roz con una descripción vacía de Linear.
   if (description != null && description.trim() !== '') row.spec = description;
 
+  // Timestamps de transición (para el dashboard: tickets resueltos por período + cycle time).
+  // Linear los incluye en el payload del Issue (null cuando no aplica). Solo se escriben si la
+  // clave viene en el payload, para no borrarlos en updates parciales que la omitan.
+  if ('startedAt' in data) row.started_at = data.startedAt ?? null;
+  if ('completedAt' in data) row.completed_at = data.completedAt ?? null;
+  if ('canceledAt' in data) row.canceled_at = data.canceledAt ?? null;
+
   let workItemId: string;
   let created = false;
   let assigneeChanged = false;

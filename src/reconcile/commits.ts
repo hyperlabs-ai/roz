@@ -81,6 +81,15 @@ async function reconcileBody(
   commit: CommitMeta,
   state: { issueCreated: boolean },
 ): Promise<ReconcileResult> {
+  // Resolver proyecto y dev autor una sola vez: se usan para persistir el commit (dashboard) y,
+  // en el camino huérfano, para asignar el issue resultante.
+  const project = await resolveProjectByRepo(input.repo);
+  const dev = await resolveDevByCommit(supabase, commit);
+
+  // Persistir el commit SIEMPRE (linked/trivial/matched/documented): el dashboard cuenta todo el
+  // trabajo, no solo el huérfano. Upsert por (repo, sha) → reprocesar es idempotente.
+  await persistCommit(supabase, input, commit, project?.id ?? null, dev?.id ?? null);
+
   // 1. ¿Referencia un issue de Linear? La integración nativa lo enlaza; roz documenta.
   const linked = referencesLinearIssue(commit.message);
   if (linked) {
@@ -90,9 +99,6 @@ async function reconcileBody(
       .eq('identifier', linked); // best-effort; columna opcional
     return { action: 'linked', identifier: linked, detail: 'enlazado por la integración nativa' };
   }
-
-  // 2. Mapear repo → proyecto (vía github_repositories de HyperOps; muchos repos → 1 proyecto).
-  const project = await resolveProjectByRepo(input.repo);
 
   // Issues ABIERTOS del proyecto (candidatos a que el commit los resuelva).
   const openItems = project
@@ -164,25 +170,8 @@ async function reconcileBody(
     (commit.author ? ` · autor: ${commit.author}` : '') +
     `\n\n${a.summary || commit.message}`;
 
-  // Autor del commit → dev para asignar. Match preferente por email (git config), con
-  // fallback al login de GitHub.
-  let assigneeId: string | undefined;
-  if (commit.authorEmail) {
-    const { data: dev } = await supabase
-      .from('dev')
-      .select('linear_user_id')
-      .eq('github_email', commit.authorEmail)
-      .maybeSingle();
-    assigneeId = dev?.linear_user_id ?? undefined;
-  }
-  if (!assigneeId && commit.author) {
-    const { data: dev } = await supabase
-      .from('dev')
-      .select('linear_user_id')
-      .eq('github_login', commit.author)
-      .maybeSingle();
-    assigneeId = dev?.linear_user_id ?? undefined;
-  }
+  // Autor del commit → dev (resuelto arriba) → su linear_user_id para asignar el issue.
+  const assigneeId = dev?.linear_user_id ?? undefined;
 
   const stateId = await resolveInitialStateId(project.linear_team_id);
   const issue = await createIssue({
@@ -215,4 +204,58 @@ async function reconcileBody(
   ); // se ignora el error: el issue ya existe; el webhook reconciliará el espejo.
 
   return { action: 'documented', identifier: issue.identifier, detail: 'issue creado desde commit huérfano' };
+}
+
+/** Resuelve el dev autor de un commit: por email de git (preferente) y luego por login. */
+async function resolveDevByCommit(
+  supabase: ReturnType<typeof db>,
+  commit: CommitMeta,
+): Promise<{ id: string; linear_user_id: string | null } | null> {
+  if (commit.authorEmail) {
+    const { data } = await supabase
+      .from('dev')
+      .select('id, linear_user_id')
+      .eq('github_email', commit.authorEmail)
+      .maybeSingle();
+    if (data) return data as { id: string; linear_user_id: string | null };
+  }
+  if (commit.author) {
+    const { data } = await supabase
+      .from('dev')
+      .select('id, linear_user_id')
+      .eq('github_login', commit.author)
+      .maybeSingle();
+    if (data) return data as { id: string; linear_user_id: string | null };
+  }
+  return null;
+}
+
+/**
+ * Persiste el commit para las métricas del dashboard. Upsert por (repo, sha): reprocesar el
+ * mismo commit es idempotente. Best-effort — un fallo aquí no debe tumbar la reconciliación,
+ * pero lo dejamos propagar para que el outbox reintente (la llave se libera si no hubo issue).
+ */
+async function persistCommit(
+  supabase: ReturnType<typeof db>,
+  input: ReconcileInput,
+  commit: CommitMeta,
+  projectId: string | null,
+  devId: string | null,
+): Promise<void> {
+  await supabase.from('commit').upsert(
+    {
+      sha: commit.sha,
+      repo: input.repo,
+      project_id: projectId,
+      dev_id: devId,
+      author_login: commit.author,
+      author_email: commit.authorEmail,
+      message: commit.message,
+      url: commit.url,
+      additions: commit.additions,
+      deletions: commit.deletions,
+      committed_at: commit.committedAt,
+    },
+    { onConflict: 'repo,sha' },
+  );
 }

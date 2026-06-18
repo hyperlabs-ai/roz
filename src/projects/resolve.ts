@@ -16,9 +16,25 @@ export interface RozProject {
   hyperops_project_id: string | null;
 }
 
-/** Resuelve el roz.project de un repo, vía la tabla de repos de HyperOps. */
+const PROJECT_COLS = 'id, key, name, linear_team_id, linear_project_id, hyperops_project_id';
+
+/** Resuelve el roz.project de un repo. Primero el mapeo directo en roz (cubre repos internos y
+ *  de cliente configurados explícitamente); como fallback, la tabla de repos de HyperOps. */
 export async function resolveProjectByRepo(fullName: string): Promise<RozProject | null> {
-  // 1. repo → project_id (HyperOps) en public.github_repositories.
+  const supabase = db();
+
+  // 1. Mapeo directo roz.project_repo (interno o cliente).
+  const { data: link } = await supabase
+    .from('project_repo')
+    .select('project_id')
+    .eq('repo', fullName)
+    .maybeSingle();
+  if (link?.project_id) {
+    const { data: project } = await supabase.from('project').select(PROJECT_COLS).eq('id', link.project_id).maybeSingle();
+    if (project) return project as RozProject;
+  }
+
+  // 2. Fallback: repo → project_id (HyperOps) → roz.project por hyperops_project_id.
   const { data: repo } = await dbPublic()
     .from('github_repositories')
     .select('project_id')
@@ -26,13 +42,7 @@ export async function resolveProjectByRepo(fullName: string): Promise<RozProject
     .eq('active', true)
     .maybeSingle();
   if (!repo?.project_id) return null;
-
-  // 2. project_id (HyperOps) → roz.project por hyperops_project_id.
-  const { data: project } = await db()
-    .from('project')
-    .select('id, key, name, linear_team_id, linear_project_id, hyperops_project_id')
-    .eq('hyperops_project_id', repo.project_id)
-    .maybeSingle();
+  const { data: project } = await supabase.from('project').select(PROJECT_COLS).eq('hyperops_project_id', repo.project_id).maybeSingle();
   return (project as RozProject) ?? null;
 }
 

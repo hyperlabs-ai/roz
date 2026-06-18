@@ -10,6 +10,11 @@ const raw = z
 
     SUPABASE_URL: z.string().default(''),
     SUPABASE_SERVICE_ROLE_KEY: z.string().default(''),
+    // anon key: solo para validar el JWT de usuario del dashboard (auth.getUser). Nunca da acceso
+    // a datos por sí sola (RLS), a diferencia del service_role.
+    SUPABASE_ANON_KEY: z.string().default(''),
+    // Dominios permitidos para el dashboard (mismo criterio que OpsHyper).
+    DASHBOARD_ALLOWED_DOMAINS: z.string().default('hyperdigital.mx,hyperlabs.vc'),
 
     ANTHROPIC_API_KEY: z.string().default(''),
     ROZ_CLAUDE_MODEL: z.string().default('claude-opus-4-8'),
@@ -30,6 +35,11 @@ const raw = z
 
     ROZ_MCP_TOKEN: z.string().default(''),
     ROZ_INGEST_TOKEN: z.string().default(''),
+
+    // URL pública del dashboard (para el botón del digest semanal).
+    DASHBOARD_URL: z.string().default('https://roz-ops.vercel.app'),
+    // Destinatarios del digest semanal (coma-separados).
+    DIGEST_RECIPIENTS: z.string().default('fer@hyperlabs.vc'),
   })
   .parse(process.env);
 
@@ -38,7 +48,18 @@ export const config = {
   logLevel: raw.ROZ_LOG_LEVEL,
   port: raw.PORT,
 
-  supabase: { url: raw.SUPABASE_URL, serviceRoleKey: raw.SUPABASE_SERVICE_ROLE_KEY },
+  supabase: {
+    url: raw.SUPABASE_URL,
+    serviceRoleKey: raw.SUPABASE_SERVICE_ROLE_KEY,
+    anonKey: raw.SUPABASE_ANON_KEY,
+  },
+  dashboard: {
+    allowedDomains: raw.DASHBOARD_ALLOWED_DOMAINS.split(',').map((d) => d.trim().toLowerCase()).filter(Boolean),
+    url: raw.DASHBOARD_URL.replace(/\/$/, ''),
+  },
+  digest: {
+    recipients: raw.DIGEST_RECIPIENTS.split(',').map((e) => e.trim()).filter(Boolean),
+  },
   anthropic: { apiKey: raw.ANTHROPIC_API_KEY, model: raw.ROZ_CLAUDE_MODEL },
   openai: {
     apiKey: raw.OPENAI_API_KEY,
