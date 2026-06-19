@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { ArrowLeft, GitCommitHorizontal, CircleCheck, Users, Plus, Minus, ExternalLink, X, GitBranch } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
-import { AreaTrend } from '@/components/charts';
+import { AreaTrend, RankBars } from '@/components/charts';
 import { UserAvatar, EmptyState, LineDelta } from '@/components/bits';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +21,8 @@ import { apiGet, apiSend, type ProjectDetail as Detail } from '@/lib/api';
 import { compact, relative } from '@/lib/format';
 import { defaultPeriod } from '@/lib/period';
 import { cn } from '@/lib/utils';
+
+const PRIO_DOT: Record<string, string> = { urgent: 'bg-destructive', high: 'bg-warning', medium: 'bg-chart-1', low: 'bg-muted-foreground' };
 
 function MiniStat({ icon, label, value, valueClassName, className }: { icon: React.ReactNode; label: string; value: string; valueClassName?: string; className?: string }) {
   return (
@@ -164,21 +166,66 @@ export default function ProjectDetail() {
             </CardContent>
           </Card>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <Card>
-              <CardHeader><CardTitle>Contribuidores</CardTitle></CardHeader>
-              <CardContent className="space-y-2">
-                {data.contributors.length ? (
-                  data.contributors.map((c, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <UserAvatar url={c.avatarUrl} name={c.name} className="size-7" />
-                      <span className="flex-1 truncate text-sm">{c.name}</span>
-                      <span className="text-xs text-muted-foreground">{c.commits} commits · {compact(c.lines)} líneas</span>
-                    </div>
-                  ))
-                ) : <EmptyState>Sin contribuidores</EmptyState>}
-              </CardContent>
-            </Card>
+          <div className="mt-4 grid items-start gap-4 lg:grid-cols-3">
+            <div className="space-y-4">
+              <Card>
+                <CardHeader><CardTitle>Contribuidores</CardTitle></CardHeader>
+                <CardContent className="space-y-2">
+                  {data.contributors.length ? (
+                    data.contributors.map((c, i) => (
+                      <div key={i} className="flex items-center gap-3">
+                        <UserAvatar url={c.avatarUrl} name={c.name} className="size-7" />
+                        <span className="flex-1 truncate text-sm">{c.name}</span>
+                        <span className="text-xs text-muted-foreground">{c.commits} commits · {compact(c.lines)} líneas</span>
+                      </div>
+                    ))
+                  ) : <EmptyState>Sin contribuidores</EmptyState>}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="flex-row items-center justify-between space-y-0">
+                  <CardTitle>Tickets abiertos</CardTitle>
+                  <span className="text-sm text-muted-foreground">{data.openTickets.length}</span>
+                </CardHeader>
+                <CardContent className="space-y-1">
+                  {data.openTickets.length ? (
+                    data.openTickets.map((t) => (
+                      <a
+                        key={t.id}
+                        href={t.url && t.url !== '#' ? t.url : undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-2.5 rounded-md px-1 py-1.5 hover:bg-accent"
+                      >
+                        <span className={cn('size-2 shrink-0 rounded-full', PRIO_DOT[t.priority ?? ''] ?? 'bg-muted')} title={t.priority ?? 'sin prioridad'} />
+                        <span className="w-14 shrink-0 font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
+                        <span className="min-w-0 flex-1 truncate text-sm">{t.title}</span>
+                        {t.assignee && <UserAvatar url={t.assignee.avatarUrl} name={t.assignee.name} className="size-5 shrink-0" />}
+                      </a>
+                    ))
+                  ) : <EmptyState>Sin tickets abiertos</EmptyState>}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader><CardTitle>Actividad por repo</CardTitle></CardHeader>
+                <CardContent>
+                  {data.byRepo.length ? (
+                    <RankBars data={data.byRepo.map((r) => ({ label: r.repo, value: r.commits }))} color="hsl(var(--chart-4))" height={Math.max(data.byRepo.length * 30, 60)} />
+                  ) : <EmptyState>Sin repos</EmptyState>}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader><CardTitle>Tickets por estado</CardTitle></CardHeader>
+                <CardContent>
+                  {data.ticketsByState.length ? (
+                    <RankBars data={data.ticketsByState.map((s) => ({ label: s.label, value: s.count }))} color="hsl(var(--chart-5))" height={Math.max(data.ticketsByState.length * 30, 60)} />
+                  ) : <EmptyState>Sin tickets</EmptyState>}
+                </CardContent>
+              </Card>
+            </div>
 
             <Card className="lg:col-span-2">
               <CardHeader><CardTitle>Historial de commits</CardTitle></CardHeader>

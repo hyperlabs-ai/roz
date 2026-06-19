@@ -93,8 +93,11 @@ export interface CommitHistoryItem {
 export interface ProjectDetail {
   project: { id: string; name: string; key: string; kind: ProjectKind };
   repos: string[];
-  totals: { commits: number; additions: number; deletions: number; ticketsResolved: number; contributors: number };
+  totals: { commits: number; additions: number; deletions: number; ticketsResolved: number; contributors: number; openTickets: number };
   contributors: { name: string; avatarUrl: string | null; commits: number; lines: number }[];
+  openTickets: { id: string; identifier: string; title: string; state: string; stateName: string; priority: string | null; url: string | null; assignee: { name: string; avatarUrl: string | null } | null }[];
+  byRepo: { repo: string; commits: number }[];
+  ticketsByState: { state: string; label: string; count: number }[];
   history: CommitHistoryItem[];
   trend: { date: string; additions: number; deletions: number }[];
 }
@@ -110,9 +113,11 @@ export interface Ticket {
 }
 export interface TicketsResponse {
   total: number; overdue: number; unassigned: number;
+  summary: { total: number; open: number; inProgress: number; completed: number; unassigned: number; overdue: number };
   byState: { label: string; value: number }[];
   byPriority: { label: string; value: number }[];
-  byAssignee: { label: string; value: number }[];
+  byProject: { label: string; value: number }[];
+  developers: { name: string; avatarUrl: string | null; count: number }[];
   tickets: Ticket[];
 }
 export interface TicketFilterOptions {

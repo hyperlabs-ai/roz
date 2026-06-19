@@ -454,11 +454,18 @@ export async function getProject(projectId: string, period: Period) {
   const p = proj.data as unknown as { id: string; name: string; key: string; kind: string } | null;
   if (!p) return null;
 
-  const [commits, devs, resolved, repoRows] = await Promise.all([
+  const [commits, devs, resolved, repoRows, openRows, allItemRows] = await Promise.all([
     commitsInRange(period.from, period.to, { projectId }),
     allDevs(),
     resolvedInRange(period.from, period.to, { projectId }),
     db().from('project_repo').select('repo').eq('project_id', projectId),
+    db()
+      .from('work_item')
+      .select('id, identifier, title, state, state_name, priority, assignee_dev_id, url')
+      .eq('project_id', projectId)
+      .in('state', OPEN_STATES),
+    // Todos los work_items del proyecto (para el desglose por estado, incluidos cerrados).
+    db().from('work_item').select('state, state_name').eq('project_id', projectId),
   ]);
   const repos = ((repoRows.data ?? []) as unknown as { repo: string }[]).map((r) => r.repo).sort();
   const devName = new Map(devs.map((d) => [d.id, d.name]));
@@ -505,12 +512,46 @@ export async function getProject(projectId: string, period: Period) {
     row.deletions += c.deletions ?? 0;
   });
 
+  // Commits por repo (en el período): en qué repo se concentra el trabajo.
+  const repoCommits = new Map<string, number>();
+  commits.forEach((c) => repoCommits.set(c.repo, (repoCommits.get(c.repo) ?? 0) + 1));
+  const byRepo = repos
+    .map((r) => ({ repo: r.replace('hyperlabs-ai/', ''), commits: repoCommits.get(r) ?? 0 }))
+    .sort((a, b) => b.commits - a.commits);
+
+  // Desglose de TODOS los tickets del proyecto por estado (incluye cerrados).
+  const stateAgg = new Map<string, { state: string; label: string; count: number }>();
+  ((allItemRows.data ?? []) as any[]).forEach((w) => {
+    const key = w.state;
+    if (!stateAgg.has(key)) stateAgg.set(key, { state: key, label: w.state_name ?? key, count: 0 });
+    stateAgg.get(key)!.count++;
+  });
+  const ticketsByState = [...stateAgg.values()].sort((a, b) => b.count - a.count);
+
+  // Tickets abiertos del proyecto (ordenados por prioridad).
+  const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+  const openTickets = ((openRows.data ?? []) as any[])
+    .map((w) => ({
+      id: w.id,
+      identifier: w.identifier,
+      title: w.title,
+      state: w.state,
+      stateName: w.state_name ?? w.state,
+      priority: w.priority,
+      url: w.url,
+      assignee: w.assignee_dev_id ? { name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
+    }))
+    .sort((a, b) => (PRIO_ORDER[a.priority ?? ''] ?? 9) - (PRIO_ORDER[b.priority ?? ''] ?? 9));
+
   return {
     project: { id: p.id, name: p.name, key: p.key, kind: p.kind },
     repos,
     period,
-    totals: { commits: commits.length, additions: lines.additions, deletions: lines.deletions, ticketsResolved: resolved.length, contributors: contribMap.size },
+    totals: { commits: commits.length, additions: lines.additions, deletions: lines.deletions, ticketsResolved: resolved.length, contributors: contribMap.size, openTickets: openTickets.length },
     contributors: [...contribMap.values()].sort((a, b) => b.commits - a.commits),
+    openTickets,
+    byRepo,
+    ticketsByState,
     history,
     trend: [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
   };
@@ -576,15 +617,44 @@ export async function getTickets(f: TicketFilters) {
   // Agregaciones para los KPIs/gráficas (sobre el conjunto filtrado).
   const byState = countMap(tickets, (t) => t.stateName);
   const byPriority = countMap(tickets, (t) => t.priority ?? 'sin prioridad');
-  const byAssignee = countMap(tickets, (t) => t.assignee?.name ?? 'sin asignar');
+  const byProject = countMap(tickets, (t) => t.projectName ?? 'sin proyecto');
+
+  // Developers involucrados (con avatar): cuántos tickets tiene cada uno en el conjunto.
+  const devMap = new Map<string, { name: string; avatarUrl: string | null; count: number }>();
+  tickets.forEach((t) => {
+    if (!t.assignee) return;
+    const k = t.assignee.name;
+    if (!devMap.has(k)) devMap.set(k, { name: t.assignee.name, avatarUrl: t.assignee.avatarUrl, count: 0 });
+    devMap.get(k)!.count++;
+  });
+  const developers = [...devMap.values()].sort((a, b) => b.count - a.count);
+
+  // Resumen por categoría, SIEMPRE sobre todos los tickets del filtro (ignora el scope), para
+  // que los KPIs muestren abiertos / en curso / completados sin importar el toggle.
+  let sq = db().from('work_item').select('state, assignee_dev_id, due_date');
+  if (f.projectId) sq = sq.eq('project_id', f.projectId);
+  if (f.assigneeDevId) sq = sq.eq('assignee_dev_id', f.assigneeDevId);
+  if (f.priority) sq = sq.eq('priority', f.priority);
+  const { data: allRows } = await sq.limit(2000);
+  const all = (allRows ?? []) as any[];
+  const summary = {
+    total: all.length,
+    open: all.filter((w) => OPEN_STATES.includes(w.state)).length,
+    inProgress: all.filter((w) => w.state === 'started' || w.state === 'in_progress').length,
+    completed: all.filter((w) => ['completed', 'done'].includes(w.state)).length,
+    unassigned: all.filter((w) => OPEN_STATES.includes(w.state) && !w.assignee_dev_id).length,
+    overdue: all.filter((w) => w.due_date && !['completed', 'done', 'canceled'].includes(w.state) && new Date(w.due_date).getTime() < now).length,
+  };
 
   return {
     total: tickets.length,
     overdue: tickets.filter((t) => t.overdue).length,
     unassigned: tickets.filter((t) => !t.assignee).length,
+    summary,
     byState,
     byPriority,
-    byAssignee,
+    byProject,
+    developers,
     tickets,
   };
 }

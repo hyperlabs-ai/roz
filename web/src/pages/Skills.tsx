@@ -11,7 +11,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -35,17 +34,17 @@ export default function Skills() {
 
   return (
     <Layout title="Skills" subtitle="Capacidades y cobertura del equipo" actions={isAdmin ? <SkillDialog onSaved={reload} /> : undefined}>
-      <Tabs defaultValue="matrix">
+      <Tabs defaultValue="map">
         <TabsList>
-          <TabsTrigger value="matrix">Matriz</TabsTrigger>
+          <TabsTrigger value="map">Mapa de habilidades</TabsTrigger>
           <TabsTrigger value="catalog">Catálogo</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="matrix">
+        <TabsContent value="map">
           <Card>
             <CardHeader>
-              <CardTitle>Matriz equipo × skills</CardTitle>
-              <CardDescription>{isAdmin ? 'Click en una celda para asignar el nivel (0–5)' : 'Nivel de cada persona por skill (0–5)'}</CardDescription>
+              <CardTitle>Quién domina qué</CardTitle>
+              <CardDescription>{isAdmin ? 'Click en una celda para asignar el nivel (0–5)' : 'Nivel de cada persona por habilidad (0–5)'}</CardDescription>
             </CardHeader>
             <CardContent>
               {matrix.loading ? <Skeleton className="h-72" /> : matrix.data ? <Matrix data={matrix.data} isAdmin={isAdmin} onChanged={reload} /> : null}
@@ -54,56 +53,62 @@ export default function Skills() {
         </TabsContent>
 
         <TabsContent value="catalog">
-          <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Skill</TableHead>
-                  <TableHead className="hidden md:table-cell">Descripción</TableHead>
-                  <TableHead className="text-right">Devs</TableHead>
-                  <TableHead className="hidden text-right sm:table-cell">Nivel prom.</TableHead>
-                  {isAdmin && <TableHead className="w-20" />}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {catalog.loading && (
-                  <TableRow><TableCell colSpan={5}><Skeleton className="h-9 w-full" /></TableCell></TableRow>
-                )}
-                {catalog.data?.skills.map((s) => (
-                  <TableRow key={s.skillId}>
-                    <TableCell>
-                      <div className="flex items-center gap-2 font-medium">
-                        {s.tag}
-                        {s.busFactorRisk && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Badge variant="warning"><TriangleAlert className="size-3" /> riesgo</Badge>
-                            </TooltipTrigger>
-                            <TooltipContent>Solo {s.devCount} persona(s) domina(n) esta skill</TooltipContent>
-                          </Tooltip>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden max-w-sm truncate text-muted-foreground md:table-cell">{s.description ?? '—'}</TableCell>
-                    <TableCell className="text-right tabular-nums">{s.devCount}</TableCell>
-                    <TableCell className="hidden text-right tabular-nums sm:table-cell">{s.avgLevel || '—'}</TableCell>
-                    {isAdmin && (
-                      <TableCell>
-                        <div className="flex justify-end gap-1">
-                          <SkillDialog skill={s} onSaved={reload} trigger={<Button variant="ghost" size="icon-sm"><Pencil className="size-4" /></Button>} />
-                          <DeleteSkill skill={s} onDeleted={reload} />
-                        </div>
-                      </TableCell>
-                    )}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            {!catalog.loading && !catalog.data?.skills.length && <EmptyState>No hay skills</EmptyState>}
-          </Card>
+          {catalog.loading ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-32" />)}</div>
+          ) : !catalog.data?.skills.length ? (
+            <Card><CardContent className="py-10"><EmptyState>No hay skills</EmptyState></CardContent></Card>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {catalog.data.skills.map((s) => (
+                <SkillCard key={s.skillId} s={s} isAdmin={isAdmin} onSaved={reload} onDeleted={reload} />
+              ))}
+            </div>
+          )}
         </TabsContent>
       </Tabs>
     </Layout>
+  );
+}
+
+// ---- Tarjeta de skill (catálogo) ----
+function SkillCard({ s, isAdmin, onSaved, onDeleted }: { s: SkillCatalogItem; isAdmin: boolean; onSaved: () => void; onDeleted: () => void }) {
+  const max = 6; // referencia visual de cobertura (equipo ~6 devs activos)
+  return (
+    <Card className={cn('group flex flex-col p-4', s.busFactorRisk && 'border-warning/30')}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="truncate font-semibold">{s.tag}</span>
+            {s.busFactorRisk && (
+              <Tooltip>
+                <TooltipTrigger asChild><Badge variant="warning"><TriangleAlert className="size-3" /></Badge></TooltipTrigger>
+                <TooltipContent>Solo {s.devCount} persona(s) domina(n) esta habilidad</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{s.description ?? 'Sin descripción'}</p>
+        </div>
+        {isAdmin && (
+          <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+            <SkillDialog skill={s} onSaved={onSaved} trigger={<Button variant="ghost" size="icon-sm"><Pencil className="size-4" /></Button>} />
+            <DeleteSkill skill={s} onDeleted={onDeleted} />
+          </div>
+        )}
+      </div>
+
+      <div className="mt-auto pt-3">
+        <div className="mb-1.5 flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">{s.devCount} {s.devCount === 1 ? 'persona' : 'personas'}</span>
+          <span className="text-muted-foreground">nivel prom. <span className="font-semibold text-foreground">{s.avgLevel || '—'}</span></span>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn('h-full rounded-full', s.busFactorRisk ? 'bg-warning' : 'bg-success')}
+            style={{ width: `${Math.max((s.devCount / max) * 100, 6)}%` }}
+          />
+        </div>
+      </div>
+    </Card>
   );
 }
 

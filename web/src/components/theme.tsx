@@ -14,8 +14,10 @@ function systemPrefersDark() {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>(() => (localStorage.getItem(KEY) as Theme) || 'system');
-  const [resolved, setResolved] = useState<'light' | 'dark'>('light');
+  // Default: oscuro (la estética del dashboard está pensada para dark). El usuario puede
+  // cambiarlo y su elección se recuerda en localStorage.
+  const [theme, setThemeState] = useState<Theme>(() => (localStorage.getItem(KEY) as Theme) || 'dark');
+  const [resolved, setResolved] = useState<'light' | 'dark'>('dark');
 
   useEffect(() => {
     const apply = () => {

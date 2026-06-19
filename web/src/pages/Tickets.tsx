@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Ticket as TicketIcon, CircleAlert, UserX, ExternalLink, ListFilter } from 'lucide-react';
+import { Ticket as TicketIcon, CircleAlert, UserX, ExternalLink, CircleDot, CircleCheck } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { MetricCard } from '@/components/MetricCard';
-import { RankBars } from '@/components/charts';
+import { RankBars, Donut } from '@/components/charts';
 import { UserAvatar, EmptyState } from '@/components/bits';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +22,20 @@ const PRIO: Record<string, { label: string; cls: string }> = {
   medium: { label: 'Media', cls: 'bg-chart-1' },
   low: { label: 'Baja', cls: 'bg-muted-foreground' },
 };
+
+// Colores de la dona de prioridad (semánticos) + etiqueta en español.
+const PRIO_COLOR: Record<string, string> = {
+  urgent: 'hsl(var(--destructive))', high: 'hsl(var(--warning))', medium: 'hsl(var(--chart-1))', low: 'hsl(var(--muted-foreground))',
+};
+const PRIO_ES: Record<string, string> = { urgent: 'Urgente', high: 'Alta', medium: 'Media', low: 'Baja', 'sin prioridad': 'Sin prioridad' };
+
+// Color de barra por estado: verde si terminado, azul si en curso, gris si pendiente.
+function STATE_COLOR(label: string): string {
+  const l = label.toLowerCase();
+  if (/(done|complet|hecho|cerrad)/.test(l)) return 'hsl(var(--success))';
+  if (/(progress|curso|review|revis|sprint)/.test(l)) return 'hsl(var(--chart-1))';
+  return 'hsl(var(--muted-foreground))';
+}
 
 function stateVariant(state: string): 'success' | 'default' | 'secondary' {
   if (['completed', 'done'].includes(state)) return 'success';
@@ -67,30 +81,51 @@ export default function Tickets() {
 
       {/* KPIs */}
       {loading || !data ? (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <MetricCard label={scope === 'open' ? 'Tickets abiertos' : 'Tickets totales'} value={data.total} icon={TicketIcon} />
-            <MetricCard label="Vencidos" value={data.overdue} icon={CircleAlert} />
-            <MetricCard label="Sin asignar" value={data.unassigned} icon={UserX} />
-            <MetricCard label="Estados activos" value={data.byState.length} icon={ListFilter} />
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+            <MetricCard label="Total" value={data.summary.total} icon={TicketIcon} colorVar="--chart-1" />
+            <MetricCard label="En curso" value={data.summary.inProgress} icon={CircleDot} colorVar="--chart-2" />
+            <MetricCard label="Completados" value={data.summary.completed} icon={CircleCheck} colorVar="--chart-3" />
+            <MetricCard label="Vencidos" value={data.summary.overdue} icon={CircleAlert} colorVar="--destructive" />
+            <MetricCard label="Sin asignar" value={data.summary.unassigned} icon={UserX} colorVar="--chart-5" />
           </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
             <Card>
+              <CardHeader><CardTitle>Por proyecto</CardTitle></CardHeader>
+              <CardContent><RankBars data={data.byProject} height={180} /></CardContent>
+            </Card>
+            <Card>
               <CardHeader><CardTitle>Por estado</CardTitle></CardHeader>
-              <CardContent><RankBars data={data.byState} height={150} /></CardContent>
+              <CardContent><RankBars data={data.byState.map((s) => ({ ...s, color: STATE_COLOR(s.label) }))} height={180} /></CardContent>
             </Card>
             <Card>
               <CardHeader><CardTitle>Por prioridad</CardTitle></CardHeader>
-              <CardContent><RankBars data={data.byPriority} color="hsl(var(--chart-5))" height={150} /></CardContent>
-            </Card>
-            <Card>
-              <CardHeader><CardTitle>Por responsable</CardTitle></CardHeader>
-              <CardContent><RankBars data={data.byAssignee} color="hsl(var(--chart-3))" height={150} /></CardContent>
+              <CardContent>
+                <Donut data={data.byPriority.map((p) => ({ label: PRIO_ES[p.label] ?? p.label, value: p.value, color: PRIO_COLOR[p.label] ?? 'hsl(var(--muted-foreground))' }))} height={210} />
+              </CardContent>
             </Card>
           </div>
+
+          {/* Developers involucrados */}
+          <Card className="mt-4">
+            <CardHeader><CardTitle>Developers involucrados</CardTitle></CardHeader>
+            <CardContent>
+              {data.developers.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {data.developers.map((d) => (
+                    <div key={d.name} className="flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3">
+                      <UserAvatar url={d.avatarUrl} name={d.name} className="size-6" />
+                      <span className="text-sm">{d.name}</span>
+                      <Badge variant="secondary">{d.count}</Badge>
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyState>Sin responsables asignados</EmptyState>}
+            </CardContent>
+          </Card>
         </>
       )}
 

@@ -2,7 +2,7 @@
 // alineados al tema vía variables CSS. Tooltip propio para respetar claro/oscuro.
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis,
-  Radar, RadarChart, PolarGrid, PolarAngleAxis, PieChart, Pie, Legend,
+  Radar, RadarChart, PolarGrid, PolarAngleAxis, PieChart, Pie, Legend, LabelList,
 } from 'recharts';
 
 export interface SeriesDef {
@@ -78,19 +78,20 @@ export function MiniArea({ data, color = 'hsl(var(--chart-1))', dataKey = 'commi
   );
 }
 
-/** Barras horizontales rankeadas (proyectos, carga, etc). data: {label,value,sub?}. */
-export function RankBars({ data, color = 'hsl(var(--chart-1))', height = 240 }: { data: { label: string; value: number; sub?: string }[]; color?: string; height?: number }) {
+/** Barras horizontales rankeadas con el valor al final. data: {label,value,color?}. */
+export function RankBars({ data, color = 'hsl(var(--chart-1))', height = 240 }: { data: { label: string; value: number; color?: string }[]; color?: string; height?: number }) {
   if (!data.length) return <EmptyChart height={height} />;
   return (
     <ResponsiveContainer width="100%" height={Math.max(height, data.length * 34)}>
-      <BarChart data={data} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }} barCategoryGap={8}>
+      <BarChart data={data} layout="vertical" margin={{ top: 0, right: 28, left: 0, bottom: 0 }} barCategoryGap={8}>
         <XAxis type="number" hide />
         <YAxis type="category" dataKey="label" tick={{ fontSize: 12, fill: 'hsl(var(--foreground))' }} tickLine={false} axisLine={false} width={120} />
         <Tooltip content={<ChartTooltip />} cursor={{ fill: 'hsl(var(--muted))' }} />
-        <Bar dataKey="value" radius={[0, 6, 6, 0]} fill={color} maxBarSize={20}>
-          {data.map((_, i) => (
-            <Cell key={i} fill={color} />
+        <Bar dataKey="value" radius={[0, 6, 6, 0]} fill={color} maxBarSize={22}>
+          {data.map((d, i) => (
+            <Cell key={i} fill={d.color ?? color} />
           ))}
+          <LabelList dataKey="value" position="right" className="fill-foreground" style={{ fontSize: 12, fontWeight: 600 }} />
         </Bar>
       </BarChart>
     </ResponsiveContainer>
