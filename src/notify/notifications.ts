@@ -260,37 +260,41 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
  * Agrupa por ventana de tiempo (el caller dedup-ea por dev+hora vía el outbox), así una PR con
  * muchos commits genera un único correo. Lista los issues completados creados desde `since`.
  */
-export async function notifyChangesDocumented(devId: string, since: string): Promise<void> {
+export async function notifyChangesDocumented(devId: string): Promise<void> {
   if (!devId) return;
   const supabase = db();
 
   const { data: dev } = await supabase.from('dev').select('id, name, email').eq('id', devId).single();
-  if (!dev?.email) return; // sin email, nada que enviar (no es reintentable)
 
-  // Cambios auto-documentados del dev desde la ventana (issues completados y documentados).
-  const sinceIso = since || new Date(Date.now() - 90 * 60 * 1000).toISOString();
+  // Cambios auto-documentados PENDIENTES de notificar (change_notified=false). Agrupa por estado,
+  // no por tiempo: cada PR genera nuevos pendientes (siempre notifica) y el primer evento del
+  // push agarra todos; los siguientes ven 0 y no envían.
   const { data: items } = await supabase
     .from('work_item')
-    .select('identifier, title, url, completed_at')
+    .select('id, identifier, title, url')
     .eq('assignee_dev_id', devId)
     .eq('documented', true)
-    .eq('state', 'completed')
-    .gte('completed_at', sinceIso)
+    .eq('change_notified', false)
     .order('completed_at', { ascending: false })
-    .limit(25);
+    .limit(50);
 
-  const list = (items ?? []) as { identifier: string; title: string; url: string | null }[];
-  if (!list.length) return; // nada que reportar (p.ej. ya se notificó en otra corrida)
+  const list = (items ?? []) as { id: string; identifier: string; title: string; url: string | null }[];
+  if (!list.length) return; // nada pendiente (otro evento del mismo push ya notificó)
+
+  const ids = list.map((i) => i.id);
+
+  // Sin email: igual marcamos como notificados para no reintentar para siempre.
+  if (!dev?.email) {
+    await supabase.from('work_item').update({ change_notified: true }).in('id', ids);
+    return;
+  }
 
   const greeting = dev.name ? `Hola ${firstName(dev.name)},` : 'Hola,';
   const subject = list.length === 1 ? `ROZ · Cambio documentado — ${list[0]!.identifier}` : `ROZ · ${list.length} cambios documentados`;
   const { html, text } = renderDocumentedEmail({ greeting, items: list });
 
-  try {
-    const res = await sendEmail({ to: dev.email, subject, html, text });
-    await supabase.from('notification').insert({ channel: 'email', to_dev_id: devId, to_address: dev.email, template: 'change_documented', body: text, status: 'sent', provider_id: res.id });
-  } catch (err) {
-    await supabase.from('notification').insert({ channel: 'email', to_dev_id: devId, to_address: dev.email, template: 'change_documented', body: text, status: 'failed', error: String(err) });
-    throw err; // que el drain reintente
-  }
+  const res = await sendEmail({ to: dev.email, subject, html, text }); // si falla, lanza → reintento (pendientes intactos)
+  // Marca como notificados SOLO tras enviar OK, para que un fallo reintente sin perder el aviso.
+  await supabase.from('work_item').update({ change_notified: true }).in('id', ids);
+  await supabase.from('notification').insert({ channel: 'email', to_dev_id: devId, to_address: dev.email, template: 'change_documented', body: text, status: 'sent', provider_id: res.id });
 }

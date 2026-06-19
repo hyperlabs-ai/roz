@@ -193,21 +193,22 @@ async function reconcileBody(
   // dispararía notifyAssignment. Pre-reclamamos su llave de idempotencia (misma que usa
   // notifyAssignment) para que el eco del webhook se salte el envío — no tiene sentido avisar
   // "te asignaron" por trabajo ya commiteado.
-  // En su lugar, emitimos UN aviso de "cambio documentado" agrupado por dev+hora: una PR con
-  // muchos commits dedup-ea a un solo correo (idempotencyKey), tras un breve delay que da
-  // tiempo a que lleguen todos los commits del push.
+  // En su lugar emitimos un evento "cambio documentado" (llave por sha, único por commit). El
+  // efecto agrupa por PENDIENTES de notificar del dev (change_notified=false), no por ventana de
+  // tiempo: así cada PR siempre notifica y dentro de una PR sale un solo correo. El delay da
+  // tiempo a que se inserten todos los work_items del push antes de armar el correo.
   if (dev?.id) {
     await claimOnce(`notify-assign:${issue.identifier}:${dev.id}`, 'notify-assign').catch(() => {});
-    const hourBucket = Math.floor(Date.now() / 3_600_000);
     await emit(
       'change.documented',
-      { devId: dev.id, since: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
-      { idempotencyKey: `change-doc:${dev.id}:${hourBucket}`, delaySeconds: 120 },
+      { devId: dev.id },
+      { idempotencyKey: `change-doc:${input.sha}`, delaySeconds: 120 },
     ).catch(() => {});
   }
 
   // Espejo (upsert por linear_id; idempotente con el webhook eventual). Best-effort: si falla,
   // el webhook de Linear creará/actualizará el espejo igualmente — no re-crear el issue.
+  // change_notified=false: pendiente del correo agrupado de "cambio documentado".
   await supabase.from('work_item').upsert(
     {
       linear_id: issue.id,
@@ -220,6 +221,7 @@ async function reconcileBody(
       assignee_dev_id: dev?.id ?? null,
       priority: a.priority ?? null,
       documented: true,
+      change_notified: false,
       url: issue.url,
     },
     { onConflict: 'linear_id' },

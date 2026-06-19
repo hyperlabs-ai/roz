@@ -201,7 +201,7 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
     // Resumen de cambios documentados (auto-creados desde commits). Agrupado por dev+ventana
     // para que una PR con muchos commits genere UN solo correo, no uno por commit.
     case 'change.documented':
-      await notifyChangesDocumented(String(payload.devId ?? ''), String(payload.since ?? ''));
+      await notifyChangesDocumented(String(payload.devId ?? ''));
       return;
     case 'notification.requested':
       // fase 3: enviar la notificación encolada
