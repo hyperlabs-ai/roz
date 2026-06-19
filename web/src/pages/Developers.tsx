@@ -1,18 +1,17 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ChevronRight } from 'lucide-react';
+import { Search, ChevronRight, GitCommitHorizontal, Code2, CircleCheck, CircleDot, FolderGit2 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
-import { UserAvatar, EmptyState } from '@/components/bits';
+import { UserAvatar, EmptyState, SkillChip } from '@/components/bits';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperListItem } from '@/lib/api';
 import { compact } from '@/lib/format';
 import { defaultPeriod } from '@/lib/period';
+import { cn } from '@/lib/utils';
 
 export default function Developers() {
   const [period, setPeriod] = useState(defaultPeriod());
@@ -39,84 +38,9 @@ export default function Developers() {
 
       {error && <Card className="p-4 text-sm text-destructive">{error}</Card>}
 
-      {/* Desktop: tabla */}
-      <Card className="hidden md:block">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Developer</TableHead>
-              <TableHead className="text-right">Commits</TableHead>
-              <TableHead className="text-right">Líneas</TableHead>
-              <TableHead className="text-right">Resueltos</TableHead>
-              <TableHead className="text-right">Abiertos</TableHead>
-              <TableHead className="text-right">Proyectos</TableHead>
-              <TableHead>Skills top</TableHead>
-              <TableHead className="w-8" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading &&
-              Array.from({ length: 6 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell colSpan={8}><Skeleton className="h-9 w-full" /></TableCell>
-                </TableRow>
-              ))}
-            {!loading &&
-              rows.map((d) => (
-                <TableRow key={d.id} className="cursor-pointer" onClick={() => nav(`/developers/${d.id}`)}>
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <UserAvatar url={d.avatarUrl} name={d.name} className="size-8" />
-                      <div>
-                        <div className="font-medium">{d.name}</div>
-                        {d.githubLogin && <div className="text-xs text-muted-foreground">@{d.githubLogin}</div>}
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right font-medium tabular-nums">{d.commits}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">{compact(d.linesChanged)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{d.ticketsResolved}</TableCell>
-                  <TableCell className="text-right tabular-nums">{d.openTickets}</TableCell>
-                  <TableCell className="text-right tabular-nums">{d.projects}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {d.topSkills.slice(0, 3).map((s) => <Badge key={s.tag} variant="secondary">{s.tag}</Badge>)}
-                    </div>
-                  </TableCell>
-                  <TableCell><ChevronRight className="size-4 text-muted-foreground" /></TableCell>
-                </TableRow>
-              ))}
-          </TableBody>
-        </Table>
-      </Card>
-
-      {/* Móvil: tarjetas apiladas */}
-      <div className="space-y-2.5 md:hidden">
-        {loading && Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)}
-        {!loading &&
-          rows.map((d) => (
-            <Card key={d.id} className="cursor-pointer p-4 active:bg-accent/50" onClick={() => nav(`/developers/${d.id}`)}>
-              <div className="flex items-center gap-3">
-                <UserAvatar url={d.avatarUrl} name={d.name} className="size-9" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{d.name}</div>
-                  {d.githubLogin && <div className="truncate text-xs text-muted-foreground">@{d.githubLogin}</div>}
-                </div>
-                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-              </div>
-              <div className="mt-3 grid grid-cols-4 gap-2 text-center">
-                <MiniStat label="Commits" value={String(d.commits)} />
-                <MiniStat label="Líneas" value={compact(d.linesChanged)} />
-                <MiniStat label="Resueltos" value={String(d.ticketsResolved)} />
-                <MiniStat label="Abiertos" value={String(d.openTickets)} />
-              </div>
-              {d.topSkills.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1">
-                  {d.topSkills.slice(0, 4).map((s) => <Badge key={s.tag} variant="secondary">{s.tag}</Badge>)}
-                </div>
-              )}
-            </Card>
-          ))}
+      <div className="space-y-3">
+        {loading && Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+        {!loading && rows.map((d) => <DevRow key={d.id} d={d} onClick={() => nav(`/developers/${d.id}`)} />)}
       </div>
 
       {!loading && !rows.length && <Card className="mt-2"><EmptyState>No hay developers que coincidan</EmptyState></Card>}
@@ -124,11 +48,49 @@ export default function Developers() {
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function DevRow({ d, onClick }: { d: DeveloperListItem; onClick: () => void }) {
   return (
-    <div className="rounded-lg bg-muted/50 py-1.5">
-      <div className="text-sm font-bold tabular-nums">{value}</div>
-      <div className="text-[10px] text-muted-foreground">{label}</div>
+    <Card className="group flex cursor-pointer flex-col gap-4 p-4 transition-shadow hover:shadow-md lg:flex-row lg:items-center" onClick={onClick}>
+      {/* Identidad (izquierda) */}
+      <div className="flex items-center gap-3 lg:w-56 lg:shrink-0">
+        <UserAvatar url={d.avatarUrl} name={d.name} className="size-11 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold">{d.name}</div>
+          {d.githubLogin && <div className="truncate text-xs text-muted-foreground">@{d.githubLogin}</div>}
+        </div>
+      </div>
+
+      {/* Contribuciones destacadas (centro) */}
+      <div className="grid grid-cols-3 gap-2 lg:w-80 lg:shrink-0 xl:gap-3">
+        <BigStat icon={<GitCommitHorizontal className="size-3.5" />} label="Commits" value={String(d.commits)} accent />
+        <BigStat icon={<Code2 className="size-3.5" />} label="Líneas" value={compact(d.linesChanged)} />
+        <BigStat icon={<CircleCheck className="size-3.5" />} label="Resueltos" value={String(d.ticketsResolved)} />
+      </div>
+
+      {/* Skills + secundarios (derecha, ocupa el resto) */}
+      <div className="min-w-0 flex-1">
+        {d.topSkills.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {d.topSkills.slice(0, 5).map((s) => <SkillChip key={s.tag} tag={s.tag} level={s.level} />)}
+          </div>
+        )}
+        <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1"><CircleDot className="size-3.5" /> {d.openTickets} abiertos</span>
+          <span className="inline-flex items-center gap-1"><FolderGit2 className="size-3.5" /> {d.projects} proyectos</span>
+        </div>
+      </div>
+
+      <ChevronRight className="hidden size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 lg:block" />
+    </Card>
+  );
+}
+
+function BigStat({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent?: boolean }) {
+  return (
+    <div className={cn('rounded-lg border p-2 text-center', accent ? 'border-primary/20 bg-primary/5' : 'bg-muted/40')}>
+      <div className="flex items-center justify-center gap-1 text-muted-foreground">{icon}</div>
+      <div className={cn('mt-0.5 text-xl font-bold tabular-nums leading-none', accent && 'text-primary')}>{value}</div>
+      <div className="mt-1 text-[10px] text-muted-foreground">{label}</div>
     </div>
   );
 }

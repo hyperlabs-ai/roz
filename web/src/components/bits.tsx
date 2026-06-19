@@ -39,6 +39,22 @@ export function EmptyState({ icon, children }: { icon?: ReactNode; children: Rea
   );
 }
 
+// ---- Skill chips ----
+/** Chip compacto de skill con dots de nivel (1–5). Para listas densas (tarjetas de dev). */
+export function SkillChip({ tag, level }: { tag: string; level: number }) {
+  const lvl = Math.max(0, Math.min(5, level));
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2 py-1 text-xs">
+      <span className="font-medium">{tag}</span>
+      <span className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <span key={n} className={cn('size-1.5 rounded-full', n <= lvl ? 'bg-primary' : 'bg-muted')} />
+        ))}
+      </span>
+    </span>
+  );
+}
+
 // ---- Skill meters ----
 const LEVEL_LABEL = ['', 'Básico', 'Junior', 'Intermedio', 'Avanzado', 'Experto'];
 
