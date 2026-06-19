@@ -238,6 +238,40 @@ export async function getOverview(period: Period, cmp: Period | null) {
 
   const skillsCoverage = await getSkillCatalog();
 
+  // Contribución por developer (commits + tickets resueltos + líneas) en el período.
+  const devAgg = new Map<string, { devId: string; name: string; avatarUrl: string | null; commits: number; ticketsResolved: number; lines: number }>();
+  const ensureDev = (id: string) => {
+    if (!devAgg.has(id)) devAgg.set(id, { devId: id, name: devName.get(id) ?? '—', avatarUrl: devAvatar.get(id) ?? null, commits: 0, ticketsResolved: 0, lines: 0 });
+    return devAgg.get(id)!;
+  };
+  curCommits.forEach((c) => {
+    if (!c.dev_id) return;
+    const r = ensureDev(c.dev_id);
+    r.commits++;
+    r.lines += (c.additions ?? 0) + (c.deletions ?? 0);
+  });
+  curResolved.forEach((w) => w.assignee_dev_id && ensureDev(w.assignee_dev_id).ticketsResolved++);
+  const byDeveloper = [...devAgg.values()].sort((a, b) => b.commits + b.ticketsResolved - (a.commits + a.ticketsResolved));
+
+  // Cliente vs Interno: a dónde va el esfuerzo (commits + tickets) según project.kind.
+  const kindByProject = new Map(projects.map((p) => [p.id, p.kind]));
+  const split = { client: { commits: 0, ticketsResolved: 0 }, internal: { commits: 0, ticketsResolved: 0 } };
+  curCommits.forEach((c) => {
+    const k = c.project_id ? kindByProject.get(c.project_id) : null;
+    if (k === 'client') split.client.commits++;
+    else if (k === 'internal') split.internal.commits++;
+  });
+  curResolved.forEach((w) => {
+    const k = w.project_id ? kindByProject.get(w.project_id) : null;
+    if (k === 'client') split.client.ticketsResolved++;
+    else if (k === 'internal') split.internal.ticketsResolved++;
+  });
+
+  // Tickets abiertos por estado (salud del pipeline, no atado al período).
+  const stateAgg = new Map<string, number>();
+  open.forEach((w) => stateAgg.set(w.state, (stateAgg.get(w.state) ?? 0) + 1));
+  const ticketsByState = [...stateAgg.entries()].map(([state, count]) => ({ state, count })).sort((a, b) => b.count - a.count);
+
   // Tendencia diaria dentro del período.
   const trendMap = new Map<string, { date: string; commits: number; ticketsResolved: number }>();
   const ensureDay = (k: string) => {
@@ -248,7 +282,7 @@ export async function getOverview(period: Period, cmp: Period | null) {
   curResolved.forEach((w) => w.completed_at && ensureDay(dayKey(w.completed_at)).ticketsResolved++);
   const trend = [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date));
 
-  return { period, compare: cmp, kpis, byProject, workload, skillsCoverage, trend };
+  return { period, compare: cmp, kpis, byProject, byDeveloper, split, ticketsByState, workload, skillsCoverage, trend };
 }
 
 // ---- Lista de developers ----
@@ -482,6 +516,105 @@ export async function getProject(projectId: string, period: Period) {
   };
 }
 
+// ---- Tickets (espejo de Linear) ----
+
+const OPEN_STATES = ['backlog', 'unstarted', 'triage', 'started'];
+
+export interface TicketFilters {
+  projectId?: string;
+  state?: string; // tipo de estado
+  assigneeDevId?: string;
+  priority?: string;
+  scope?: 'open' | 'all'; // open = no cerrados (default)
+}
+
+export async function getTickets(f: TicketFilters) {
+  const [devs, projects] = await Promise.all([allDevs(), allProjects()]);
+  const devName = new Map(devs.map((d) => [d.id, d.name]));
+  const devAvatar = new Map(devs.map((d) => [d.id, avatarFor(d.github_login)]));
+  const projName = new Map(projects.map((p) => [p.id, p.name]));
+
+  let q = db()
+    .from('work_item')
+    .select(
+      'id, identifier, number, title, state, state_name, priority, project_id, assignee_dev_id, estimate, due_date, labels, creator_name, url, started_at, completed_at, linear_created_at, linear_updated_at',
+    );
+  if (f.projectId) q = q.eq('project_id', f.projectId);
+  if (f.assigneeDevId) q = q.eq('assignee_dev_id', f.assigneeDevId);
+  if (f.priority) q = q.eq('priority', f.priority);
+  if (f.state) q = q.eq('state', f.state);
+  else if (f.scope !== 'all') q = q.in('state', OPEN_STATES);
+  const { data } = await q.order('linear_updated_at', { ascending: false }).limit(500);
+  const rows = (data ?? []) as any[];
+
+  const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+  const now = Date.now();
+
+  const tickets = rows
+    .map((w) => ({
+      id: w.id,
+      identifier: w.identifier,
+      number: w.number,
+      title: w.title,
+      state: w.state,
+      stateName: w.state_name ?? w.state,
+      priority: w.priority,
+      projectId: w.project_id,
+      projectName: w.project_id ? projName.get(w.project_id) ?? null : null,
+      assignee: w.assignee_dev_id ? { name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
+      estimate: w.estimate,
+      dueDate: w.due_date,
+      overdue: w.due_date ? !['completed', 'done', 'canceled'].includes(w.state) && new Date(w.due_date).getTime() < now : false,
+      labels: w.labels ?? [],
+      creatorName: w.creator_name,
+      url: w.url,
+      updatedAt: w.linear_updated_at,
+      ageDays: w.linear_created_at ? Math.floor((now - new Date(w.linear_created_at).getTime()) / 86_400_000) : null,
+    }))
+    .sort((a, b) => (PRIO_ORDER[a.priority ?? ''] ?? 9) - (PRIO_ORDER[b.priority ?? ''] ?? 9));
+
+  // Agregaciones para los KPIs/gráficas (sobre el conjunto filtrado).
+  const byState = countMap(tickets, (t) => t.stateName);
+  const byPriority = countMap(tickets, (t) => t.priority ?? 'sin prioridad');
+  const byAssignee = countMap(tickets, (t) => t.assignee?.name ?? 'sin asignar');
+
+  return {
+    total: tickets.length,
+    overdue: tickets.filter((t) => t.overdue).length,
+    unassigned: tickets.filter((t) => !t.assignee).length,
+    byState,
+    byPriority,
+    byAssignee,
+    tickets,
+  };
+}
+
+/** Opciones para los filtros del front (proyectos con tickets, devs, estados presentes). */
+export async function getTicketFilters() {
+  const [{ data: wi }, devs, projects] = await Promise.all([
+    db().from('work_item').select('project_id, assignee_dev_id, state, state_name'),
+    allDevs(),
+    allProjects(),
+  ]);
+  const rows = (wi ?? []) as any[];
+  const projWithTickets = new Set(rows.map((r) => r.project_id).filter(Boolean));
+  const states = [...new Map(rows.filter((r) => r.state).map((r) => [r.state, r.state_name ?? r.state])).entries()].map(([value, label]) => ({ value, label }));
+  return {
+    projects: projects.filter((p) => projWithTickets.has(p.id)).map((p) => ({ id: p.id, name: p.name })),
+    devs: devs.filter((d) => d.active).map((d) => ({ id: d.id, name: d.name })),
+    states,
+  };
+}
+
+function countMap<T>(items: T[], key: (t: T) => string): { label: string; value: number }[] {
+  const m = new Map<string, number>();
+  items.forEach((it) => {
+    const k = key(it);
+    m.set(k, (m.get(k) ?? 0) + 1);
+  });
+  return [...m.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+}
+
 // ---- Skills (catálogo, matriz, CRUD) ----
 
 export async function getSkillCatalog() {
@@ -544,6 +677,14 @@ export async function updateSkill(id: string, patch: { tag?: string; description
 export async function deleteSkill(id: string) {
   const { error } = await db().from('skill').delete().eq('id', id);
   if (error) throw error;
+}
+
+/** Ajusta la disponibilidad de un dev (0 saturado .. 1 libre). Afecta al router de asignación. */
+export async function setDevAvailability(devId: string, availability: number) {
+  const a = Math.max(0, Math.min(1, availability));
+  const { error } = await db().from('dev').update({ availability: a, updated_at: new Date().toISOString() }).eq('id', devId);
+  if (error) throw error;
+  return { id: devId, availability: a };
 }
 
 export async function setDevSkill(devId: string, skillId: string, level: number) {

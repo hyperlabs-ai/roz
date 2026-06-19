@@ -3,7 +3,7 @@
 // drainOutbox() —invocado por /v1/internal/drain cada minuto— toma los pendientes y los
 // procesa de forma idempotente, con reintentos (backoff exponencial) y dead-letter.
 import { db } from '../db/supabase.js';
-import { notifyAssignment } from '../notify/notifications.js';
+import { notifyAssignment, notifyChangesDocumented } from '../notify/notifications.js';
 import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit } from '../reconcile/commits.js';
 import { upsertLinearProject } from '../projects/resolve.js';
@@ -17,6 +17,7 @@ export type OutboxEventType =
   | 'linear.issue_removed'
   | 'linear.project_upserted'
   | 'commit.received'
+  | 'change.documented'
   | 'notification.requested';
 
 const MAX_ATTEMPTS = 5;
@@ -196,6 +197,11 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
         repo: String(payload.repo ?? ''),
         sha: String(payload.sha ?? ''),
       });
+      return;
+    // Resumen de cambios documentados (auto-creados desde commits). Agrupado por dev+ventana
+    // para que una PR con muchos commits genere UN solo correo, no uno por commit.
+    case 'change.documented':
+      await notifyChangesDocumented(String(payload.devId ?? ''), String(payload.since ?? ''));
       return;
     case 'notification.requested':
       // fase 3: enviar la notificación encolada

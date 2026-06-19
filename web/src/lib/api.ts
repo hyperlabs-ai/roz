@@ -51,6 +51,9 @@ export interface AuthedUser { id: string; email: string; name: string | null; ro
 export interface Overview {
   kpis: { commits: Metric; ticketsResolved: Metric; activeContributors: Metric; avgCycleTimeHours: Metric; linesChanged: Metric };
   byProject: { projectId: string | null; name: string; commits: number; ticketsResolved: number }[];
+  byDeveloper: { devId: string; name: string; avatarUrl: string | null; commits: number; ticketsResolved: number; lines: number }[];
+  split: { client: { commits: number; ticketsResolved: number }; internal: { commits: number; ticketsResolved: number } };
+  ticketsByState: { state: string; count: number }[];
   workload: { devId: string; name: string; avatarUrl: string | null; openTickets: number; weighted: number }[];
   skillsCoverage: SkillCatalogItem[];
   trend: { date: string; commits: number; ticketsResolved: number }[];
@@ -94,6 +97,28 @@ export interface ProjectDetail {
   contributors: { name: string; avatarUrl: string | null; commits: number; lines: number }[];
   history: CommitHistoryItem[];
   trend: { date: string; additions: number; deletions: number }[];
+}
+
+export interface Ticket {
+  id: string; identifier: string; number: number | null; title: string;
+  state: string; stateName: string; priority: string | null;
+  projectId: string | null; projectName: string | null;
+  assignee: { name: string; avatarUrl: string | null } | null;
+  estimate: number | null; dueDate: string | null; overdue: boolean;
+  labels: string[]; creatorName: string | null; url: string | null;
+  updatedAt: string | null; ageDays: number | null;
+}
+export interface TicketsResponse {
+  total: number; overdue: number; unassigned: number;
+  byState: { label: string; value: number }[];
+  byPriority: { label: string; value: number }[];
+  byAssignee: { label: string; value: number }[];
+  tickets: Ticket[];
+}
+export interface TicketFilterOptions {
+  projects: { id: string; name: string }[];
+  devs: { id: string; name: string }[];
+  states: { value: string; label: string }[];
 }
 
 export interface SkillCatalogItem { skillId: string; tag: string; description: string | null; devCount: number; avgLevel: number; busFactorRisk: boolean; }

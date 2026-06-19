@@ -39,6 +39,42 @@ export function EmptyState({ icon, children }: { icon?: ReactNode; children: Rea
   );
 }
 
+// ---- Skill meters ----
+const LEVEL_LABEL = ['', 'Básico', 'Junior', 'Intermedio', 'Avanzado', 'Experto'];
+
+/** Medidor de una skill: nombre + barra segmentada (1–5) + etiqueta de dominio. */
+export function SkillMeter({ tag, level }: { tag: string; level: number }) {
+  const lvl = Math.max(0, Math.min(5, level));
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <span className="truncate text-sm font-semibold">{tag}</span>
+        <span className="shrink-0 text-[11px] font-medium text-muted-foreground">{LEVEL_LABEL[lvl] ?? '—'}</span>
+      </div>
+      <div className="flex gap-1">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <div
+            key={n}
+            className={cn('h-1.5 flex-1 rounded-full transition-colors', n <= lvl ? 'bg-primary' : 'bg-muted')}
+            style={n <= lvl ? { opacity: 0.45 + (n / 5) * 0.55 } : undefined}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Grid de medidores de skills, ordenado por nivel desc. */
+export function SkillMeters({ skills }: { skills: { tag: string; level: number }[] }) {
+  if (!skills.length) return <EmptyState>Sin skills asignadas</EmptyState>;
+  const sorted = [...skills].sort((a, b) => b.level - a.level);
+  return (
+    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+      {sorted.map((s) => <SkillMeter key={s.tag} tag={s.tag} level={s.level} />)}
+    </div>
+  );
+}
+
 /** +/- líneas en verde/rojo, estilo diff. */
 export function LineDelta({ additions, deletions }: { additions: number | null; deletions: number | null }) {
   if (additions == null && deletions == null) return <span className="text-muted-foreground">—</span>;

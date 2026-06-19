@@ -6,6 +6,7 @@ import Developers from '@/pages/Developers';
 import DeveloperProfile from '@/pages/DeveloperProfile';
 import Projects from '@/pages/Projects';
 import ProjectDetail from '@/pages/ProjectDetail';
+import Tickets from '@/pages/Tickets';
 import Skills from '@/pages/Skills';
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
       <Route path="/developers/:id" element={<DeveloperProfile />} />
       <Route path="/projects" element={<Projects />} />
       <Route path="/projects/:id" element={<ProjectDetail />} />
+      <Route path="/tickets" element={<Tickets />} />
       <Route path="/skills" element={<Skills />} />
       <Route path="*" element={<Overview />} />
     </Routes>

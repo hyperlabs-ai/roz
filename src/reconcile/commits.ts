@@ -11,7 +11,7 @@ import { db } from '../db/supabase.js';
 import { complete } from '../adapters/anthropic.js';
 import { getCommit, referencesLinearIssue, type CommitMeta } from '../adapters/github.js';
 import { createIssue, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
-import { claimOnce, releaseOnce } from '../events/outbox.js';
+import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
 
 export interface ReconcileInput {
@@ -173,7 +173,10 @@ async function reconcileBody(
   // Autor del commit → dev (resuelto arriba) → su linear_user_id para asignar el issue.
   const assigneeId = dev?.linear_user_id ?? undefined;
 
-  const stateId = await resolveInitialStateId(project.linear_team_id);
+  // El trabajo YA existe en el código (el commit está hecho), así que el issue se crea
+  // COMPLETADO, no como tarea pendiente. Se asigna al autor para dar crédito, pero NO se le
+  // notifica como "te asignaron una tarea" (ver el pre-claim de la llave de notificación abajo).
+  const stateId = await resolveInitialStateId(project.linear_team_id, 'completed');
   const issue = await createIssue({
     teamId: project.linear_team_id,
     projectId: project.linear_project_id ?? undefined,
@@ -186,6 +189,23 @@ async function reconcileBody(
   // A partir de aquí el issue YA existe en Linear: no liberar la llave (evita duplicados).
   state.issueCreated = true;
 
+  // Suprime el correo de asignación: el espejo del webhook detectaría un assignee nuevo y
+  // dispararía notifyAssignment. Pre-reclamamos su llave de idempotencia (misma que usa
+  // notifyAssignment) para que el eco del webhook se salte el envío — no tiene sentido avisar
+  // "te asignaron" por trabajo ya commiteado.
+  // En su lugar, emitimos UN aviso de "cambio documentado" agrupado por dev+hora: una PR con
+  // muchos commits dedup-ea a un solo correo (idempotencyKey), tras un breve delay que da
+  // tiempo a que lleguen todos los commits del push.
+  if (dev?.id) {
+    await claimOnce(`notify-assign:${issue.identifier}:${dev.id}`, 'notify-assign').catch(() => {});
+    const hourBucket = Math.floor(Date.now() / 3_600_000);
+    await emit(
+      'change.documented',
+      { devId: dev.id, since: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
+      { idempotencyKey: `change-doc:${dev.id}:${hourBucket}`, delaySeconds: 120 },
+    ).catch(() => {});
+  }
+
   // Espejo (upsert por linear_id; idempotente con el webhook eventual). Best-effort: si falla,
   // el webhook de Linear creará/actualizará el espejo igualmente — no re-crear el issue.
   await supabase.from('work_item').upsert(
@@ -195,7 +215,9 @@ async function reconcileBody(
       project_id: project.id,
       title,
       spec: description,
-      state: 'unstarted',
+      state: 'completed',
+      completed_at: new Date().toISOString(),
+      assignee_dev_id: dev?.id ?? null,
       priority: a.priority ?? null,
       documented: true,
       url: issue.url,
@@ -203,7 +225,7 @@ async function reconcileBody(
     { onConflict: 'linear_id' },
   ); // se ignora el error: el issue ya existe; el webhook reconciliará el espejo.
 
-  return { action: 'documented', identifier: issue.identifier, detail: 'issue creado desde commit huérfano' };
+  return { action: 'documented', identifier: issue.identifier, detail: 'issue completado creado desde commit huérfano' };
 }
 
 /** Resuelve el dev autor de un commit: por email de git (preferente) y luego por login. */

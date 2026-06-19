@@ -4,10 +4,10 @@ import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2 }
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { MetricCard } from '@/components/MetricCard';
-import { AreaTrend, RankBars } from '@/components/charts';
-import { UserAvatar, EmptyState, StateBadge, LineDelta } from '@/components/bits';
+import { AreaTrend, RankBars, FocusRadar } from '@/components/charts';
+import { UserAvatar, EmptyState, StateBadge, LineDelta, SkillMeters } from '@/components/bits';
+import { AvailabilityControl } from '@/components/AvailabilityControl';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -50,9 +50,8 @@ export default function DeveloperProfile() {
                 <div className="text-lg font-semibold">{data.dev.name}</div>
                 <div className="text-sm text-muted-foreground">{data.dev.email ?? '—'}</div>
               </div>
-              <div className="ml-auto text-right">
-                <div className="text-xs text-muted-foreground">Disponibilidad</div>
-                <div className="text-lg font-semibold">{Math.round(data.dev.availability * 100)}%</div>
+              <div className="ml-auto">
+                <AvailabilityControl devId={data.dev.id} value={data.dev.availability} />
               </div>
             </CardContent>
           </Card>
@@ -74,29 +73,32 @@ export default function DeveloperProfile() {
           </Card>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <Card>
-              <CardHeader><CardTitle className="flex items-center gap-2"><FolderGit2 className="size-4" /> Proyectos</CardTitle></CardHeader>
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><FolderGit2 className="size-4" /> Foco por proyecto</CardTitle>
+                <CardDescription>Dónde se concentra el trabajo (commits)</CardDescription>
+              </CardHeader>
               <CardContent>
-                {data.projects.length ? <RankBars data={data.projects.map((p) => ({ label: p.name, value: p.commits }))} height={160} /> : <EmptyState>Sin actividad</EmptyState>}
+                {data.projects.length ? <FocusRadar data={data.projects.map((p) => ({ label: p.name, value: p.commits }))} height={340} /> : <EmptyState>Sin actividad</EmptyState>}
               </CardContent>
             </Card>
             <Card>
               <CardHeader><CardTitle>Repos</CardTitle></CardHeader>
               <CardContent>
-                {data.repos.length ? <RankBars data={data.repos.map((r) => ({ label: r.repo.split('/')[1] ?? r.repo, value: r.commits }))} color="hsl(var(--chart-4))" height={160} /> : <EmptyState>Sin actividad</EmptyState>}
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader><CardTitle>Skills</CardTitle></CardHeader>
-              <CardContent>
-                {data.skills.length ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {data.skills.map((s) => <Badge key={s.skillId} variant="default">{s.tag} · {s.level}</Badge>)}
-                  </div>
-                ) : <EmptyState>Sin skills asignadas</EmptyState>}
+                {data.repos.length ? <RankBars data={data.repos.map((r) => ({ label: r.repo.split('/')[1] ?? r.repo, value: r.commits }))} color="hsl(var(--chart-4))" height={340} /> : <EmptyState>Sin actividad</EmptyState>}
               </CardContent>
             </Card>
           </div>
+
+          <Card className="mt-4">
+            <CardHeader>
+              <CardTitle>Skills</CardTitle>
+              <CardDescription>Nivel de dominio por capacidad (1–5)</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SkillMeters skills={data.skills.map((s) => ({ tag: s.tag, level: s.level }))} />
+            </CardContent>
+          </Card>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <Card>

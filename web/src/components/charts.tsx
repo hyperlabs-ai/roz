@@ -2,6 +2,7 @@
 // alineados al tema vía variables CSS. Tooltip propio para respetar claro/oscuro.
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Radar, RadarChart, PolarGrid, PolarAngleAxis, PieChart, Pie, Legend,
 } from 'recharts';
 
 export interface SeriesDef {
@@ -100,6 +101,78 @@ function EmptyChart({ height }: { height: number }) {
   return (
     <div className="flex items-center justify-center text-sm text-muted-foreground" style={{ height }}>
       Sin actividad en este período
+    </div>
+  );
+}
+
+/**
+ * Radar de foco: un vértice por proyecto; el área estirada hacia un eje muestra dónde se
+ * concentra el trabajo. Necesita ≥3 proyectos para verse como polígono; con menos cae a barras.
+ */
+export function FocusRadar({ data, height = 260 }: { data: { label: string; value: number }[]; height?: number }) {
+  if (!data.length) return <EmptyChart height={height} />;
+  if (data.length < 3) {
+    // Un radar de 1–2 ejes no comunica nada; barras es más honesto.
+    return <RankBars data={data} height={Math.min(height, 120)} />;
+  }
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <RadarChart data={data} outerRadius="72%" margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+        <PolarGrid stroke="hsl(var(--border))" />
+        <PolarAngleAxis dataKey="label" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} />
+        <Radar
+          dataKey="value"
+          stroke="hsl(var(--chart-1))"
+          strokeWidth={2}
+          fill="hsl(var(--chart-1))"
+          fillOpacity={0.25}
+          dot={{ r: 3, fill: 'hsl(var(--chart-1))', strokeWidth: 0 }}
+        />
+        <Tooltip content={<RadarTooltip />} />
+      </RadarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Dona con leyenda — para splits (cliente vs interno, etc). data: {label,value,color}. */
+export function Donut({ data, height = 220 }: { data: { label: string; value: number; color: string }[]; height?: number }) {
+  const total = data.reduce((s, d) => s + d.value, 0);
+  if (!total) return <EmptyChart height={height} />;
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <PieChart>
+        <Pie data={data} dataKey="value" nameKey="label" cx="50%" cy="50%" innerRadius="58%" outerRadius="85%" paddingAngle={2} strokeWidth={0}>
+          {data.map((d, i) => <Cell key={i} fill={d.color} />)}
+        </Pie>
+        <Tooltip content={<DonutTooltip total={total} />} />
+        <Legend verticalAlign="bottom" height={28} iconType="circle" formatter={(v) => <span className="text-xs text-muted-foreground">{v}</span>} />
+      </PieChart>
+    </ResponsiveContainer>
+  );
+}
+
+function DonutTooltip({ active, payload, total }: any) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0];
+  const pct = total ? Math.round((p.value / total) * 100) : 0;
+  return (
+    <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
+      <div className="flex items-center gap-2">
+        <span className="size-2 rounded-full" style={{ background: p.payload.color }} />
+        <span className="font-medium text-foreground">{p.name}</span>
+      </div>
+      <div className="mt-0.5 text-muted-foreground"><span className="text-foreground">{p.value}</span> · {pct}%</div>
+    </div>
+  );
+}
+
+function RadarTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0];
+  return (
+    <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
+      <div className="font-medium text-foreground">{p.payload.label}</div>
+      <div className="text-muted-foreground"><span className="text-foreground">{p.value}</span> commits</div>
     </div>
   );
 }

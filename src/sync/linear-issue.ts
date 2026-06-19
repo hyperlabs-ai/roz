@@ -71,6 +71,20 @@ export async function syncIssueFromWebhook(data: any): Promise<SyncResult> {
   // No pisar la spec rica de roz con una descripción vacía de Linear.
   if (description != null && description.trim() !== '') row.spec = description;
 
+  // Campos de Linear para la sección de Tickets (solo si vienen en el payload, para no
+  // sobrescribir con vacíos en updates parciales).
+  if (data.number != null) row.number = data.number;
+  if (data.state?.name) row.state_name = data.state.name;
+  if ('estimate' in data) row.estimate = data.estimate ?? null;
+  if ('dueDate' in data) row.due_date = data.dueDate ?? null;
+  if (data.creator?.name || data.creator?.displayName) row.creator_name = data.creator.name ?? data.creator.displayName;
+  if (data.createdAt) row.linear_created_at = data.createdAt;
+  if (data.updatedAt) row.linear_updated_at = data.updatedAt;
+  // Labels: el webhook a veces manda nombres en labels.nodes; si no, no tocar (el backfill ya
+  // los tiene). Nunca sobrescribir con vacío.
+  const labelNames = (data.labels?.nodes ?? []).map((l: any) => l?.name).filter(Boolean);
+  if (labelNames.length) row.labels = labelNames;
+
   // Timestamps de transición (para el dashboard: tickets resueltos por período + cycle time).
   // Linear los incluye en el payload del Issue (null cuando no aplica). Solo se escriben si la
   // clave viene en el payload, para no borrarlos en updates parciales que la omitan.

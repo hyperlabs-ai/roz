@@ -17,6 +17,8 @@ import {
   addProjectRepo,
   removeProjectRepo,
   setProjectKind,
+  getTickets,
+  getTicketFilters,
   getSkillCatalog,
   getSkillsMatrix,
   createSkill,
@@ -24,6 +26,7 @@ import {
   deleteSkill,
   setDevSkill,
   removeDevSkill,
+  setDevAvailability,
 } from '../dashboard/queries.js';
 
 export const dashboardRoutes = new Hono<RozContext>();
@@ -84,6 +87,19 @@ dashboardRoutes.get('/developers/:id', async (c) => {
   }
 });
 
+// Ajustar disponibilidad (admin). Afecta al router de asignación de roz.
+const AvailabilityBody = z.object({ availability: z.number().min(0).max(1) });
+
+dashboardRoutes.patch('/developers/:id/availability', requireAdmin, async (c) => {
+  const parsed = AvailabilityBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    return c.json(await setDevAvailability(c.req.param('id'), parsed.data.availability));
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
 // Proyectos: lista + detalle (historial de commits, líneas, contribuidores).
 dashboardRoutes.get('/projects', async (c) => {
   try {
@@ -137,6 +153,31 @@ dashboardRoutes.patch('/projects/:id', requireAdmin, async (c) => {
   try {
     await setProjectKind(c.req.param('id'), parsed.data.kind);
     return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Tickets (espejo de Linear): lista filtrable + agregaciones, y opciones de filtro.
+dashboardRoutes.get('/tickets', async (c) => {
+  try {
+    return c.json(
+      await getTickets({
+        projectId: c.req.query('projectId'),
+        state: c.req.query('state'),
+        assigneeDevId: c.req.query('assignee'),
+        priority: c.req.query('priority'),
+        scope: c.req.query('scope') === 'all' ? 'all' : 'open',
+      }),
+    );
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.get('/tickets/filters', async (c) => {
+  try {
+    return c.json(await getTicketFilters());
   } catch (err) {
     return fail(c, err);
   }

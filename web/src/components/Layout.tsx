@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, FolderGit2, Sparkles, Sun, Moon, Monitor, LogOut, Menu } from 'lucide-react';
+import { LayoutDashboard, Users, FolderGit2, Ticket, Sparkles, Sun, Moon, Monitor, LogOut, Menu } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { useTheme } from '@/components/theme';
 import { UserAvatar } from '@/components/bits';
@@ -16,6 +16,7 @@ const NAV = [
   { to: '/', label: 'Resumen', icon: LayoutDashboard, end: true },
   { to: '/developers', label: 'Developers', icon: Users, end: false },
   { to: '/projects', label: 'Proyectos', icon: FolderGit2, end: false },
+  { to: '/tickets', label: 'Tickets', icon: Ticket, end: false },
   { to: '/skills', label: 'Skills', icon: Sparkles, end: false },
 ];
 
