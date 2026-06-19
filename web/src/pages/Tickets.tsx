@@ -85,7 +85,7 @@ export default function Tickets() {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <MetricCard label="Total" value={data.summary.total} icon={TicketIcon} colorVar="--chart-1" />
+            <MetricCard label="Total" value={data.summary.total} icon={TicketIcon} colorVar="--chart-1" className="col-span-2 lg:col-span-1" />
             <MetricCard label="En curso" value={data.summary.inProgress} icon={CircleDot} colorVar="--chart-2" />
             <MetricCard label="Completados" value={data.summary.completed} icon={CircleCheck} colorVar="--chart-3" />
             <MetricCard label="Vencidos" value={data.summary.overdue} icon={CircleAlert} colorVar="--destructive" />
@@ -93,15 +93,15 @@ export default function Tickets() {
           </div>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <Card>
+            <Card className="min-w-0">
               <CardHeader><CardTitle>Por proyecto</CardTitle></CardHeader>
               <CardContent><RankBars data={data.byProject} height={180} /></CardContent>
             </Card>
-            <Card>
+            <Card className="min-w-0">
               <CardHeader><CardTitle>Por estado</CardTitle></CardHeader>
               <CardContent><RankBars data={data.byState.map((s) => ({ ...s, color: STATE_COLOR(s.label) }))} height={180} /></CardContent>
             </Card>
-            <Card>
+            <Card className="min-w-0">
               <CardHeader><CardTitle>Por prioridad</CardTitle></CardHeader>
               <CardContent>
                 <Donut data={data.byPriority.map((p) => ({ label: PRIO_ES[p.label] ?? p.label, value: p.value, color: PRIO_COLOR[p.label] ?? 'hsl(var(--muted-foreground))' }))} height={210} />
@@ -139,8 +139,8 @@ export default function Tickets() {
         ]} />
       </div>
 
-      {/* Tabla */}
-      <Card className="mt-3">
+      {/* Desktop: tabla */}
+      <Card className="mt-3 hidden md:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -162,8 +162,43 @@ export default function Tickets() {
         </Table>
         {!loading && !data?.tickets.length && <EmptyState icon={<TicketIcon className="size-6" />}>No hay tickets con estos filtros</EmptyState>}
       </Card>
+
+      {/* Móvil: tarjetas */}
+      <div className="mt-3 space-y-2 md:hidden">
+        {loading && Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
+        {!loading && data?.tickets.map((t) => <TicketCardMobile key={t.id} t={t} />)}
+        {!loading && !data?.tickets.length && <Card><EmptyState icon={<TicketIcon className="size-6" />}>No hay tickets con estos filtros</EmptyState></Card>}
+      </div>
     </Layout>
   );
+}
+
+function TicketCardMobile({ t }: { t: Ticket }) {
+  const prio = t.priority ? PRIO[t.priority] : null;
+  const inner = (
+    <Card className="p-3">
+      <div className="flex items-start gap-2">
+        <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', prio?.cls ?? 'bg-muted')} title={prio?.label ?? 'sin prioridad'} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
+            <Badge variant={stateVariant(t.state)}>{t.stateName}</Badge>
+          </div>
+          <div className="mt-1 text-sm leading-snug">{t.title}</div>
+          <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+            {t.projectName && <span className="truncate">{t.projectName}</span>}
+            {t.assignee && (
+              <span className="flex items-center gap-1">
+                <UserAvatar url={t.assignee.avatarUrl} name={t.assignee.name} className="size-4" /> {t.assignee.name}
+              </span>
+            )}
+            {t.dueDate && <span className={cn('ml-auto shrink-0', t.overdue && 'font-medium text-destructive')}>{shortDate(t.dueDate)}</span>}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+  return t.url && t.url !== '#' ? <a href={t.url} target="_blank" rel="noreferrer" className="block">{inner}</a> : inner;
 }
 
 function TicketRow({ t }: { t: Ticket }) {

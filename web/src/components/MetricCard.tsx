@@ -43,19 +43,19 @@ export function MetricCard({
 }) {
   const hasCompare = metric && metric.compare !== null && metric.direction !== 'none';
   return (
-    <Card className={cn('p-5', className)}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="flex size-9 items-center justify-center rounded-lg" style={{ backgroundColor: `hsl(var(${colorVar}) / 0.12)`, color: `hsl(var(${colorVar}))` }}>
-            <Icon className="size-[18px]" />
-          </div>
-          <span className="text-sm font-medium text-muted-foreground">{label}</span>
+    <Card className={cn('p-4 sm:p-5', className)}>
+      <div className="flex items-center gap-2 sm:gap-2.5">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg sm:size-9" style={{ backgroundColor: `hsl(var(${colorVar}) / 0.12)`, color: `hsl(var(${colorVar}))` }}>
+          <Icon className="size-4 sm:size-[18px]" />
         </div>
+        <span className="min-w-0 truncate text-xs font-medium text-muted-foreground sm:text-sm">{label}</span>
+      </div>
+      <div className="mt-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 sm:mt-3">
+        <span className="text-2xl font-bold tracking-tight tabular-nums sm:text-3xl">{format(value)}</span>
         {metric && <DeltaBadge metric={metric} invert={invert} />}
       </div>
-      <div className="mt-3 text-3xl font-bold tracking-tight tabular-nums">{format(value)}</div>
       {hasCompare && (
-        <div className="mt-1 text-[11px] text-muted-foreground">
+        <div className="mt-1 truncate text-[11px] text-muted-foreground">
           vs. {format(metric!.compare!)} período anterior
         </div>
       )}

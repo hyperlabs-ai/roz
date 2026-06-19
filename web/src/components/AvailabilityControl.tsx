@@ -49,7 +49,7 @@ export function AvailabilityControl({ devId, value, onSaved }: { devId: string; 
   }
 
   return (
-    <div className="w-44">
+    <div className="w-full sm:w-44">
       <div className="mb-1 flex items-baseline justify-between">
         <span className="text-xs text-muted-foreground">Disponibilidad</span>
         <span className={cn('text-sm font-bold tabular-nums', tone(val / 100))}>{val}%</span>

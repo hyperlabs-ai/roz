@@ -166,7 +166,7 @@ export function Layout({ title, subtitle, actions, children }: { title: string; 
             <div className="border-t px-4 py-2 sm:hidden [&_button]:w-full">{actions}</div>
           )}
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-7 md:pt-7 md:pb-7">
+        <main className="mx-auto w-full max-w-7xl flex-1 overflow-x-hidden px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-7 md:pt-7 md:pb-7">
           {children}
         </main>
       </div>

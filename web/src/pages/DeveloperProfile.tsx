@@ -44,13 +44,15 @@ export default function DeveloperProfile() {
       ) : (
         <>
           <Card>
-            <CardContent className="flex items-center gap-4 py-5">
-              <UserAvatar url={data.dev.avatarUrl} name={data.dev.name} className="size-14" />
-              <div>
-                <div className="text-lg font-semibold">{data.dev.name}</div>
-                <div className="text-sm text-muted-foreground">{data.dev.email ?? '—'}</div>
+            <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center">
+              <div className="flex min-w-0 items-center gap-4">
+                <UserAvatar url={data.dev.avatarUrl} name={data.dev.name} className="size-14 shrink-0" />
+                <div className="min-w-0">
+                  <div className="truncate text-lg font-semibold">{data.dev.name}</div>
+                  <div className="truncate text-sm text-muted-foreground">{data.dev.email ?? '—'}</div>
+                </div>
               </div>
-              <div className="ml-auto">
+              <div className="sm:ml-auto sm:shrink-0">
                 <AvailabilityControl devId={data.dev.id} value={data.dev.availability} />
               </div>
             </CardContent>
@@ -73,7 +75,7 @@ export default function DeveloperProfile() {
           </Card>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
+            <Card className="min-w-0 lg:col-span-2">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2"><FolderGit2 className="size-4" /> Foco por proyecto</CardTitle>
                 <CardDescription>Dónde se concentra el trabajo (commits)</CardDescription>
@@ -82,7 +84,7 @@ export default function DeveloperProfile() {
                 {data.projects.length ? <FocusRadar data={data.projects.map((p) => ({ label: p.name, value: p.commits }))} height={340} /> : <EmptyState>Sin actividad</EmptyState>}
               </CardContent>
             </Card>
-            <Card>
+            <Card className="min-w-0">
               <CardHeader><CardTitle>Repos</CardTitle></CardHeader>
               <CardContent>
                 {data.repos.length ? <RankBars data={data.repos.map((r) => ({ label: r.repo.split('/')[1] ?? r.repo, value: r.commits }))} color="hsl(var(--chart-4))" height={340} /> : <EmptyState>Sin actividad</EmptyState>}
@@ -101,7 +103,7 @@ export default function DeveloperProfile() {
           </Card>
 
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <Card>
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Tickets</CardTitle>
                 <CardDescription>{data.tickets.inProgress.length} en curso · {data.tickets.open.length} abiertos · {data.tickets.resolved.length} resueltos</CardDescription>
@@ -118,7 +120,7 @@ export default function DeveloperProfile() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="min-w-0">
               <CardHeader><CardTitle>Actividad reciente</CardTitle></CardHeader>
               <CardContent>
                 {data.activity.length ? (

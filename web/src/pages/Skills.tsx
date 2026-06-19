@@ -131,15 +131,15 @@ function Matrix({ data, isAdmin, onChanged }: { data: SkillMatrix; isAdmin: bool
     <div>
       <p className="mb-3 text-xs text-muted-foreground sm:hidden">Desliza horizontalmente para ver a todo el equipo →</p>
       <div className="overflow-x-auto scrollbar-thin pb-1">
-        <table className="border-separate border-spacing-1.5">
+        <table className="border-separate border-spacing-1 sm:border-spacing-1.5">
           <thead>
             <tr>
-              <th className="sticky left-0 z-20 bg-card" />
+              <th className="sticky left-0 z-10 bg-card" />
               {data.devs.map((d) => (
                 <th key={d.id} className="px-0.5 pb-2 align-bottom">
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="mx-auto w-fit cursor-default"><UserAvatar url={d.avatarUrl} name={d.name} className="size-8" /></div>
+                      <div className="mx-auto w-fit cursor-default"><UserAvatar url={d.avatarUrl} name={d.name} className="size-6 sm:size-8" /></div>
                     </TooltipTrigger>
                     <TooltipContent>{d.name}</TooltipContent>
                   </Tooltip>
@@ -150,8 +150,8 @@ function Matrix({ data, isAdmin, onChanged }: { data: SkillMatrix; isAdmin: bool
           <tbody>
             {data.skills.map((s) => (
               <tr key={s.id}>
-                <td className="sticky left-0 z-20 border-r border-border/60 bg-card py-1 pr-3 text-sm font-medium">
-                  <span className="block min-w-[80px] max-w-[140px] truncate sm:min-w-[110px]">{s.tag}</span>
+                <td className="sticky left-0 z-10 border-r border-border/60 bg-card py-1 pr-2 text-xs font-medium sm:pr-3 sm:text-sm">
+                  <span className="block min-w-[68px] max-w-[100px] truncate sm:min-w-[110px] sm:max-w-[140px]">{s.tag}</span>
                 </td>
                 {data.devs.map((d) => {
                   const lvl = level.get(`${d.id}:${s.id}`) ?? 0;
@@ -188,7 +188,7 @@ function SkillCell({ devId, skillId, devName, skillTag, level, isAdmin, onChange
   const cell = (
     <div
       className={cn(
-        'mx-auto flex size-9 items-center justify-center rounded-lg text-sm font-bold tabular-nums transition-all sm:size-10',
+        'mx-auto flex size-7 items-center justify-center rounded-md text-xs font-bold tabular-nums transition-all sm:size-10 sm:rounded-lg sm:text-sm',
         isAdmin && 'cursor-pointer hover:ring-2 hover:ring-ring hover:ring-offset-1 hover:ring-offset-card',
       )}
       style={CELL_STYLE(level)}

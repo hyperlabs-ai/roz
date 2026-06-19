@@ -153,7 +153,7 @@ export default function ProjectDetail() {
             </CardContent>
           </Card>
 
-          <Card className="mt-4">
+          <Card className="mt-4 min-w-0">
             <CardHeader><CardTitle>Líneas cambiadas por día</CardTitle></CardHeader>
             <CardContent>
               <AreaTrend
@@ -167,8 +167,8 @@ export default function ProjectDetail() {
           </Card>
 
           <div className="mt-4 grid items-start gap-4 lg:grid-cols-3">
-            <div className="space-y-4">
-              <Card>
+            <div className="min-w-0 space-y-4">
+              <Card className="min-w-0">
                 <CardHeader><CardTitle>Contribuidores</CardTitle></CardHeader>
                 <CardContent className="space-y-2">
                   {data.contributors.length ? (
@@ -208,7 +208,7 @@ export default function ProjectDetail() {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="min-w-0">
                 <CardHeader><CardTitle>Actividad por repo</CardTitle></CardHeader>
                 <CardContent>
                   {data.byRepo.length ? (
@@ -217,7 +217,7 @@ export default function ProjectDetail() {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="min-w-0">
                 <CardHeader><CardTitle>Tickets por estado</CardTitle></CardHeader>
                 <CardContent>
                   {data.ticketsByState.length ? (
@@ -227,7 +227,7 @@ export default function ProjectDetail() {
               </Card>
             </div>
 
-            <Card className="lg:col-span-2">
+            <Card className="min-w-0 lg:col-span-2">
               <CardHeader><CardTitle>Historial de commits</CardTitle></CardHeader>
               <CardContent className="p-0">
                 {!data.history.length && <EmptyState>Sin commits en este período</EmptyState>}
