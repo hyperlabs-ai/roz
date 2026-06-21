@@ -48,6 +48,21 @@ export async function getCommit(repo: string, sha: string): Promise<CommitMeta> 
   };
 }
 
+export interface RepoMeta {
+  fullName: string; // "owner/name"
+  name: string; // solo el nombre del repo (sin owner)
+  description: string | null;
+  url: string; // html_url
+}
+
+/** Metadata del repo (para matching de proyecto y el correo de detección). */
+export async function getRepo(repo: string): Promise<RepoMeta> {
+  const d = await gh<{ full_name: string; name: string; description: string | null; html_url: string }>(
+    `/repos/${repo}`,
+  );
+  return { fullName: d.full_name, name: d.name, description: d.description ?? null, url: d.html_url };
+}
+
 /** Heurística barata: ¿el mensaje del commit referencia un issue de Linear (ABC-123)? */
 export function referencesLinearIssue(message: string): string | null {
   const m = message.match(/\b([A-Z]{2,}-\d+)\b/);

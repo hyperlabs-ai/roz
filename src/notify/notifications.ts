@@ -4,7 +4,7 @@
 // envío falla, se lanza para que el drain reintente (backoff).
 import { db } from '../db/supabase.js';
 import { sendEmail } from '../adapters/email.js';
-import { claimOnce } from '../events/outbox.js';
+import { claimOnce, releaseOnce } from '../events/outbox.js';
 
 interface AssignedPayload {
   workItemId?: string;
@@ -297,4 +297,122 @@ export async function notifyChangesDocumented(devId: string): Promise<void> {
   // Marca como notificados SOLO tras enviar OK, para que un fallo reintente sin perder el aviso.
   await supabase.from('work_item').update({ change_notified: true }).in('id', ids);
   await supabase.from('notification').insert({ channel: 'email', to_dev_id: devId, to_address: dev.email, template: 'change_documented', body: text, status: 'sent', provider_id: res.id });
+}
+
+/** Plantilla: se detectó un repo nuevo (vinculado a un proyecto, o pendiente de vincular). */
+function renderRepoDetectedEmail(opts: {
+  greeting: string;
+  repo: string;
+  repoUrl: string | null;
+  projectName: string | null;
+  linked: boolean;
+}): { html: string; text: string } {
+  const { greeting, repo, repoUrl, projectName, linked } = opts;
+  const button = repoUrl
+    ? `<a href="${repoUrl}" style="display:inline-block;background:#5e6ad2;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver en GitHub →</a>`
+    : '';
+  const badge = linked
+    ? `<p style="margin:0 0 4px;color:#16a34a;font-size:13px;font-weight:600">✓ Repo vinculado</p>`
+    : `<p style="margin:0 0 4px;color:#b45309;font-size:13px;font-weight:600">● Repo sin proyecto</p>`;
+  const heading = linked ? 'Se detectó y vinculó un repo nuevo' : 'Se detectó un repo nuevo';
+  const lead = linked
+    ? `${greeting} roz detectó el repo <strong>${repo}</strong> y lo vinculó al proyecto <strong>${projectName}</strong>.`
+    : `${greeting} roz detectó el repo <strong>${repo}</strong> y no encontró un proyecto al cual pertenezca. Vincúlenlo manualmente al proyecto correspondiente.`;
+
+  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+    <table role="presentation" width="500" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e8eb">
+      <tr><td style="background:#0d0d12;padding:20px 28px"><span style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:3px">ROZ</span></td></tr>
+      <tr><td style="padding:28px">
+        ${badge}
+        <p style="margin:0 0 14px;color:#111827;font-size:17px;font-weight:600">${heading}</p>
+        <p style="margin:0 0 18px;color:#6b7280;font-size:14px;line-height:1.5">${lead}</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:10px;margin-bottom:22px">
+          <tr><td style="padding:16px 18px">
+            <div style="color:#5e6ad2;font-size:13px;font-weight:700;margin-bottom:4px">${repo}</div>
+            <div style="color:#111827;font-size:14px;line-height:1.4">${linked ? `Proyecto: ${projectName}` : 'Sin proyecto asignado'}</div>
+          </td></tr>
+        </table>
+        ${button}
+      </td></tr>
+      <tr><td style="padding:16px 28px;border-top:1px solid #eef0f2"><span style="color:#9ca3af;font-size:12px">Enviado por ROZ · tracking de repositorios</span></td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+
+  const text =
+    `${heading}\n` +
+    (linked
+      ? `${greeting} roz detectó el repo ${repo} y lo vinculó al proyecto ${projectName}.`
+      : `${greeting} roz detectó el repo ${repo} y no encontró un proyecto al cual pertenezca. Vincúlenlo manualmente.`) +
+    (repoUrl ? `\n\nVer en GitHub: ${repoUrl}` : '') +
+    `\n\n— ROZ`;
+
+  return { html, text };
+}
+
+interface RepoNotifyPayload {
+  repo?: string;
+  repoUrl?: string | null;
+  projectName?: string | null;
+  linked?: boolean;
+}
+
+/**
+ * Avisa por correo a TODOS los devs activos con email que se detectó un repo nuevo (vinculado o
+ * pendiente de vincular). Idempotente por (repo, dev) vía claimOnce: si el envío a algún dev falla,
+ * se relanza para que el drain reintente y los ya notificados se saltan.
+ */
+export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<void> {
+  const repo = payload.repo;
+  if (!repo) return;
+  const supabase = db();
+
+  const { data } = await supabase.from('dev').select('id, name, email').eq('active', true).not('email', 'is', null);
+  const devs = (data ?? []) as { id: string; name: string | null; email: string | null }[];
+
+  const subject = payload.linked
+    ? `ROZ · Repo vinculado — ${repo}`
+    : `ROZ · Repo nuevo detectado — ${repo}`;
+
+  for (const dev of devs) {
+    if (!dev.email) continue;
+    const key = `notify-repo:${repo}:${dev.id}`;
+    const firstTime = await claimOnce(key, 'notify-repo');
+    if (!firstTime) continue; // ya notificado en un intento previo
+
+    const greeting = dev.name ? `Hola ${firstName(dev.name)},` : 'Hola,';
+    const { html, text } = renderRepoDetectedEmail({
+      greeting,
+      repo,
+      repoUrl: payload.repoUrl ?? null,
+      projectName: payload.projectName ?? null,
+      linked: !!payload.linked,
+    });
+
+    try {
+      const res = await sendEmail({ to: dev.email, subject, html, text });
+      await supabase.from('notification').insert({
+        channel: 'email',
+        to_dev_id: dev.id,
+        to_address: dev.email,
+        template: 'repo_detected',
+        body: text,
+        status: 'sent',
+        provider_id: res.id,
+      });
+    } catch (err) {
+      await supabase.from('notification').insert({
+        channel: 'email',
+        to_dev_id: dev.id,
+        to_address: dev.email,
+        template: 'repo_detected',
+        body: text,
+        status: 'failed',
+        error: String(err),
+      });
+      await releaseOnce(key); // libera el claim para que el reintento sí pueda enviar a este dev
+      throw err; // que el drain reintente (los devs ya enviados se saltan por su claim)
+    }
+  }
 }

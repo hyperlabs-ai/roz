@@ -3,9 +3,10 @@
 // drainOutbox() —invocado por /v1/internal/drain cada minuto— toma los pendientes y los
 // procesa de forma idempotente, con reintentos (backoff exponencial) y dead-letter.
 import { db } from '../db/supabase.js';
-import { notifyAssignment, notifyChangesDocumented } from '../notify/notifications.js';
+import { notifyAssignment, notifyChangesDocumented, notifyRepoDetected } from '../notify/notifications.js';
 import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit } from '../reconcile/commits.js';
+import { handleRepoDetected } from '../reconcile/repos.js';
 import { upsertLinearProject } from '../projects/resolve.js';
 import { documentCompletedWork } from '../brain/document.js';
 
@@ -18,6 +19,8 @@ export type OutboxEventType =
   | 'linear.project_upserted'
   | 'commit.received'
   | 'change.documented'
+  | 'repo.detected'
+  | 'repo.notify'
   | 'notification.requested';
 
 const MAX_ATTEMPTS = 5;
@@ -202,6 +205,16 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
     // para que una PR con muchos commits genere UN solo correo, no uno por commit.
     case 'change.documented':
       await notifyChangesDocumented(String(payload.devId ?? ''));
+      return;
+
+    // Repo nuevo detectado (primer push de un repo desconocido): vincular a un proyecto si hay
+    // match y emitir el aviso a los devs. El propio handler hace no-op si ya estaba trackeado.
+    case 'repo.detected':
+      await handleRepoDetected({ repo: String(payload.repo ?? '') });
+      return;
+    // Broadcast a todos los devs: se detectó/vinculó un repo.
+    case 'repo.notify':
+      await notifyRepoDetected(payload as { repo?: string; repoUrl?: string | null; projectName?: string | null; linked?: boolean });
       return;
     case 'notification.requested':
       // fase 3: enviar la notificación encolada

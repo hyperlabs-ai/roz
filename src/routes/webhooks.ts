@@ -66,6 +66,9 @@ webhookRoutes.post('/github', async (c) => {
         { idempotencyKey: `commit:${repo}:${commit.id}` },
       );
     }
+    // Detección de repos: una sola vez por repo (dedup por idempotency_key). El drain decide si
+    // es realmente nuevo (sin proyecto resoluble): si lo es, lo vincula y notifica a los devs.
+    await emit('repo.detected', { repo }, { idempotencyKey: `repo-detected:${repo}` });
   }
   return c.json({ ok: true });
 });
