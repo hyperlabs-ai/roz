@@ -9,13 +9,14 @@ cosas y solo tres:
 2. **Enrutar**: decide a qué dev se asigna una propuesta (skill + carga).
 3. **Notificar**: email (Resend).
 
-El **Claude conversacional** redacta la propuesta (usando contexto del brain si lo necesita) y la
-envía a roz **vía MCP**; roz la evalúa contra el contexto del proyecto, sugiere asignado, y —tras
-la confirmación del humano en el chat— crea el issue en Linear (ya asignado) y notifica por
-email. De ahí en adelante el trabajo vive en Linear. Lo posterior (al completarse): documentar
-/ actualizar contexto, reconciliar commits de GitHub y avisar a quien propuso. La pieza más
-difícil — y la razón de varias decisiones de diseño — es **no duplicar**: ni tickets, ni
-documentación, ni conocimiento.
+La ingesta es **multi-canal** pero converge en el mismo pipeline (evaluar contra contexto →
+documentar → enrutar → Linear): (a) **conversacional** vía MCP —el chat conduce una entrevista
+guiada y roz documenta y sugiere asignado; el humano confirma—; (b) **tickets desde apps** vía
+`POST /v1/intake` —auto-documentado y auto-asignado, sin humano en el loop—; (c) **directo en
+Linear** —un issue nativo se espeja por webhook—. De ahí en adelante el trabajo vive en Linear. Lo
+posterior (al completarse): documentar / actualizar contexto, reconciliar commits de GitHub y
+avisar a quien propuso. La pieza más difícil — y la razón de varias decisiones de diseño — es **no
+duplicar**: ni tickets, ni documentación, ni conocimiento.
 
 > Reescritura 2026-06: el stack pasó de Python/FastAPI/Railway/procrastinate a **TypeScript /
 > Hono / Vercel serverless**, replicando `hyperflow-core`. El código Python anterior vive en
@@ -50,7 +51,7 @@ Cuatro patrones se repiten en TODOS los dominios de roz:
 | Lenguaje | **TypeScript** (ESM, `strict`) |
 | Datos + vectores | **Supabase Postgres + pgvector** (service role, server-side) |
 | Razonamiento | **Claude** (Anthropic SDK, con prompt caching) — spec, clasificación, reconciliación |
-| Embeddings | **OpenAI** `text-embedding-3-small` (1536 dims) — vía API |
+| Embeddings | **OpenAI** `text-embedding-3-large` (3072 dims) — vía API (alineado con el RAG de `hyperflow-llm`) |
 | Cola async | **Outbox en Postgres drenado por Vercel Cron** — sin servicio externo |
 | Cara interactiva | **Servidor MCP** sobre HTTP (JSON-RPC stateless propio) |
 | Integraciones | **Linear** (verdad del trabajo), **GitHub** (verdad del código), **Resend** (email) |
@@ -103,14 +104,19 @@ roz/
     adapters/           # linear, github, email(resend), anthropic, embeddings(openai)
     mcp/
       server.ts         # servidor MCP: define las tools (cara interactiva)
-    intake/             # propuesta -> evaluación -> Linear     [fase 1]
+    intake/             # propuesta -> evaluación -> Linear (MCP + apps) [fase 1]
     router/             # sugiere asignado por skill + carga     [fase 2]
+    notify/             # email (Resend): asignación, cierre, doc, repo, digest [fase 3]
     brain/              # second brain: átomos, embeddings, grafo, retrieval [fase 4]
-    reconcile/          # dedup de commits / auto-doc            [fase 5]
-    routes/             # health, mcp, webhooks (linear/github), intake, internal
+    reconcile/          # commits (dedup/auto-doc) + repos nuevos (detección/vínculo) [fase 5]
+    projects/           # resolución repo→proyecto y auto-onboarding desde Linear
+    dashboard/          # queries de visibilidad de ingeniería (consumidas por web/)
+    routes/             # health, mcp, webhooks (linear/github), intake, dashboard, internal
   migrations/
     0001_roz_schema.sql # schema completo (pgvector, outbox, idempotencia)
     0002_project_links.sql # alinea project (linear_project_id, hyperops_project_id, active)
+    0003…0008_*.sql     # commit, timestamps de work_item, project_repo, project.kind, campos Linear, change_notified
+  web/                  # SPA React (dashboard de ingeniería)
 ```
 
 ---
@@ -134,22 +140,29 @@ roz/
                                                  └─────────────────────────────────┘
 
 Webhooks entrantes:
-  Linear   → issue pasa a Done  → documenta/actualiza brain + email a quien propuso
-  GitHub   → push/commit        → ¿apunta a un issue? si no, ¿es trabajo huérfano sustantivo?
-                                  → enlaza/dedup contra Linear + brain
+  Linear   → issue creado/actualizado → espeja al work_item (+ auto-onboarding de proyectos)
+           → issue pasa a Done         → documenta/actualiza brain + email a quien propuso
+  GitHub   → push/commit               → ¿apunta a un issue? si no, ¿trabajo huérfano sustantivo?
+                                         → enlaza/dedup contra Linear + auto-doc
+           → repo nuevo (1er push)     → vincula a un proyecto por similitud o avisa a los devs
 ```
 
-### 1. Intake (un solo paso, vía MCP)
-roz no tiene bandeja ni estados de borrador. El Claude conversacional llama a la tool MCP
-`propose_change` con la spec redactada. roz:
-- recupera contexto relevante del brain (retrieval híbrido) para el/los proyectos implicados;
-- pide a Claude un **veredicto de optimalidad**: ¿el cambio es coherente con el contexto?,
-  ¿colisiona con algo existente?, ¿debería/puede hacerse?, ¿qué riesgos?;
-- corre el **router** para sugerir asignado;
-- devuelve todo al chat. El humano **acepta o elige otro dev** → `confirm_proposal`.
+### 1. Intake (multi-canal, sin bandeja)
+roz no tiene bandeja ni estados de borrador. Tres puertas de entrada, un solo pipeline:
 
-Al confirmar, roz **crea el issue en Linear ya asignado**, guarda el `WorkItem` espejo y emite
-`work_item.created` al outbox. De ahí, Linear es la bandeja.
+- **Conversacional (MCP).** Una entrevista guiada (`get_intake_form`) recoge lo mínimo y llama
+  `propose_change`. roz:
+  - recupera contexto relevante del brain (retrieval híbrido) para el/los proyectos implicados;
+  - pide a Claude un **veredicto de optimalidad**: ¿el cambio es coherente con el contexto?,
+    ¿colisiona con algo existente?, ¿debería/puede hacerse?, ¿qué riesgos?;
+  - **genera el título y documenta el detalle** y corre el **router** para sugerir asignado;
+  - devuelve todo al chat. El humano **acepta o elige otro dev** → `confirm_proposal`.
+- **Tickets desde apps (`/v1/intake`).** Una app externa manda la solicitud cruda; roz la
+  auto-documenta, auto-asigna y la lleva a Linear **sin humano en el loop** (skill `roz-intake`).
+- **Directo en Linear.** Un issue creado nativo se espeja al `work_item` vía webhook.
+
+Al confirmar/ingerir, roz **crea el issue en Linear ya asignado** (o lo espeja), guarda el
+`WorkItem` y emite el evento al outbox. De ahí, Linear es la bandeja.
 
 ### 2. Router de devs
 roz tiene contexto de todos los devs: skills (con embedding de perfil), disponibilidad manual y
@@ -157,10 +170,12 @@ roz tiene contexto de todos los devs: skills (con embedding de perfil), disponib
 **propone** y un humano confirma (humano-en-el-loop al inicio; auto tras calibrar).
 
 ### 3. Notificaciones (vía outbox → drain)
-Adapter de **email (Resend)** con plantillas HTML branded (asignación y cierre). Cada
-notificación es un efecto idempotente disparado por el drain; reclama una llave por (issue, dev)
-para no enviar duplicados aunque el evento se reintente. El campo `whatsapp` del dev queda
-guardado para un canal futuro, pero hoy no se notifica por ahí.
+Adapter de **email (Resend)** con plantillas HTML branded: **asignación**, **cierre** (al proposer),
+**cambio documentado** (trabajo auto-creado desde commits, agrupado para mandar un solo correo por
+push), **repo detectado** (broadcast a todos los devs) y el **digest semanal**. Cada notificación es
+un efecto idempotente disparado por el drain; reclama una llave por destinatario para no enviar
+duplicados aunque el evento se reintente. El campo `whatsapp` del dev queda guardado para un canal
+futuro, pero hoy no se notifica por ahí.
 
 ### 4. Second brain (al completarse)
 Disparado por `work_item.done` (webhook de Linear). roz toma el **delta** del work_item (título +
@@ -174,13 +189,27 @@ quedó cerrado y documentado. *(Pendiente: extracción multi-átomo con Claude y
 Por cada commit (webhook de GitHub):
 1. **¿Apunta a un issue de Linear?** La integración nativa Linear↔GitHub lo resuelve por nombre
    de branch / magic words. Si sí → enlaza, marca documentado. **roz no reimplementa esto.**
-2. Si no → **trabajo huérfano**. Un clasificador (Claude) decide: ¿trivial o sustantivo?
-3. Si es sustantivo → **búsqueda semántica** contra issues y átomos. Solo crea ticket/doc si NO
-   hay match sobre el umbral.
-4. **Idempotencia**: cada commit y cada doc tiene llave estable (issue ID o hash normalizado);
-   se procesa una sola vez.
+2. Si no → **trabajo huérfano**. Una sola pasada de Claude decide en un paso: ¿trivial o
+   sustantivo? y, contra los **issues abiertos del proyecto**, ¿resuelve alguno? — es **dedup
+   semántico por razonamiento, sin infra de embeddings** (el contexto cabe en el prompt).
+3. Trivial → se ignora. Sustantivo que resuelve un issue → enlaza. Sustantivo **sin match** → roz
+   crea el issue en Linear **ya completado** (el código ya existe) y emite `change.documented` para
+   avisar al autor con un único correo agrupado por push.
+4. Persiste el commit (proyecto + dev resueltos) para las métricas del dashboard.
+5. **Idempotencia**: la llave por `repo:sha` (`claimOnce`) se libera si algo falla **antes** de
+   crear el issue; una vez creado, no se libera (el espejo posterior es best-effort).
 
-Se construye **al final** (fase 5): necesita el índice canónico de Linear y el brain para dedup.
+El proyecto y el dev se resuelven **en vivo** (`resolveProjectByRepo`, por email de commit/login),
+así que un repo recién mapeado queda trackeado sin re-onboarding.
+
+### 6. Tracking de repos nuevos
+Al primer `push` de un repo que roz nunca vio (no resoluble a un proyecto), el webhook emite
+`repo.detected` (dedup por repo). El drain intenta **vincularlo a un proyecto existente** por
+similitud de nombre —primero por tokens/Levenshtein, luego un fallback con Claude—; si hay match lo
+mapea en `project_repo`, y en cualquier caso **notifica a todos los devs** (vinculado, o
+"detectado sin proyecto: vincúlenlo manualmente"). No crea proyectos: deja esa decisión al humano.
+
+Se construye **al final** (fases 5–6): necesita el índice canónico de Linear y el brain para dedup.
 
 ---
 
@@ -206,7 +235,9 @@ Todo cambio de estado escribe un `OutboxEvent` en la **misma transacción** que 
 Mismo dominio que roz-legacy, portado a SQL/pgvector (ver `migrations/0001_roz_schema.sql`):
 
 - **dev / skill / dev_skill** — router: persona, perfil de skill (con `embedding`), nivel y carga.
-- **project / work_item** — espejo de Linear; `linear_id`/`identifier` (ROZ-123) es canónico.
+- **project / project_repo** — proyecto canónico (Linear+GitHub) y mapeo repo→proyecto.
+- **work_item** — espejo de Linear; `linear_id`/`identifier` (ROZ-123) es canónico.
+- **commit** — historial de commits reconciliados (proyecto/dev resueltos) para el dashboard.
 - **knowledge_atom / atom_edge** — second brain: átomo direccionable (`status`, `superseded_by`,
   `provenance[]`, `embedding`) y el grafo de relaciones (`references`/`derived_from`/`project`).
 - **notification** — saliente email (Resend) con estado de envío y `provider_id`.
@@ -239,6 +270,8 @@ atrapa el duplicado disfrazado. A escala chica, KNN exacto basta (sin HNSW).
 | 0 | Scaffold: Hono+Vercel, config, db, outbox+drain (cron), MCP, webhooks stub, migración. |
 | 1 | **Intake**: `propose_change` / `confirm_proposal` → Linear + notificación. |
 | 2 | **Router**: skills, carga derivada de Linear, sugerencia de asignado. |
-| 3 | **Notificaciones**: plantillas email (Resend) de asignación y cierre, idempotentes. |
+| 3 | **Notificaciones**: plantillas email (Resend) idempotentes — base de asignación/cierre (luego: doc, repo, digest). |
 | 4 | **Brain**: átomos con embeddings (OpenAI), retrieval híbrido, documentación al cierre + barrida. |
 | 5 | **Reconciliación**: commits huérfanos, clasificación, dedup, auto-doc. |
+| 6 | **Tracking de repos**: detección de repos nuevos, vínculo por similitud, aviso a los devs. |
+| + | **Dashboard** de visibilidad (SPA en `web/`) y **digest semanal** por email (viernes). |
