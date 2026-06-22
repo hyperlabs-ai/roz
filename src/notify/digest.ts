@@ -6,7 +6,7 @@
 import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { sendEmail } from '../adapters/email.js';
-import { getOverview, getDeveloper, previousPeriod, type Metric, type Period } from '../dashboard/queries.js';
+import { getOverview, getDeveloper, listInfra, previousPeriod, type Metric, type Period } from '../dashboard/queries.js';
 
 export interface DigestResult {
   sent: number;
@@ -45,10 +45,56 @@ function kpiCell(label: string, value: string, m: Metric, invert = false): strin
   </td>`;
 }
 
-function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>; url: string; rangeLabel: string }): { html: string; text: string } {
-  const { overview: o, url, rangeLabel } = opts;
+// Bloque de infraestructura para el digest de equipo: salud agregada + por proyecto. Vacío si no
+// hay servicios vinculados (no se inserta).
+const INFRA_COLOR: Record<string, string> = { healthy: '#16a34a', degraded: '#d97706', down: '#dc2626', paused: '#6b7280', unknown: '#9ca3af' };
+const INFRA_LABEL: Record<string, string> = { healthy: 'operativos', degraded: 'degradados', down: 'caídos', paused: 'pausados', unknown: 'sin datos' };
+const INFRA_ORDER = ['down', 'degraded', 'paused', 'healthy', 'unknown'];
+
+function renderInfraBlock(infra: Awaited<ReturnType<typeof listInfra>>): { html: string; text: string } {
+  const projects = infra.projects.filter((p) => p.services.length);
+  const services = projects.flatMap((p) => p.services);
+  if (!services.length) return { html: '', text: '' };
+
+  const counts: Record<string, number> = {};
+  services.forEach((s) => (counts[s.status] = (counts[s.status] ?? 0) + 1));
+  const worst = (sts: string[]) => INFRA_ORDER.find((o) => sts.includes(o)) ?? 'unknown';
+  const isIssue = (st: string) => st === 'down' || st === 'degraded' || st === 'paused';
+  const totalReq = services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
+  const summary = `${services.length} servicios · ${INFRA_ORDER.filter((o) => counts[o]).map((o) => `${counts[o]} ${INFRA_LABEL[o]}`).join(' · ')}`;
+
+  const rows = projects
+    .map((p) => {
+      const w = worst(p.services.map((s) => s.status));
+      const issues = p.services.filter((s) => isIssue(s.status)).length;
+      const right = issues > 0 ? `<span style="color:#d97706;font-weight:600">${issues} con alerta</span> · ${p.services.length} svc` : `OK · ${p.services.length} svc`;
+      return `<tr>
+        <td style="padding:7px 0;color:#111827;font-size:14px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${INFRA_COLOR[w]};margin-right:8px"></span>${p.name}</td>
+        <td style="padding:7px 0;text-align:right;color:#6b7280;font-size:13px">${right}</td>
+      </tr>`;
+    })
+    .join('');
+
+  const reqLine = totalReq > 0 ? `<p style="margin:2px 0 8px;color:#6b7280;font-size:12px">${fmtNum(totalReq)} peticiones en las últimas 24 h</p>` : '';
+  const html = `<tr><td style="padding:12px 28px 8px">
+        <p style="margin:0 0 6px;color:#111827;font-size:14px;font-weight:700">Infraestructura</p>
+        <p style="margin:0 0 6px;color:#6b7280;font-size:13px">${summary}</p>
+        ${reqLine}
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
+      </td></tr>`;
+
+  const text =
+    `\nInfraestructura: ${summary}\n` +
+    projects.map((p) => `- ${p.name}: ${p.services.filter((s) => isIssue(s.status)).length > 0 ? `${p.services.filter((s) => isIssue(s.status)).length} con alerta` : 'OK'} (${p.services.length} svc)`).join('\n');
+
+  return { html, text };
+}
+
+function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>; infra: Awaited<ReturnType<typeof listInfra>>; url: string; rangeLabel: string }): { html: string; text: string } {
+  const { overview: o, infra, url, rangeLabel } = opts;
   const k = o.kpis;
   const topProjects = o.byProject.slice(0, 5);
+  const infraBlock = renderInfraBlock(infra);
 
   const projectRows = topProjects.length
     ? topProjects
@@ -86,6 +132,7 @@ function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>;
         <p style="margin:0 0 6px;color:#111827;font-size:14px;font-weight:700">Proyectos con más movimiento</p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${projectRows}</table>
       </td></tr>
+      ${infraBlock.html}
       <tr><td style="padding:20px 28px 28px" align="center">${button}</td></tr>
       <tr><td style="padding:16px 28px;border-top:1px solid #eef0f2">
         <span style="color:#9ca3af;font-size:12px">Enviado por ROZ · siempre observando el progreso 👁️</span>
@@ -98,7 +145,8 @@ function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>;
     `ROZ · Resumen semanal (${rangeLabel})\n\n` +
     `Commits: ${k.commits.value}\nTickets resueltos: ${k.ticketsResolved.value}\n` +
     `Contribuidores activos: ${k.activeContributors.value}\nLíneas cambiadas: ${k.linesChanged.value}\n` +
-    `Cycle time: ${k.avgCycleTimeHours.value}h\n\n` +
+    `Cycle time: ${k.avgCycleTimeHours.value}h\n` +
+    `${infraBlock.text}\n\n` +
     `Ver el resumen completo: ${url}/\n\n— ROZ`;
 
   return { html, text };
@@ -237,8 +285,8 @@ export async function sendWeeklyDigest(): Promise<DigestResult> {
   if (!config.resend.apiKey) return { sent: 0, failed: 0, skipped: 'RESEND_API_KEY no configurado' };
 
   const period = lastWeekPeriod();
-  const overview = await getOverview(period, previousPeriod(period));
-  const { html, text } = renderDigest({ overview, url: config.dashboard.url, rangeLabel: label(period) });
+  const [overview, infra] = await Promise.all([getOverview(period, previousPeriod(period)), listInfra()]);
+  const { html, text } = renderDigest({ overview, infra, url: config.dashboard.url, rangeLabel: label(period) });
   const subject = `ROZ · Resumen semanal (${label(period)})`;
 
   const supabase = db();
