@@ -246,7 +246,7 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
             </div>
 
             {/* Tarjeta por proyecto */}
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {projects.map((p) => {
                 const worst = worstOf(p.services.map((s) => s.status));
                 const issues = p.services.filter((s) => s.status === 'down' || s.status === 'degraded' || s.status === 'paused').length;
@@ -254,7 +254,7 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                 const req = p.services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
                 const byProv = INFRA_PROVIDERS.map((pr) => ({ pr, n: p.services.filter((s) => s.provider === pr).length })).filter((x) => x.n);
                 return (
-                  <button key={p.projectId} onClick={onOpen} className="flex flex-col gap-2 rounded-xl border p-3 text-left transition-colors hover:bg-accent/50">
+                  <button key={p.projectId} onClick={onOpen} className="flex min-w-0 flex-col gap-2 rounded-xl border p-3 text-left transition-colors hover:bg-accent/50">
                     <div className="flex items-center gap-2">
                       <span className={cn('size-2.5 shrink-0 rounded-full', INFRA_STATUS[worst].dot)} />
                       <span className="min-w-0 flex-1 truncate text-sm font-semibold">{p.name}</span>
