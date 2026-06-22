@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GitCommitHorizontal, CircleCheck, Users, Timer, Code2, TriangleAlert, ShieldCheck, Briefcase, Building2 } from 'lucide-react';
+import { GitCommitHorizontal, CircleCheck, Users, Timer, Code2, TriangleAlert, ShieldCheck, Briefcase, Building2, Server, ChevronRight, Triangle, TrainFront, Database, Activity, Rocket } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { MetricCard } from '@/components/MetricCard';
@@ -9,8 +9,8 @@ import { UserAvatar, EmptyState } from '@/components/bits';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApi } from '@/lib/useApi';
-import { apiGet, type Overview as OverviewData } from '@/lib/api';
-import { compact, hours } from '@/lib/format';
+import { apiGet, type Overview as OverviewData, type InfraResponse, type InfraService, type ServiceProvider, type ServiceStatus } from '@/lib/api';
+import { compact, hours, relative } from '@/lib/format';
 import { comparisonRange, defaultPeriod } from '@/lib/period';
 import { cn } from '@/lib/utils';
 
@@ -46,6 +46,9 @@ export default function Overview() {
             <MetricCard label="Contribuidores" value={data.kpis.activeContributors.value} metric={data.kpis.activeContributors} icon={Users} colorVar="--chart-2" />
             <MetricCard label="Cycle time" value={data.kpis.avgCycleTimeHours.value} metric={data.kpis.avgCycleTimeHours} icon={Timer} invert format={hours} colorVar="--chart-5" />
           </div>
+
+          {/* Estado de infraestructura (primer vistazo) */}
+          <InfraHealth onOpen={() => nav('/infra')} />
 
           {/* Actividad + Cliente vs Interno */}
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -161,6 +164,140 @@ export default function Overview() {
         </>
       )}
     </Layout>
+  );
+}
+
+const INFRA_STATUS: Record<ServiceStatus, { label: string; dot: string }> = {
+  healthy: { label: 'operativos', dot: 'bg-success' },
+  degraded: { label: 'degradados', dot: 'bg-warning' },
+  down: { label: 'caídos', dot: 'bg-destructive' },
+  paused: { label: 'pausados', dot: 'bg-muted-foreground' },
+  unknown: { label: 'sin datos', dot: 'bg-muted-foreground/40' },
+};
+const INFRA_ORDER: ServiceStatus[] = ['down', 'degraded', 'paused', 'healthy', 'unknown'];
+const INFRA_PROVIDERS: ServiceProvider[] = ['vercel', 'railway', 'supabase'];
+const PROV: Record<ServiceProvider, { Icon: typeof Triangle; accent: string }> = {
+  vercel: { Icon: Triangle, accent: 'text-foreground' },
+  railway: { Icon: TrainFront, accent: 'text-violet-500' },
+  supabase: { Icon: Database, accent: 'text-emerald-500' },
+};
+
+function latestDeploy(services: InfraService[]): InfraService | null {
+  return services
+    .filter((s) => s.deploy?.createdAt)
+    .sort((a, b) => (b.deploy!.createdAt! > a.deploy!.createdAt! ? 1 : -1))[0] ?? null;
+}
+
+// Estado de infraestructura para el Resumen: salud agregada por proyecto, con desglose por
+// proveedor, último deploy y peticiones. Lee /infra (estado actual, no depende del período).
+function InfraHealth({ onOpen }: { onOpen: () => void }) {
+  const { data, loading } = useApi<InfraResponse>(() => apiGet('/infra'), []);
+  const projects = (data?.projects ?? []).filter((p) => p.services.length);
+  const services = projects.flatMap((p) => p.services);
+  if (!loading && !services.length) return null; // sin servicios vinculados → no mostrar
+
+  const counts = services.reduce((a, s) => ((a[s.status] = (a[s.status] ?? 0) + 1), a), {} as Record<ServiceStatus, number>);
+  const worstOf = (statuses: ServiceStatus[]) => INFRA_ORDER.find((st) => statuses.includes(st)) ?? 'unknown';
+  const totalReq = services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
+  const lastDeploy = latestDeploy(services);
+
+  return (
+    <Card className="mt-4">
+      <CardHeader className="flex-row items-start justify-between space-y-0">
+        <div>
+          <CardTitle className="flex items-center gap-2"><Server className="size-4" /> Estado de infraestructura</CardTitle>
+          <CardDescription>Salud de deploys y servicios por proyecto</CardDescription>
+        </div>
+        <button onClick={onOpen} className="inline-flex shrink-0 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
+          Ver todo <ChevronRight className="size-4" />
+        </button>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <Skeleton className="h-40" />
+        ) : (
+          <>
+            {/* Resumen global */}
+            <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2">
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-xl font-bold tabular-nums">{services.length}</span>
+                <span className="text-xs text-muted-foreground">servicios</span>
+              </div>
+              {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
+                <div key={st} className="flex items-center gap-1.5">
+                  <span className={cn('size-2.5 rounded-full', INFRA_STATUS[st].dot)} />
+                  <span className="text-sm font-semibold tabular-nums">{counts[st]}</span>
+                  <span className="text-xs text-muted-foreground">{INFRA_STATUS[st].label}</span>
+                </div>
+              ))}
+              {totalReq > 0 && (
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Activity className="size-3.5" />
+                  <span className="text-sm font-semibold tabular-nums text-foreground">{compact(totalReq)}</span>
+                  <span className="text-xs">peticiones/24h</span>
+                </div>
+              )}
+              {lastDeploy?.deploy?.createdAt && (
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <Rocket className="size-3.5" />
+                  <span className="text-xs">último deploy <span className="text-foreground">{relative(lastDeploy.deploy.createdAt)}</span></span>
+                </div>
+              )}
+            </div>
+
+            {/* Tarjeta por proyecto */}
+            <div className="grid gap-3 sm:grid-cols-2">
+              {projects.map((p) => {
+                const worst = worstOf(p.services.map((s) => s.status));
+                const issues = p.services.filter((s) => s.status === 'down' || s.status === 'degraded' || s.status === 'paused').length;
+                const dep = latestDeploy(p.services);
+                const req = p.services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
+                const byProv = INFRA_PROVIDERS.map((pr) => ({ pr, n: p.services.filter((s) => s.provider === pr).length })).filter((x) => x.n);
+                return (
+                  <button key={p.projectId} onClick={onOpen} className="flex flex-col gap-2 rounded-xl border p-3 text-left transition-colors hover:bg-accent/50">
+                    <div className="flex items-center gap-2">
+                      <span className={cn('size-2.5 shrink-0 rounded-full', INFRA_STATUS[worst].dot)} />
+                      <span className="min-w-0 flex-1 truncate text-sm font-semibold">{p.name}</span>
+                      {issues > 0
+                        ? <span className="shrink-0 rounded-md bg-warning/12 px-1.5 py-0.5 text-[11px] font-medium text-warning">{issues} con alerta</span>
+                        : <span className="shrink-0 text-[11px] font-medium text-success">Todo operativo</span>}
+                    </div>
+
+                    {/* Desglose por proveedor */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {byProv.map(({ pr, n }) => {
+                        const { Icon, accent } = PROV[pr];
+                        return (
+                          <span key={pr} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <Icon className={cn('size-3.5', accent)} /><span className="font-medium text-foreground">{n}</span>
+                          </span>
+                        );
+                      })}
+                      {req > 0 && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <Activity className="size-3" />{compact(req)}/24h
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Último deploy */}
+                    {dep?.deploy?.commitMessage ? (
+                      <div className="flex items-center gap-1.5 border-t pt-2 text-[11px] text-muted-foreground">
+                        <GitCommitHorizontal className="size-3.5 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">{dep.deploy.commitMessage}</span>
+                        {dep.deploy.createdAt && <span className="shrink-0">{relative(dep.deploy.createdAt)}</span>}
+                      </div>
+                    ) : (
+                      <div className="border-t pt-2 text-[11px] text-muted-foreground">{p.services.length} servicios monitoreados</div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
