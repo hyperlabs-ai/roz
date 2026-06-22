@@ -125,7 +125,7 @@ export async function upsertLinearProject(data: {
   return { created: true, projectId: ins.id };
 }
 
-function slugKey(name: string): string {
+export function slugKey(name: string): string {
   const base = name
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')

@@ -14,9 +14,11 @@ import {
   getDeveloper,
   listProjects,
   getProject,
+  createProject,
+  updateProject,
+  deleteProject,
   addProjectRepo,
   removeProjectRepo,
-  setProjectKind,
   getTickets,
   getTicketFilters,
   getSkillCatalog,
@@ -109,6 +111,23 @@ dashboardRoutes.get('/projects', async (c) => {
   }
 });
 
+// Crear un proyecto manual (admin). La key se autogenera del nombre si no se manda.
+const ProjectCreate = z.object({
+  name: z.string().min(1),
+  key: z.string().min(1).optional(),
+  kind: z.enum(['client', 'internal']).optional(),
+});
+
+dashboardRoutes.post('/projects', requireAdmin, async (c) => {
+  const parsed = ProjectCreate.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    return c.json({ project: await createProject(parsed.data) }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
 dashboardRoutes.get('/projects/:id', async (c) => {
   try {
     const data = await getProject(c.req.param('id'), period(c));
@@ -144,14 +163,29 @@ dashboardRoutes.delete('/projects/:id/repos', requireAdmin, async (c) => {
   }
 });
 
-// Cambiar tipo cliente/interno (admin).
-const KindBody = z.object({ kind: z.enum(['client', 'internal']) });
+// Editar nombre / key / tipo cliente-interno (admin). Todos los campos son opcionales.
+const ProjectPatch = z
+  .object({
+    name: z.string().min(1).optional(),
+    key: z.string().min(1).optional(),
+    kind: z.enum(['client', 'internal']).optional(),
+  })
+  .refine((b) => b.name !== undefined || b.key !== undefined || b.kind !== undefined, 'sin cambios');
 
 dashboardRoutes.patch('/projects/:id', requireAdmin, async (c) => {
-  const parsed = KindBody.safeParse(await c.req.json().catch(() => null));
+  const parsed = ProjectPatch.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
-    await setProjectKind(c.req.param('id'), parsed.data.kind);
+    return c.json({ project: await updateProject(c.req.param('id'), parsed.data) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Borrar un proyecto (admin). Acción destructiva; el front exige escribir el nombre.
+dashboardRoutes.delete('/projects/:id', requireAdmin, async (c) => {
+  try {
+    await deleteProject(c.req.param('id'));
     return c.json({ ok: true });
   } catch (err) {
     return fail(c, err);

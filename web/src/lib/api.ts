@@ -81,7 +81,7 @@ export interface DeveloperProfile {
 export type ProjectKind = 'client' | 'internal';
 
 export interface ProjectListItem {
-  projectId: string; name: string; kind: ProjectKind; commits: number; additions: number; deletions: number;
+  projectId: string; name: string; key: string; kind: ProjectKind; commits: number; additions: number; deletions: number;
   contributors: string[]; repos: string[]; ticketsResolved: number;
 }
 

@@ -6,6 +6,7 @@
 // vs año pasado, o sin comparación, sin lógica especial en el backend.
 import { db } from '../db/supabase.js';
 import { embed } from '../adapters/embeddings.js';
+import { slugKey } from '../projects/resolve.js';
 
 export interface Period {
   from: string; // ISO
@@ -154,8 +155,48 @@ export async function removeProjectRepo(projectId: string, repo: string) {
   if (error) throw error;
 }
 
-export async function setProjectKind(projectId: string, kind: 'client' | 'internal') {
-  const { error } = await db().from('project').update({ kind, updated_at: new Date().toISOString() }).eq('id', projectId);
+export interface ProjectRow {
+  id: string;
+  name: string;
+  key: string;
+  kind: string;
+}
+
+/** Crea un proyecto manual (sin ancla a Linear/HyperOps). La `key` se deriva del nombre si no
+ *  se da; queda en MAYÚSCULAS y debe ser única (lo garantiza el unique de la tabla). */
+export async function createProject(input: { name: string; key?: string | null; kind?: 'client' | 'internal' }): Promise<ProjectRow> {
+  const name = input.name.trim();
+  const key = (input.key?.trim() || slugKey(name)).toUpperCase();
+  const { data, error } = await db()
+    .from('project')
+    .insert({ name, key, kind: input.kind ?? 'internal' })
+    .select('id, name, key, kind')
+    .single();
+  if (error) throw error;
+  return data as unknown as ProjectRow;
+}
+
+/** Edita nombre / key / kind de un proyecto. Solo aplica los campos presentes. */
+export async function updateProject(id: string, patch: { name?: string; key?: string; kind?: 'client' | 'internal' }): Promise<ProjectRow> {
+  const row: Record<string, unknown> = {};
+  if (patch.name !== undefined) row.name = patch.name.trim();
+  if (patch.key !== undefined) row.key = patch.key.trim().toUpperCase();
+  if (patch.kind !== undefined) row.kind = patch.kind;
+  row.updated_at = new Date().toISOString();
+  const { data, error } = await db().from('project').update(row).eq('id', id).select('id, name, key, kind').single();
+  if (error) throw error;
+  return data as unknown as ProjectRow;
+}
+
+/** Borra un proyecto. Los repos (project_repo) caen por cascade; el trabajo y el conocimiento
+ *  se desvinculan (project_id → null) y los borradores (proposal) se eliminan, ya que esas FK
+ *  no tienen cascade. Acción destructiva: el front exige confirmación escribiendo el nombre. */
+export async function deleteProject(id: string) {
+  const supabase = db();
+  await supabase.from('work_item').update({ project_id: null }).eq('project_id', id);
+  await supabase.from('knowledge_atom').update({ project_id: null }).eq('project_id', id);
+  await supabase.from('proposal').delete().eq('project_id', id);
+  const { error } = await supabase.from('project').delete().eq('id', id);
   if (error) throw error;
 }
 
@@ -407,6 +448,7 @@ export async function listProjects(period: Period) {
   ]);
   const devName = new Map(devs.map((d) => [d.id, d.name]));
   const kindById = new Map(projects.map((p) => [p.id, p.kind]));
+  const keyById = new Map(projects.map((p) => [p.id, p.key]));
   const byId = new Map<string, { projectId: string; name: string; commits: number; additions: number; deletions: number; contributors: Set<string>; repos: Set<string>; ticketsResolved: number }>();
   projects.forEach((p) => byId.set(p.id, { projectId: p.id, name: p.name, commits: 0, additions: 0, deletions: 0, contributors: new Set(), repos: new Set(), ticketsResolved: 0 }));
 
@@ -431,6 +473,7 @@ export async function listProjects(period: Period) {
     .map((p) => ({
       projectId: p.projectId,
       name: p.name,
+      key: keyById.get(p.projectId) ?? '',
       kind: kindById.get(p.projectId) ?? 'internal',
       commits: p.commits,
       additions: p.additions,
