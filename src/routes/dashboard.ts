@@ -143,7 +143,8 @@ dashboardRoutes.post('/projects', requireAdmin, async (c) => {
   const parsed = ProjectCreate.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
-    return c.json({ project: await createProject(parsed.data) }, 201);
+    const { name, key, kind } = parsed.data; // name garantizado por el schema (min 1)
+    return c.json({ project: await createProject({ name: name!, key, kind }) }, 201);
   } catch (err) {
     return fail(c, err);
   }
@@ -234,7 +235,8 @@ dashboardRoutes.post('/projects/:id/services', requireAdmin, async (c) => {
   const parsed = ServiceBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
-    return c.json({ service: await linkService(c.req.param('id'), parsed.data) }, 201);
+    const { provider, externalRef, label, config } = parsed.data; // requeridos garantizados por el schema
+    return c.json({ service: await linkService(c.req.param('id'), { provider: provider!, externalRef: externalRef!, label, config }) }, 201);
   } catch (err) {
     return fail(c, err);
   }
