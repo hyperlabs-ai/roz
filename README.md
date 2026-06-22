@@ -87,7 +87,7 @@ Linear Projects), `sync_linear_members` (vincula devs con Linear) y corre
 | `GET /v1/internal/drain` | Vercel Cron (cada min) | drena el outbox (idempotente, con reintentos) |
 | `GET /v1/internal/infra-poll` | Vercel Cron (cada 15 min) | sondea Vercel/Railway/Supabase y guarda el estado por servicio |
 | `GET /v1/internal/brain-sweep` | Vercel Cron (diario) | rellena embeddings faltantes |
-| `GET /v1/internal/weekly-digest` | Vercel Cron (viernes) | digest semanal por email (`DIGEST_RECIPIENTS`) |
+| `GET /v1/internal/weekly-digest` | Vercel Cron (viernes) | digest de equipo (`DIGEST_RECIPIENTS`) + digest personal por dev (su propio trabajo; excluye a los destinatarios del de equipo) |
 | `GET *` | navegador | sirve el SPA del dashboard (`web/dist`) |
 
 ## Estado

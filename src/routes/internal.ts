@@ -5,7 +5,7 @@ import type { RozContext } from '../types/hono.js';
 import { config } from '../config.js';
 import { drainOutbox } from '../events/outbox.js';
 import { brainSweep } from '../brain/sweep.js';
-import { sendWeeklyDigest } from '../notify/digest.js';
+import { sendWeeklyDigest, sendDevWeeklyDigests } from '../notify/digest.js';
 import { pollInfra } from '../infra/poll.js';
 
 export const internalRoutes = new Hono<RozContext>();
@@ -46,7 +46,8 @@ internalRoutes.get('/infra-poll', async (c) => {
 // DASHBOARD_URL).
 internalRoutes.get('/weekly-digest', async (c) => {
   if (!isVercelCron(c)) return c.json({ error: 'forbidden' }, 403);
-  const result = await sendWeeklyDigest();
-  c.get('logger')?.info(result, 'weekly digest sent');
-  return c.json({ ok: true, ...result });
+  // Digest de equipo (a fer/destinatarios) + digest personal por dev (resumen de su propio trabajo).
+  const [team, perDev] = await Promise.all([sendWeeklyDigest(), sendDevWeeklyDigests()]);
+  c.get('logger')?.info({ team, perDev }, 'weekly digest sent');
+  return c.json({ ok: true, team, perDev });
 });
