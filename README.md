@@ -65,7 +65,7 @@ outbox; puedes drenarlos manualmente con `GET /v1/internal/drain` (en dev no exi
 
 ## Migración
 
-Aplica las migraciones de `migrations/` **en orden** (`0001_roz_schema.sql` … `0008_…`) en tu
+Aplica las migraciones de `migrations/` **en orden** (`0001_roz_schema.sql` … `0010_…`) en tu
 proyecto Supabase (SQL editor o `supabase db push`). El schema vive aislado en `roz`; asegúrate de
 que `roz` esté en los *exposed schemas* de la API de Supabase (Settings → API), o todo falla con
 `PGRST106`.
@@ -83,8 +83,9 @@ Linear Projects), `sync_linear_members` (vincula devs con Linear) y corre
 | `POST /webhooks/linear` | Linear | issues (espejo + cierre) y proyectos (auto-onboarding) |
 | `POST /webhooks/github` | GitHub | push/commits (reconciliación) y detección de repos nuevos |
 | `POST /v1/intake` | Apps de clientes (bearer) | ingesta auto-documentada y auto-asignada (skill `roz-intake`) |
-| `GET /api/dashboard/*` | SPA del dashboard (auth OpsHyper) | métricas de ingeniería (proyectos, devs, commits) |
+| `GET /api/dashboard/*` | SPA del dashboard (auth OpsHyper) | métricas de ingeniería (proyectos, devs, commits) + salud de infraestructura |
 | `GET /v1/internal/drain` | Vercel Cron (cada min) | drena el outbox (idempotente, con reintentos) |
+| `GET /v1/internal/infra-poll` | Vercel Cron (cada 15 min) | sondea Vercel/Railway/Supabase y guarda el estado por servicio |
 | `GET /v1/internal/brain-sweep` | Vercel Cron (diario) | rellena embeddings faltantes |
 | `GET /v1/internal/weekly-digest` | Vercel Cron (viernes) | digest semanal por email (`DIGEST_RECIPIENTS`) |
 | `GET *` | navegador | sirve el SPA del dashboard (`web/dist`) |

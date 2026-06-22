@@ -126,6 +126,51 @@ export interface TicketFilterOptions {
   states: { value: string; label: string }[];
 }
 
+export type ServiceProvider = 'vercel' | 'railway' | 'supabase';
+export type ServiceStatus = 'healthy' | 'degraded' | 'down' | 'paused' | 'unknown';
+
+export interface InfraDeploy {
+  state: string;
+  url: string | null;
+  sha: string | null;
+  createdAt: string | null;
+  commitMessage?: string | null;
+  branch?: string | null;
+  author?: string | null;
+  repo?: string | null;
+  durationMs?: number | null;
+}
+export interface InfraServiceDetails {
+  framework?: string | null;
+  productionUrl?: string | null;
+  region?: string | null;
+  dbVersion?: string | null;
+  postgresEngine?: string | null;
+  replicas?: number | null;
+  runtime?: string | null;
+  plan?: string | null;
+  subsystems?: { name: string; healthy: boolean }[];
+  recent?: { state: string; sha: string | null; createdAt: string | null }[];
+}
+export interface InfraService {
+  id: string;
+  provider: ServiceProvider;
+  externalRef: string;
+  label: string | null;
+  config: Record<string, unknown>;
+  capturedAt: string | null;
+  ok: boolean | null;
+  status: ServiceStatus;
+  providerStatus: string | null;
+  active: boolean | null;
+  deploy: InfraDeploy | null;
+  metrics: Record<string, number> | null;
+  details: InfraServiceDetails | null;
+  error: string | null;
+}
+export interface InfraProject { projectId: string; name: string; kind: ProjectKind; services: InfraService[]; }
+export interface InfraResponse { projects: InfraProject[]; }
+
 export interface SkillCatalogItem { skillId: string; tag: string; description: string | null; devCount: number; avgLevel: number; busFactorRisk: boolean; }
 export interface SkillMatrix {
   devs: { id: string; name: string; avatarUrl: string | null }[];

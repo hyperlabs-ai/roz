@@ -33,6 +33,13 @@ const raw = z
     RESEND_API_KEY: z.string().default(''),
     RESEND_FROM: z.string().default('roz <onboarding@resend.dev>'),
 
+    // Observabilidad de infraestructura (fase "solo datos"). Todos opcionales: sin token, el
+    // adapter correspondiente degrada (reporta ok:false) sin romper el resto del sondeo.
+    VERCEL_API_TOKEN: z.string().default(''),
+    VERCEL_TEAM_ID: z.string().default(''),       // team/scope por defecto (override por servicio en config)
+    RAILWAY_API_TOKEN: z.string().default(''),
+    SUPABASE_ACCESS_TOKEN: z.string().default(''), // Personal Access Token de la Management API
+
     ROZ_MCP_TOKEN: z.string().default(''),
     ROZ_INGEST_TOKEN: z.string().default(''),
 
@@ -69,6 +76,9 @@ export const config = {
   linear: { apiKey: raw.LINEAR_API_KEY, webhookSecret: raw.LINEAR_WEBHOOK_SECRET },
   github: { token: raw.GITHUB_TOKEN, webhookSecret: raw.GITHUB_WEBHOOK_SECRET },
   resend: { apiKey: raw.RESEND_API_KEY, from: raw.RESEND_FROM },
+  vercel: { token: raw.VERCEL_API_TOKEN, teamId: raw.VERCEL_TEAM_ID },
+  railway: { token: raw.RAILWAY_API_TOKEN },
+  supabaseAdmin: { token: raw.SUPABASE_ACCESS_TOKEN },
   mcp: { token: raw.ROZ_MCP_TOKEN },
   ingest: { token: raw.ROZ_INGEST_TOKEN },
 } as const;

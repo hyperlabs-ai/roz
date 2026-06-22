@@ -200,6 +200,136 @@ export async function deleteProject(id: string) {
   if (error) throw error;
 }
 
+// ---- Infraestructura (Vercel / Railway / Supabase) ----
+// El dashboard lee el último snapshot por servicio (lo escribe el cron infra-poll); nunca pega a
+// las APIs externas. Fase "solo datos": se muestra el estado tal cual, sin umbrales/anomalías.
+
+const PROVIDERS = ['vercel', 'railway', 'supabase'] as const;
+export type ServiceProvider = (typeof PROVIDERS)[number];
+
+interface ProjectServiceRow {
+  id: string;
+  project_id: string;
+  provider: string;
+  external_ref: string;
+  label: string | null;
+  config: Record<string, unknown> | null;
+}
+
+interface SnapshotRow {
+  captured_at: string;
+  ok: boolean;
+  status: string;
+  provider_status: string | null;
+  active: boolean | null;
+  deploy: Record<string, unknown> | null;
+  metrics: Record<string, number | null> | null;
+  details: Record<string, unknown> | null;
+  error: string | null;
+}
+
+async function allProjectServices(): Promise<ProjectServiceRow[]> {
+  const { data } = await db().from('project_service').select('id, project_id, provider, external_ref, label, config');
+  return (data ?? []) as unknown as ProjectServiceRow[];
+}
+
+async function latestSnapshot(serviceId: string): Promise<SnapshotRow | null> {
+  const { data } = await db()
+    .from('service_snapshot')
+    .select('captured_at, ok, status, provider_status, active, deploy, metrics, details, error')
+    .eq('project_service_id', serviceId)
+    .order('captured_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data as unknown as SnapshotRow) ?? null;
+}
+
+/** Estado de infraestructura por proyecto: cada servicio con su último snapshot. Incluye los
+ *  proyectos SIN servicios (para poder vincular el primero desde la UI). */
+export async function listInfra() {
+  const [projects, services] = await Promise.all([allProjects(), allProjectServices()]);
+  const snaps = await Promise.all(services.map((s) => latestSnapshot(s.id)));
+  const snapById = new Map(services.map((s, i) => [s.id, snaps[i]]));
+
+  const byProject = new Map<string, { projectId: string; name: string; kind: string; services: any[] }>();
+  projects.forEach((p) => byProject.set(p.id, { projectId: p.id, name: p.name, kind: p.kind, services: [] }));
+
+  services.forEach((s) => {
+    const grp = byProject.get(s.project_id);
+    if (!grp) return;
+    const snap = snapById.get(s.id) ?? null;
+    grp.services.push({
+      id: s.id,
+      provider: s.provider,
+      externalRef: s.external_ref,
+      label: s.label,
+      config: s.config ?? {},
+      capturedAt: snap?.captured_at ?? null,
+      ok: snap?.ok ?? null,
+      status: snap?.status ?? 'unknown',
+      providerStatus: snap?.provider_status ?? null,
+      active: snap?.active ?? null,
+      deploy: snap?.deploy ?? null,
+      metrics: snap?.metrics ?? null,
+      details: snap?.details ?? null,
+      error: snap?.error ?? null,
+    });
+  });
+
+  // Proyectos con servicios primero; dentro, por nombre.
+  return {
+    projects: [...byProject.values()].sort(
+      (a, b) => b.services.length - a.services.length || a.name.localeCompare(b.name),
+    ),
+  };
+}
+
+/** Vincula un servicio externo a un proyecto. `externalRef` = id del recurso en el proveedor. */
+export async function linkService(
+  projectId: string,
+  input: { provider: ServiceProvider; externalRef: string; label?: string | null; config?: Record<string, unknown> },
+): Promise<ProjectServiceRow> {
+  const { data, error } = await db()
+    .from('project_service')
+    .insert({
+      project_id: projectId,
+      provider: input.provider,
+      external_ref: input.externalRef.trim(),
+      label: input.label?.trim() || null,
+      config: input.config ?? {},
+    })
+    .select('id, project_id, provider, external_ref, label')
+    .single();
+  if (error) throw error;
+  return data as unknown as ProjectServiceRow;
+}
+
+/** Edita un servicio vinculado (proveedor / referencia / nombre / config). */
+export async function updateService(
+  serviceId: string,
+  patch: { provider?: ServiceProvider; externalRef?: string; label?: string | null; config?: Record<string, unknown> },
+): Promise<ProjectServiceRow> {
+  const row: Record<string, unknown> = {};
+  if (patch.provider !== undefined) row.provider = patch.provider;
+  if (patch.externalRef !== undefined) row.external_ref = patch.externalRef.trim();
+  if (patch.label !== undefined) row.label = patch.label?.trim() || null;
+  if (patch.config !== undefined) row.config = patch.config;
+  const { data, error } = await db()
+    .from('project_service')
+    .update(row)
+    .eq('id', serviceId)
+    .select('id, project_id, provider, external_ref, label, config')
+    .single();
+  if (error) throw error;
+  return data as unknown as ProjectServiceRow;
+}
+
+/** Desvincula un servicio (sus snapshots caen por cascade). */
+export async function unlinkService(serviceId: string) {
+  const { error } = await db().from('project_service').delete().eq('id', serviceId);
+  if (error) throw error;
+}
+
 function sumLines(commits: CommitRow[]): { additions: number; deletions: number } {
   return commits.reduce(
     (acc, c) => ({ additions: acc.additions + (c.additions ?? 0), deletions: acc.deletions + (c.deletions ?? 0) }),

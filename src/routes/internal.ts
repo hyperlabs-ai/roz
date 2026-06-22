@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { drainOutbox } from '../events/outbox.js';
 import { brainSweep } from '../brain/sweep.js';
 import { sendWeeklyDigest } from '../notify/digest.js';
+import { pollInfra } from '../infra/poll.js';
 
 export const internalRoutes = new Hono<RozContext>();
 
@@ -28,6 +29,15 @@ internalRoutes.get('/brain-sweep', async (c) => {
   if (!isVercelCron(c)) return c.json({ error: 'forbidden' }, 403);
   const result = await brainSweep();
   c.get('logger')?.info(result, 'brain swept');
+  return c.json({ ok: true, ...result });
+});
+
+// Sondeo de infraestructura: estado de deploys/salud de Vercel/Railway/Supabase por servicio.
+// Guarda un snapshot por servicio para que el dashboard lea sin pegarle a las APIs externas.
+internalRoutes.get('/infra-poll', async (c) => {
+  if (!isVercelCron(c)) return c.json({ error: 'forbidden' }, 403);
+  const result = await pollInfra();
+  c.get('logger')?.info(result, 'infra polled');
   return c.json({ ok: true, ...result });
 });
 

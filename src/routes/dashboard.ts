@@ -19,6 +19,10 @@ import {
   deleteProject,
   addProjectRepo,
   removeProjectRepo,
+  listInfra,
+  linkService,
+  updateService,
+  unlinkService,
   getTickets,
   getTicketFilters,
   getSkillCatalog,
@@ -52,9 +56,26 @@ function comparePeriod(c: { req: { query: (k: string) => string | undefined } })
   return null;
 }
 
+// Mensaje legible de cualquier error. Los errores de Supabase (PostgrestError) son objetos planos
+// (sin toString útil) → String(err) daría "[object Object]"; extraemos message/details/hint.
+function errMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object') {
+    const e = err as { message?: string; details?: string; hint?: string; code?: string };
+    const parts = [e.message, e.details, e.hint].filter(Boolean);
+    if (parts.length) return e.code ? `${parts.join(' — ')} (${e.code})` : parts.join(' — ');
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return 'error desconocido';
+    }
+  }
+  return String(err);
+}
+
 function fail(c: any, err: unknown) {
   c.get('logger')?.error({ err }, 'dashboard error');
-  return c.json({ error: { code: 'INTERNAL', message: String(err) } }, 500);
+  return c.json({ error: { code: 'INTERNAL', message: errMessage(err) } }, 500);
 }
 
 // Quién soy (para el header del SPA).
@@ -186,6 +207,59 @@ dashboardRoutes.patch('/projects/:id', requireAdmin, async (c) => {
 dashboardRoutes.delete('/projects/:id', requireAdmin, async (c) => {
   try {
     await deleteProject(c.req.param('id'));
+    return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Infraestructura: estado de deploys/salud por proyecto (último snapshot que escribió el cron).
+dashboardRoutes.get('/infra', async (c) => {
+  try {
+    return c.json(await listInfra());
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Vincular / desvincular un servicio externo a un proyecto (admin).
+const ServiceBody = z.object({
+  provider: z.enum(['vercel', 'railway', 'supabase']),
+  externalRef: z.string().min(1),
+  label: z.string().nullish(),
+  config: z.record(z.unknown()).optional(),
+});
+
+dashboardRoutes.post('/projects/:id/services', requireAdmin, async (c) => {
+  const parsed = ServiceBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    return c.json({ service: await linkService(c.req.param('id'), parsed.data) }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const ServicePatch = z.object({
+  provider: z.enum(['vercel', 'railway', 'supabase']).optional(),
+  externalRef: z.string().min(1).optional(),
+  label: z.string().nullish(),
+  config: z.record(z.unknown()).optional(),
+});
+
+dashboardRoutes.patch('/projects/:id/services/:serviceId', requireAdmin, async (c) => {
+  const parsed = ServicePatch.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    return c.json({ service: await updateService(c.req.param('serviceId'), parsed.data) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.delete('/projects/:id/services/:serviceId', requireAdmin, async (c) => {
+  try {
+    await unlinkService(c.req.param('serviceId'));
     return c.json({ ok: true });
   } catch (err) {
     return fail(c, err);

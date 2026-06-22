@@ -271,8 +271,8 @@ function DeleteProject({ project, open, onOpenChange, onDeleted }: { project: Pr
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-1.5">
-          <Label htmlFor="confirm-name">
-            Escribe <span className="font-mono font-semibold text-foreground">{project.name}</span> para confirmar
+          <Label htmlFor="confirm-name" className="font-normal text-muted-foreground">
+            Escribe <code className="select-all rounded bg-destructive/10 px-1.5 py-0.5 font-mono text-sm font-bold text-destructive">{project.name}</code> para confirmar
           </Label>
           <Input
             id="confirm-name"
