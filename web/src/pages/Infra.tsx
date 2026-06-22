@@ -58,6 +58,19 @@ function friendlyStatus(s: InfraService): string {
   return f ?? STATUS[s.status].label;
 }
 
+// Punto de estado. Cuando el servicio está operativo "late" (anillo ping) para
+// sugerir que sigue activo; en los demás estados es un punto fijo.
+function LiveDot({ status, className }: { status: ServiceStatus; className?: string }) {
+  const st = STATUS[status];
+  const live = status === 'healthy';
+  return (
+    <span className={cn('relative inline-flex size-2', className)}>
+      {live && <span className={cn('absolute inset-0 animate-ping rounded-full opacity-75', st.dot)} />}
+      <span className={cn('relative inline-flex size-2 rounded-full', st.dot)} />
+    </span>
+  );
+}
+
 function fmtDuration(ms: number | null | undefined): string | null {
   if (!ms || ms <= 0) return null;
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
@@ -258,13 +271,13 @@ function ServiceCard({ projectId, s, isAdmin, onChanged }: { projectId: string; 
           <div className="flex min-w-0 items-center gap-2.5">
             <span className={cn('flex size-8 shrink-0 items-center justify-center rounded-lg', chip)}><Icon className={cn('size-4', accent)} /></span>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold leading-tight">{title}</div>
+              <div className="truncate text-[15px] font-bold leading-tight tracking-tight">{title}</div>
               <div className="truncate font-mono text-[11px] text-muted-foreground">{s.externalRef}</div>
             </div>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium', st.pill)} title={s.providerStatus ?? st.label}>
-              <span className={cn('size-1.5 rounded-full', st.dot)} />
+            <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-semibold', st.pill)} title={s.providerStatus ?? st.label}>
+              <LiveDot status={s.status} />
               {friendlyStatus(s)}
             </span>
             {isAdmin && (
@@ -318,12 +331,12 @@ function DeployBody({ s }: { s: InfraService }) {
   return (
     <div className="space-y-2.5">
       {d?.commitMessage ? (
-        <div className="flex items-start gap-1.5 text-sm">
-          <GitCommitHorizontal className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+        <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <GitCommitHorizontal className="mt-0.5 size-3 shrink-0" />
           <span className="line-clamp-2 leading-snug">{d.commitMessage}</span>
         </div>
       ) : (
-        <div className="text-sm text-muted-foreground">Sin deploy reciente</div>
+        <div className="text-xs text-muted-foreground">Sin deploy reciente</div>
       )}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">

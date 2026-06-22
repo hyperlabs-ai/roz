@@ -224,11 +224,22 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
     .map(
       (i) =>
         `<tr><td style="padding:10px 16px;border-bottom:1px solid #eef0f2">
-           <span style="color:#5e6ad2;font-size:13px;font-weight:700">${i.identifier}</span>
-           <div style="color:#111827;font-size:14px;line-height:1.4;margin-top:2px">${i.title}</div>
+           <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+             <td style="vertical-align:top">
+               <span style="color:#5e6ad2;font-size:13px;font-weight:700">${i.identifier}</span>
+               <div style="color:#111827;font-size:14px;line-height:1.4;margin-top:2px">${i.title}</div>
+             </td>
+             ${i.url ? `<td align="right" style="vertical-align:middle;white-space:nowrap"><a href="${i.url}" style="color:#5e6ad2;text-decoration:none;font-size:13px;font-weight:600">Abrir →</a></td>` : ''}
+           </tr></table>
          </td></tr>`,
     )
     .join('');
+
+  // Con un solo cambio, botón directo al issue resuelto en Linear (verde = completado).
+  const button =
+    n === 1 && items[0]!.url
+      ? `<a href="${items[0]!.url}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver en Linear →</a>`
+      : '';
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
@@ -242,6 +253,7 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
       <tr><td style="padding:0 12px 16px">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:10px">${rows}</table>
       </td></tr>
+      ${button ? `<tr><td style="padding:0 28px 20px">${button}</td></tr>` : ''}
       <tr><td style="padding:16px 28px;border-top:1px solid #eef0f2"><span style="color:#9ca3af;font-size:12px">Enviado por ROZ · documentación automática de cambios</span></td></tr>
     </table>
   </td></tr></table>
