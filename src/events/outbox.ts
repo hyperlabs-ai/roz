@@ -6,6 +6,7 @@ import { db } from '../db/supabase.js';
 import { notifyAssignment, notifyChangesDocumented, notifyRepoDetected } from '../notify/notifications.js';
 import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit } from '../reconcile/commits.js';
+import { reconcilePullRequest } from '../reconcile/pull-request.js';
 import { handleRepoDetected } from '../reconcile/repos.js';
 import { upsertLinearProject } from '../projects/resolve.js';
 import { documentCompletedWork } from '../brain/document.js';
@@ -18,6 +19,7 @@ export type OutboxEventType =
   | 'linear.issue_removed'
   | 'linear.project_upserted'
   | 'commit.received'
+  | 'pr.merged'
   | 'change.documented'
   | 'repo.detected'
   | 'repo.notify'
@@ -199,6 +201,13 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
       await reconcileCommit({
         repo: String(payload.repo ?? ''),
         sha: String(payload.sha ?? ''),
+      });
+      return;
+    // PR mergeada: documentar el trabajo en UN ticket con atribución (autor/revisor/merger).
+    case 'pr.merged':
+      await reconcilePullRequest({
+        repo: String(payload.repo ?? ''),
+        number: Number(payload.number ?? 0),
       });
       return;
     // Resumen de cambios documentados (auto-creados desde commits). Agrupado por dev+ventana

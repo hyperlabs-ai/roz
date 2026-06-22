@@ -68,3 +68,101 @@ export function referencesLinearIssue(message: string): string | null {
   const m = message.match(/\b([A-Z]{2,}-\d+)\b/);
   return m ? m[1]! : null;
 }
+
+export interface PullRequestMeta {
+  number: number;
+  title: string;
+  body: string | null;
+  url: string;
+  headRef: string | null; // rama de origen (para detectar referencia a Linear, p.ej. "feat/HYP-12")
+  baseRef: string | null; // rama destino
+  merged: boolean;
+  mergeCommitSha: string | null;
+  authorLogin: string | null; // quién abrió la PR
+  mergedByLogin: string | null; // quién la mergeó (solo existe a nivel de PR, no del commit)
+}
+
+/** Metadata de una PR (autor, quién mergeó, ramas). El "quién mergeó" solo vive aquí. */
+export async function getPullRequest(repo: string, number: number): Promise<PullRequestMeta> {
+  const d = await gh<{
+    number: number;
+    title: string;
+    body: string | null;
+    html_url: string;
+    merged: boolean;
+    merge_commit_sha: string | null;
+    head: { ref?: string } | null;
+    base: { ref?: string } | null;
+    user: { login?: string } | null;
+    merged_by: { login?: string } | null;
+  }>(`/repos/${repo}/pulls/${number}`);
+  return {
+    number: d.number,
+    title: d.title,
+    body: d.body ?? null,
+    url: d.html_url,
+    headRef: d.head?.ref ?? null,
+    baseRef: d.base?.ref ?? null,
+    merged: !!d.merged,
+    mergeCommitSha: d.merge_commit_sha ?? null,
+    authorLogin: d.user?.login ?? null,
+    mergedByLogin: d.merged_by?.login ?? null,
+  };
+}
+
+export interface PrAuthor {
+  login: string | null;
+  email: string | null;
+}
+
+/** Autores reales de los commits de una PR (puede haber varios), deduplicados. */
+export async function listPullRequestCommits(repo: string, number: number): Promise<PrAuthor[]> {
+  const data = await gh<
+    { author: { login?: string } | null; commit: { author?: { email?: string } } }[]
+  >(`/repos/${repo}/pulls/${number}/commits?per_page=100`);
+  const seen = new Set<string>();
+  const out: PrAuthor[] = [];
+  for (const c of data) {
+    const login = c.author?.login ?? null;
+    const email = c.commit?.author?.email ?? null;
+    const key = `${login ?? ''}|${email ?? ''}`;
+    if (key === '|' || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ login, email });
+  }
+  return out;
+}
+
+export interface PrReview {
+  login: string | null;
+  state: string; // approved | changes_requested | commented | dismissed | pending
+}
+
+/** Revisiones de una PR. Se queda con el ÚLTIMO estado por revisor (el que cuenta). */
+export async function listPullRequestReviews(repo: string, number: number): Promise<PrReview[]> {
+  const data = await gh<{ user: { login?: string } | null; state: string }[]>(
+    `/repos/${repo}/pulls/${number}/reviews?per_page=100`,
+  );
+  const latest = new Map<string, string>(); // login -> state (las reviews llegan en orden cronológico)
+  for (const r of data) {
+    const login = r.user?.login;
+    if (!login) continue;
+    latest.set(login, (r.state ?? '').toLowerCase());
+  }
+  return [...latest.entries()].map(([login, state]) => ({ login, state }));
+}
+
+export interface AssociatedPr {
+  number: number;
+  merged: boolean;
+  state: string; // open | closed
+}
+
+/** PRs asociadas a un commit. Permite deduplicar: si un commit pertenece a una PR, lo documenta
+ *  el flujo de PR (no el de commit), sin importar la estrategia de merge (squash/merge/rebase). */
+export async function commitPullRequests(repo: string, sha: string): Promise<AssociatedPr[]> {
+  const data = await gh<{ number: number; merged_at: string | null; state: string }[]>(
+    `/repos/${repo}/commits/${sha}/pulls?per_page=20`,
+  );
+  return data.map((p) => ({ number: p.number, merged: !!p.merged_at, state: p.state }));
+}

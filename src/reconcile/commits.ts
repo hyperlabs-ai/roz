@@ -9,7 +9,7 @@
 //  4. Idempotencia por sha (claimOnce) — cada commit se procesa una sola vez.
 import { db } from '../db/supabase.js';
 import { complete } from '../adapters/anthropic.js';
-import { getCommit, referencesLinearIssue, type CommitMeta } from '../adapters/github.js';
+import { getCommit, commitPullRequests, referencesLinearIssue, type CommitMeta } from '../adapters/github.js';
 import { createIssue, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
 import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
@@ -24,6 +24,7 @@ export interface ReconcileInput {
 export interface ReconcileResult {
   action:
     | 'skipped:already-processed'
+    | 'skipped:in-pr' // pertenece a una PR → lo documenta reconcilePullRequest
     | 'linked' // referencia un issue de Linear
     | 'trivial' // chore/merge/lint: se ignora
     | 'matched' // resuelve un issue abierto → enlazado
@@ -86,9 +87,17 @@ async function reconcileBody(
   const project = await resolveProjectByRepo(input.repo);
   const dev = await resolveDevByCommit(supabase, commit);
 
-  // Persistir el commit SIEMPRE (linked/trivial/matched/documented): el dashboard cuenta todo el
-  // trabajo, no solo el huérfano. Upsert por (repo, sha) → reprocesar es idempotente.
+  // Persistir el commit SIEMPRE (el dashboard cuenta TODO el trabajo, incluso el de ramas y PRs):
+  // las métricas de commits no dependen de la documentación. Upsert por (repo, sha) → idempotente.
   await persistCommit(supabase, input, commit, project?.id ?? null, dev?.id ?? null);
+
+  // Dedup con el flujo de PR: si el commit pertenece a una PR (abierta o mergeada), NO se documenta
+  // aquí — lo hace reconcilePullRequest en un solo ticket con atribución. Cubre cualquier estrategia
+  // de merge (squash/merge/rebase). El commit ya quedó persistido arriba para las métricas.
+  const prs = await commitPullRequests(input.repo, commit.sha).catch(() => []);
+  if (prs.length) {
+    return { action: 'skipped:in-pr', detail: `commit en PR #${prs[0]!.number}; lo documenta el flujo de PR` };
+  }
 
   // 1. ¿Referencia un issue de Linear? La integración nativa lo enlaza; roz documenta.
   const linked = referencesLinearIssue(commit.message);

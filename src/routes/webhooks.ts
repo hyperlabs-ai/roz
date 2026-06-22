@@ -55,10 +55,15 @@ webhookRoutes.post('/github', async (c) => {
     return c.json({ error: 'bad signature' }, 401);
   }
   const event = c.req.header('x-github-event');
-  const payload = JSON.parse(raw) as { repository?: { full_name?: string }; commits?: any[] };
+  const payload = JSON.parse(raw) as {
+    repository?: { full_name?: string };
+    commits?: any[];
+    action?: string;
+    pull_request?: { number?: number; merged?: boolean };
+  };
+  const repo = payload.repository?.full_name;
 
-  if (event === 'push' && payload.repository?.full_name) {
-    const repo = payload.repository.full_name;
+  if (event === 'push' && repo) {
     for (const commit of payload.commits ?? []) {
       await emit(
         'commit.received',
@@ -69,6 +74,16 @@ webhookRoutes.post('/github', async (c) => {
     // Detección de repos: una sola vez por repo (dedup por idempotency_key). El drain decide si
     // es realmente nuevo (sin proyecto resoluble): si lo es, lo vincula y notifica a los devs.
     await emit('repo.detected', { repo }, { idempotencyKey: `repo-detected:${repo}` });
+  }
+
+  // PR mergeada → documentar por PR (un ticket con atribución). Idempotente por nº de PR, así
+  // reintentos / reopen+merge no duplican. El dedup con el flujo de commits lo hace reconcileCommit
+  // (un commit que pertenece a una PR no se documenta dos veces).
+  if (event === 'pull_request' && repo && payload.action === 'closed' && payload.pull_request?.merged) {
+    const number = payload.pull_request.number;
+    if (number != null) {
+      await emit('pr.merged', { repo, number }, { idempotencyKey: `pr:${repo}:${number}` });
+    }
   }
   return c.json({ ok: true });
 });
