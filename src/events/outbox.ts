@@ -5,7 +5,7 @@
 import { db } from '../db/supabase.js';
 import { notifyAssignment, notifyChangesDocumented, notifyRepoDetected } from '../notify/notifications.js';
 import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
-import { reconcileCommit } from '../reconcile/commits.js';
+import { reconcileCommit, backfillPushCommits } from '../reconcile/commits.js';
 import { reconcilePullRequest } from '../reconcile/pull-request.js';
 import { handleRepoDetected } from '../reconcile/repos.js';
 import type { RepoMeta } from '../adapters/github.js';
@@ -20,6 +20,7 @@ export type OutboxEventType =
   | 'linear.issue_removed'
   | 'linear.project_upserted'
   | 'commit.received'
+  | 'commits.backfill'
   | 'pr.merged'
   | 'change.documented'
   | 'repo.detected'
@@ -202,6 +203,14 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
       await reconcileCommit({
         repo: String(payload.repo ?? ''),
         sha: String(payload.sha ?? ''),
+      });
+      return;
+    // Backfill de un push truncado (>20 commits): enumera el rango completo y encola cada commit.
+    case 'commits.backfill':
+      await backfillPushCommits({
+        repo: String(payload.repo ?? ''),
+        before: String(payload.before ?? ''),
+        after: String(payload.after ?? ''),
       });
       return;
     // PR mergeada: documentar el trabajo en UN ticket con atribución (autor/revisor/merger).

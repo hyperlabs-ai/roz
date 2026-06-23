@@ -9,7 +9,7 @@
 //  4. Idempotencia por sha (claimOnce) — cada commit se procesa una sola vez.
 import { db } from '../db/supabase.js';
 import { complete } from '../adapters/anthropic.js';
-import { getCommit, commitPullRequests, referencesLinearIssue, type CommitMeta } from '../adapters/github.js';
+import { getCommit, commitPullRequests, pushCommitShas, referencesLinearIssue, type CommitMeta } from '../adapters/github.js';
 import { createIssue, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
 import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
@@ -54,6 +54,21 @@ function extractJson(s: string): any | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Backfill de un push truncado (>20 commits): enumera el rango completo before...after vía la API
+ * de compare y encola un `commit.received` por sha. Idempotente por sha (los ya emitidos por el
+ * webhook no se duplican). Cada commit se reconcilia luego por su propio camino (incluido el
+ * descarte de merges), así que aquí solo se hace fan-out.
+ */
+export async function backfillPushCommits(input: { repo: string; before: string; after: string }): Promise<{ enqueued: number }> {
+  if (!input.repo || !input.before || !input.after) return { enqueued: 0 };
+  const shas = await pushCommitShas(input.repo, input.before, input.after);
+  for (const sha of shas) {
+    await emit('commit.received', { repo: input.repo, sha }, { idempotencyKey: `commit:${input.repo}:${sha}` });
+  }
+  return { enqueued: shas.length };
 }
 
 export async function reconcileCommit(input: ReconcileInput): Promise<ReconcileResult> {

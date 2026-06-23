@@ -9,6 +9,11 @@ import { emit } from '../events/outbox.js';
 
 export const webhookRoutes = new Hono<RozContext>();
 
+// GitHub trunca el array `commits` del payload de push a este tope. Si lo alcanzamos, el push
+// pudo traer más commits → se encola un backfill que enumera el rango completo vía la API.
+const GITHUB_PUSH_COMMIT_CAP = 20;
+const ZERO_SHA = '0'.repeat(40); // `before` en la creación de una rama (sin historial previo)
+
 // --- Linear: cambios de estado de issues (fuente de verdad del trabajo). ---
 webhookRoutes.post('/linear', async (c) => {
   const raw = await c.req.text();
@@ -57,6 +62,8 @@ webhookRoutes.post('/github', async (c) => {
   const event = c.req.header('x-github-event');
   const payload = JSON.parse(raw) as {
     ref?: string; // "refs/heads/<branch>" en push
+    before?: string; // tip anterior de la rama (push)
+    after?: string; // tip nuevo de la rama (push)
     repository?: { full_name?: string; name?: string; description?: string | null; html_url?: string; default_branch?: string };
     commits?: any[];
     action?: string;
@@ -85,11 +92,23 @@ webhookRoutes.post('/github', async (c) => {
     const def = payload.repository?.default_branch;
     const onDefault = !!def && payload.ref === `refs/heads/${def}`;
     if (onDefault) {
-      for (const commit of payload.commits ?? []) {
+      const commits = payload.commits ?? [];
+      for (const commit of commits) {
         await emit(
           'commit.received',
           { repo, sha: commit.id },
           { idempotencyKey: `commit:${repo}:${commit.id}` },
+        );
+      }
+      // Si el push alcanzó el tope (array truncado por GitHub), pudo traer más commits que los
+      // 20 del payload —común en un merge de PR grande—. Se encola un backfill que enumera el
+      // rango before...after vía la API de compare en el drain. Idempotente por sha → los 20 ya
+      // emitidos no se duplican. Se omite si `before` es ZERO (no hay rango previo que comparar).
+      if (commits.length >= GITHUB_PUSH_COMMIT_CAP && payload.before && payload.after && payload.before !== ZERO_SHA) {
+        await emit(
+          'commits.backfill',
+          { repo, before: payload.before, after: payload.after },
+          { idempotencyKey: `push-backfill:${repo}:${payload.after}` },
         );
       }
     }

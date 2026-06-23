@@ -168,6 +168,29 @@ export interface AssociatedPr {
   state: string; // open | closed
 }
 
+/**
+ * Todos los SHAs que introduce un push (rango `before...after`), vía la API de compare. Se usa
+ * cuando el webhook de push pudo venir truncado: GitHub limita el array `commits` del push a 20,
+ * así que para un merge de PR con más commits hay que enumerar el rango aquí. La API de compare
+ * calcula el conjunto real (no un recorrido por fecha), así que cubre bien historiales no lineales
+ * y merges. Tope práctico ~250 (límite de compare); de sobra para un PR normal.
+ */
+export async function pushCommitShas(repo: string, before: string, after: string): Promise<string[]> {
+  const shas: string[] = [];
+  let page = 1;
+  for (;;) {
+    const d = await gh<{ total_commits?: number; commits?: { sha: string }[] }>(
+      `/repos/${encRepo(repo)}/compare/${before}...${after}?per_page=100&page=${page}`,
+    );
+    const batch = d.commits ?? [];
+    for (const c of batch) shas.push(c.sha);
+    if (batch.length < 100 || shas.length >= (d.total_commits ?? shas.length)) break;
+    page++;
+    if (page > 5) break; // 5×100 = 500, muy por encima del cap de la API de compare
+  }
+  return shas;
+}
+
 /** PRs asociadas a un commit. Permite deduplicar: si un commit pertenece a una PR, lo documenta
  *  el flujo de PR (no el de commit), sin importar la estrategia de merge (squash/merge/rebase). */
 export async function commitPullRequests(repo: string, sha: string): Promise<AssociatedPr[]> {
