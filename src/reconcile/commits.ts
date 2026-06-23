@@ -30,6 +30,7 @@ export interface ReconcileResult {
     | 'matched' // resuelve un issue abierto → enlazado
     | 'documented' // trabajo sustantivo huérfano → issue creado
     | 'orphan:no-project' // repo sin proyecto mapeado y sin team para crear
+    | 'skipped:merge' // merge commit: no es trabajo nuevo (recontaría líneas), no se persiste
     ;
   identifier?: string;
   detail?: string;
@@ -82,6 +83,13 @@ async function reconcileBody(
   commit: CommitMeta,
   state: { issueCreated: boolean },
 ): Promise<ReconcileResult> {
+  // Un merge commit no es trabajo nuevo: su diff combinado recontaría líneas ya atribuidas a los
+  // commits que el merge trae. No se persiste → no cuenta como commit ni como líneas. (La rama por
+  // defecto ya se filtra en el webhook; aquí se descarta el merge que sí aterriza en ella.)
+  if (commit.isMerge) {
+    return { action: 'skipped:merge', detail: 'merge commit: no cuenta commits ni líneas' };
+  }
+
   // Resolver proyecto y dev autor una sola vez: se usan para persistir el commit (dashboard) y,
   // en el camino huérfano, para asignar el issue resultante.
   const project = await resolveProjectByRepo(input.repo);
@@ -280,6 +288,7 @@ async function persistCommit(
   projectId: string | null,
   devId: string | null,
 ): Promise<void> {
+  // Los merge commits ya se descartaron en reconcileBody, así que aquí solo llegan commits reales.
   await supabase.from('commit').upsert(
     {
       sha: commit.sha,

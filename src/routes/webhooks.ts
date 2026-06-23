@@ -56,7 +56,8 @@ webhookRoutes.post('/github', async (c) => {
   }
   const event = c.req.header('x-github-event');
   const payload = JSON.parse(raw) as {
-    repository?: { full_name?: string; name?: string; description?: string | null; html_url?: string };
+    ref?: string; // "refs/heads/<branch>" en push
+    repository?: { full_name?: string; name?: string; description?: string | null; html_url?: string; default_branch?: string };
     commits?: any[];
     action?: string;
     pull_request?: { number?: number; merged?: boolean };
@@ -77,12 +78,20 @@ webhookRoutes.post('/github', async (c) => {
   }
 
   if (event === 'push' && repo) {
-    for (const commit of payload.commits ?? []) {
-      await emit(
-        'commit.received',
-        { repo, sha: commit.id },
-        { idempotencyKey: `commit:${repo}:${commit.id}` },
-      );
+    // Solo se cuenta el trabajo que aterriza en la RAMA POR DEFECTO (lo que de verdad se integró).
+    // Esto deduplica de raíz: una PR (squash/merge/rebase) termina como commit(s) en la default y
+    // se cuenta una sola vez; los pushes a feature branches y el crear/borrar ramas no inflan.
+    // Los merge commits se descartan después en la reconciliación (no son trabajo nuevo).
+    const def = payload.repository?.default_branch;
+    const onDefault = !!def && payload.ref === `refs/heads/${def}`;
+    if (onDefault) {
+      for (const commit of payload.commits ?? []) {
+        await emit(
+          'commit.received',
+          { repo, sha: commit.id },
+          { idempotencyKey: `commit:${repo}:${commit.id}` },
+        );
+      }
     }
   }
 

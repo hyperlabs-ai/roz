@@ -31,6 +31,9 @@ export interface CommitMeta {
   committedAt: string | null; // fecha del commit (ISO), para métricas time-series del dashboard
   additions: number | null; // líneas agregadas (stats de la API)
   deletions: number | null; // líneas eliminadas
+  // Un merge commit (≥2 padres) trae en sus stats el diff COMBINADO de la rama que entra, lo que
+  // recontaría líneas ya atribuidas a los commits individuales. Se marca para no contar sus líneas.
+  isMerge: boolean;
 }
 
 export async function getCommit(repo: string, sha: string): Promise<CommitMeta> {
@@ -40,6 +43,7 @@ export async function getCommit(repo: string, sha: string): Promise<CommitMeta> 
     commit: { message: string; author?: { email?: string; date?: string } };
     author: { login: string } | null;
     stats?: { additions?: number; deletions?: number };
+    parents?: unknown[];
   }>(`/repos/${encRepo(repo)}/commits/${sha}`);
   return {
     sha: data.sha,
@@ -50,6 +54,7 @@ export async function getCommit(repo: string, sha: string): Promise<CommitMeta> 
     committedAt: data.commit.author?.date ?? null,
     additions: data.stats?.additions ?? null,
     deletions: data.stats?.deletions ?? null,
+    isMerge: (data.parents?.length ?? 0) >= 2,
   };
 }
 
