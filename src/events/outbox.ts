@@ -8,6 +8,7 @@ import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit } from '../reconcile/commits.js';
 import { reconcilePullRequest } from '../reconcile/pull-request.js';
 import { handleRepoDetected } from '../reconcile/repos.js';
+import type { RepoMeta } from '../adapters/github.js';
 import { upsertLinearProject } from '../projects/resolve.js';
 import { documentCompletedWork } from '../brain/document.js';
 
@@ -219,7 +220,12 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
     // Repo nuevo detectado (primer push de un repo desconocido): vincular a un proyecto si hay
     // match y emitir el aviso a los devs. El propio handler hace no-op si ya estaba trackeado.
     case 'repo.detected':
-      await handleRepoDetected({ repo: String(payload.repo ?? '') });
+      // `meta` viene del evento `repository` de GitHub (evita pegarle a la API); si no está,
+      // handleRepoDetected hace el fetch.
+      await handleRepoDetected({
+        repo: String(payload.repo ?? ''),
+        meta: (payload.meta as RepoMeta | undefined) ?? undefined,
+      });
       return;
     // Broadcast a todos los devs: se detectó/vinculó un repo.
     case 'repo.notify':

@@ -56,12 +56,25 @@ webhookRoutes.post('/github', async (c) => {
   }
   const event = c.req.header('x-github-event');
   const payload = JSON.parse(raw) as {
-    repository?: { full_name?: string };
+    repository?: { full_name?: string; name?: string; description?: string | null; html_url?: string };
     commits?: any[];
     action?: string;
     pull_request?: { number?: number; merged?: boolean };
   };
   const repo = payload.repository?.full_name;
+
+  // Detección de repos: desde el evento `repository` (action: created), no desde el push. El
+  // payload ya trae la metadata del repo, así que la pasamos y evitamos una llamada a la API de
+  // GitHub. Dedup por idempotency_key (una sola vez por repo). El drain decide si es realmente
+  // nuevo (sin proyecto resoluble): si lo es, lo vincula y notifica a los devs.
+  if (event === 'repository' && payload.action === 'created' && repo) {
+    const r = payload.repository!;
+    const meta =
+      r.name && r.html_url
+        ? { fullName: repo, name: r.name, description: r.description ?? null, url: r.html_url }
+        : undefined; // si faltara algo, se omite y handleRepoDetected hace el fetch
+    await emit('repo.detected', { repo, meta }, { idempotencyKey: `repo-detected:${repo}` });
+  }
 
   if (event === 'push' && repo) {
     for (const commit of payload.commits ?? []) {
@@ -71,9 +84,6 @@ webhookRoutes.post('/github', async (c) => {
         { idempotencyKey: `commit:${repo}:${commit.id}` },
       );
     }
-    // Detección de repos: una sola vez por repo (dedup por idempotency_key). El drain decide si
-    // es realmente nuevo (sin proyecto resoluble): si lo es, lo vincula y notifica a los devs.
-    await emit('repo.detected', { repo }, { idempotencyKey: `repo-detected:${repo}` });
   }
 
   // PR mergeada → documentar por PR (un ticket con atribución). Idempotente por nº de PR, así
