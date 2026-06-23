@@ -102,6 +102,11 @@ export interface ProjectDetail {
   trend: { date: string; additions: number; deletions: number }[];
 }
 
+/** Persona atribuida a un ticket vía PR (autor / revisor / merger). `login` viene siempre; `devId` solo si está mapeado a un roz.dev. */
+export interface TicketPerson {
+  name: string; avatarUrl: string | null; login: string | null;
+  devId?: string | null; reviewState?: string | null;
+}
 export interface Ticket {
   id: string; identifier: string; number: number | null; title: string;
   state: string; stateName: string; priority: string | null;
@@ -110,6 +115,10 @@ export interface Ticket {
   estimate: number | null; dueDate: string | null; overdue: boolean;
   labels: string[]; creatorName: string | null; url: string | null;
   updatedAt: string | null; ageDays: number | null;
+  // Conexión con código (migración 0011)
+  source: 'pr' | 'commit' | null;
+  pr: { repo: string; number: number; url: string } | null;
+  authors: TicketPerson[]; reviewers: TicketPerson[]; merger: TicketPerson | null;
 }
 export interface TicketsResponse {
   total: number; overdue: number; unassigned: number;
@@ -117,7 +126,11 @@ export interface TicketsResponse {
   byState: { label: string; value: number }[];
   byPriority: { label: string; value: number }[];
   byProject: { label: string; value: number }[];
+  bySource: { label: string; value: number }[];
   developers: { name: string; avatarUrl: string | null; count: number }[];
+  topReviewers: { name: string; avatarUrl: string | null; count: number }[];
+  attributionMismatch: number; // tickets mergeados por alguien distinto al autor
+  withoutPr: number;           // tickets cerrados sin PR vinculado
   tickets: Ticket[];
 }
 export interface TicketFilterOptions {

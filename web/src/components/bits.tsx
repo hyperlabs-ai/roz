@@ -4,9 +4,9 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { initials } from '@/lib/format';
 
-export function UserAvatar({ url, name, className }: { url: string | null; name: string; className?: string }) {
+export function UserAvatar({ url, name, className, title }: { url: string | null; name: string; className?: string; title?: string }) {
   return (
-    <Avatar className={className}>
+    <Avatar className={className} title={title}>
       {url && <AvatarImage src={url} alt={name} />}
       <AvatarFallback>{initials(name)}</AvatarFallback>
     </Avatar>

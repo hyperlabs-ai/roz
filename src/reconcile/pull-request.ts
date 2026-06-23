@@ -87,19 +87,24 @@ async function reconcileBody(
 
   const project = await resolveProjectByRepo(input.repo);
 
+  // Atribución de la PR (autores reales de los commits + revisores + quién mergeó). Se necesita en
+  // TODAS las ramas (linked / matched / documented) para alimentar la conexión-con-código del
+  // dashboard, no solo en la huérfana. Antes solo se grababa al auto-documentar, por eso los PRs
+  // que enlazan un issue de Linear (el flujo normal) no registraban nada.
+  const [authors, reviews] = await Promise.all([
+    listPullRequestCommits(input.repo, input.number).catch(() => [] as PrAuthor[]),
+    listPullRequestReviews(input.repo, input.number).catch(() => [] as PrReview[]),
+  ]);
+  const mergerDev = await resolveDevByLogin(supabase, pr.mergedByLogin);
+
   // 1. ¿La PR referencia un issue de Linear (rama "feat/HYP-12", título o cuerpo)? La integración
   //    nativa Linear↔GitHub ya lo enlaza; roz solo marca documentado, no duplica.
   const linked = referencesLinearIssue(`${pr.title}\n${pr.body ?? ''}\n${pr.headRef ?? ''}`);
   if (linked) {
     await supabase.from('work_item').update({ documented: true }).eq('identifier', linked);
+    await attributePr(supabase, linked, input, pr, authors, reviews, mergerDev?.id ?? null);
     return { action: 'linked', identifier: linked, detail: 'enlazado por la integración nativa' };
   }
-
-  // Autores reales (commits) y revisores de la PR.
-  const [authors, reviews] = await Promise.all([
-    listPullRequestCommits(input.repo, input.number).catch(() => [] as PrAuthor[]),
-    listPullRequestReviews(input.repo, input.number).catch(() => [] as PrReview[]),
-  ]);
 
   // Issues ABIERTOS del proyecto (candidatos a que la PR los resuelva).
   const openItems = project
@@ -147,6 +152,7 @@ async function reconcileBody(
   const matched = a.matchedIdentifier && openItems.find((i: any) => i.identifier === a.matchedIdentifier);
   if (matched) {
     await supabase.from('work_item').update({ documented: true }).eq('identifier', a.matchedIdentifier!);
+    await attributePr(supabase, a.matchedIdentifier!, input, pr, authors, reviews, mergerDev?.id ?? null);
     return {
       action: 'matched',
       identifier: a.matchedIdentifier!,
@@ -162,9 +168,8 @@ async function reconcileBody(
     };
   }
 
-  // Resolver devs por login (autor principal = quien abrió la PR; merger; revisores).
+  // Resolver dev del autor principal (quien abrió la PR). El merger ya se resolvió arriba.
   const authorDev = await resolveDevByLogin(supabase, pr.authorLogin);
-  const mergerDev = await resolveDevByLogin(supabase, pr.mergedByLogin);
 
   const mention = (login: string | null) => (login ? `@${login}` : 'desconocido');
   const reviewerLine = reviews.length
@@ -259,6 +264,29 @@ async function resolveDevByLogin(
     .eq('github_login', login)
     .maybeSingle();
   return (data as { id: string; linear_user_id: string | null }) ?? null;
+}
+
+/**
+ * Graba la conexión-con-código en un work_item EXISTENTE (ramas linked/matched): el PR que lo
+ * resolvió (repo + nº + quién mergeó) y los actores normalizados. NO toca `source`: esos issues
+ * nacieron en Linear, así que su origen sigue siendo Linear aunque un PR los haya cerrado.
+ */
+async function attributePr(
+  supabase: ReturnType<typeof db>,
+  identifier: string,
+  input: ReconcilePrInput,
+  pr: { number: number; mergedByLogin: string | null },
+  authors: PrAuthor[],
+  reviews: PrReview[],
+  mergerDevId: string | null,
+): Promise<void> {
+  const { data: wi } = await supabase.from('work_item').select('id').eq('identifier', identifier).maybeSingle();
+  if (!wi?.id) return;
+  await supabase
+    .from('work_item')
+    .update({ repo: input.repo, pr_number: pr.number, merger_dev_id: mergerDevId })
+    .eq('id', wi.id);
+  await persistActors(supabase, wi.id, { authors, reviews, mergerLogin: pr.mergedByLogin });
 }
 
 /**

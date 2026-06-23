@@ -17,7 +17,7 @@ const raw = z
     DASHBOARD_ALLOWED_DOMAINS: z.string().default('hyperdigital.mx,hyperlabs.vc'),
 
     ANTHROPIC_API_KEY: z.string().default(''),
-    ROZ_CLAUDE_MODEL: z.string().default('claude-opus-4-8'),
+    ROZ_CLAUDE_MODEL: z.string().default('claude-haiku-4-5'),
 
     OPENAI_API_KEY: z.string().default(''),
     // Alineado con el RAG de hyperflow-llm para no reindexar: text-embedding-3-large / 3072.

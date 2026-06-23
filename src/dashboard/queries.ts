@@ -742,6 +742,44 @@ export interface TicketFilters {
   scope?: 'open' | 'all'; // open = no cerrados (default)
 }
 
+interface TicketActor { name: string; avatarUrl: string | null; login: string | null; devId: string | null; reviewState: string | null }
+
+/** Carga la atribución (autor/revisor/merger) de `roz.work_item_actor` para un set de tickets. */
+async function loadTicketActors(
+  ids: string[],
+  devName: Map<string, string>,
+  devAvatar: Map<string, string | null>,
+): Promise<Map<string, { authors: TicketActor[]; reviewers: TicketActor[]; merger: TicketActor | null }>> {
+  const map = new Map<string, { authors: TicketActor[]; reviewers: TicketActor[]; merger: TicketActor | null }>();
+  if (!ids.length) return map;
+  const { data } = await db()
+    .from('work_item_actor')
+    .select('work_item_id, dev_id, github_login, role, review_state')
+    .in('work_item_id', ids);
+  for (const a of (data ?? []) as any[]) {
+    const person: TicketActor = {
+      name: a.dev_id ? devName.get(a.dev_id) ?? a.github_login : a.github_login,
+      avatarUrl: a.dev_id ? devAvatar.get(a.dev_id) ?? avatarFor(a.github_login) : avatarFor(a.github_login),
+      login: a.github_login ?? null,
+      devId: a.dev_id ?? null,
+      reviewState: a.review_state ?? null,
+    };
+    if (!map.has(a.work_item_id)) map.set(a.work_item_id, { authors: [], reviewers: [], merger: null });
+    const e = map.get(a.work_item_id)!;
+    if (a.role === 'author') e.authors.push(person);
+    else if (a.role === 'reviewer') e.reviewers.push(person);
+    else if (a.role === 'merger') e.merger = person;
+  }
+  return map;
+}
+
+/** ¿Es la misma persona? Prefiere dev_id; cae a github_login. */
+function samePerson(a: TicketActor, b: TicketActor): boolean {
+  if (a.devId && b.devId) return a.devId === b.devId;
+  if (a.login && b.login) return a.login === b.login;
+  return false;
+}
+
 export async function getTickets(f: TicketFilters) {
   const [devs, projects] = await Promise.all([allDevs(), allProjects()]);
   const devName = new Map(devs.map((d) => [d.id, d.name]));
@@ -751,7 +789,7 @@ export async function getTickets(f: TicketFilters) {
   let q = db()
     .from('work_item')
     .select(
-      'id, identifier, number, title, state, state_name, priority, project_id, assignee_dev_id, estimate, due_date, labels, creator_name, url, started_at, completed_at, linear_created_at, linear_updated_at',
+      'id, identifier, number, title, state, state_name, priority, project_id, assignee_dev_id, estimate, due_date, labels, creator_name, url, started_at, completed_at, linear_created_at, linear_updated_at, pr_number, repo, source, merger_dev_id',
     );
   if (f.projectId) q = q.eq('project_id', f.projectId);
   if (f.assigneeDevId) q = q.eq('assignee_dev_id', f.assigneeDevId);
@@ -764,43 +802,68 @@ export async function getTickets(f: TicketFilters) {
   const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
   const now = Date.now();
 
+  // Atribución por PR (autor/revisor/merger) para los tickets visibles.
+  const actorsByItem = await loadTicketActors(rows.map((w) => w.id), devName, devAvatar);
+
   const tickets = rows
-    .map((w) => ({
-      id: w.id,
-      identifier: w.identifier,
-      number: w.number,
-      title: w.title,
-      state: w.state,
-      stateName: w.state_name ?? w.state,
-      priority: w.priority,
-      projectId: w.project_id,
-      projectName: w.project_id ? projName.get(w.project_id) ?? null : null,
-      assignee: w.assignee_dev_id ? { name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
-      estimate: w.estimate,
-      dueDate: w.due_date,
-      overdue: w.due_date ? !['completed', 'done', 'canceled'].includes(w.state) && new Date(w.due_date).getTime() < now : false,
-      labels: w.labels ?? [],
-      creatorName: w.creator_name,
-      url: w.url,
-      updatedAt: w.linear_updated_at,
-      ageDays: w.linear_created_at ? Math.floor((now - new Date(w.linear_created_at).getTime()) / 86_400_000) : null,
-    }))
+    .map((w) => {
+      const act = actorsByItem.get(w.id);
+      const merger = act?.merger
+        ?? (w.merger_dev_id
+          ? { name: devName.get(w.merger_dev_id) ?? '—', avatarUrl: devAvatar.get(w.merger_dev_id) ?? null, login: null, devId: w.merger_dev_id, reviewState: null }
+          : null);
+      return {
+        id: w.id,
+        identifier: w.identifier,
+        number: w.number,
+        title: w.title,
+        state: w.state,
+        stateName: w.state_name ?? w.state,
+        priority: w.priority,
+        projectId: w.project_id,
+        projectName: w.project_id ? projName.get(w.project_id) ?? null : null,
+        assignee: w.assignee_dev_id ? { name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
+        estimate: w.estimate,
+        dueDate: w.due_date,
+        overdue: w.due_date ? !['completed', 'done', 'canceled'].includes(w.state) && new Date(w.due_date).getTime() < now : false,
+        labels: w.labels ?? [],
+        creatorName: w.creator_name,
+        url: w.url,
+        updatedAt: w.linear_updated_at,
+        ageDays: w.linear_created_at ? Math.floor((now - new Date(w.linear_created_at).getTime()) / 86_400_000) : null,
+        // Conexión con código
+        source: (w.source as 'pr' | 'commit' | null) ?? null,
+        pr: w.pr_number && w.repo ? { repo: w.repo, number: w.pr_number, url: `https://github.com/${w.repo}/pull/${w.pr_number}` } : null,
+        authors: act?.authors ?? [],
+        reviewers: act?.reviewers ?? [],
+        merger,
+      };
+    })
     .sort((a, b) => (PRIO_ORDER[a.priority ?? ''] ?? 9) - (PRIO_ORDER[b.priority ?? ''] ?? 9));
 
   // Agregaciones para los KPIs/gráficas (sobre el conjunto filtrado).
   const byState = countMap(tickets, (t) => t.stateName);
   const byPriority = countMap(tickets, (t) => t.priority ?? 'sin prioridad');
   const byProject = countMap(tickets, (t) => t.projectName ?? 'sin proyecto');
+  const bySource = countMap(tickets, (t) => t.source ?? 'linear');
 
-  // Developers involucrados (con avatar): cuántos tickets tiene cada uno en el conjunto.
-  const devMap = new Map<string, { name: string; avatarUrl: string | null; count: number }>();
-  tickets.forEach((t) => {
-    if (!t.assignee) return;
-    const k = t.assignee.name;
-    if (!devMap.has(k)) devMap.set(k, { name: t.assignee.name, avatarUrl: t.assignee.avatarUrl, count: 0 });
-    devMap.get(k)!.count++;
-  });
-  const developers = [...devMap.values()].sort((a, b) => b.count - a.count);
+  // Top revisores: quién aparece más como reviewer (no es el assignee; hoy invisible).
+  const revMap = new Map<string, { name: string; avatarUrl: string | null; count: number }>();
+  tickets.forEach((t) =>
+    t.reviewers.forEach((r) => {
+      const k = r.login ?? r.name;
+      if (!revMap.has(k)) revMap.set(k, { name: r.name, avatarUrl: r.avatarUrl, count: 0 });
+      revMap.get(k)!.count++;
+    }),
+  );
+  const topReviewers = [...revMap.values()].sort((a, b) => b.count - a.count);
+
+  // Insight de atribución: tickets cuyo merger no es ninguno de los autores (ver squash/merge).
+  const attributionMismatch = tickets.filter(
+    (t) => t.merger && t.authors.length > 0 && !t.authors.some((a) => samePerson(a, t.merger!)),
+  ).length;
+  // Trabajo cerrado sin PR vinculado (no trazable a código).
+  const withoutPr = tickets.filter((t) => ['completed', 'done'].includes(t.state) && !t.pr).length;
 
   // Resumen por categoría, SIEMPRE sobre todos los tickets del filtro (ignora el scope), para
   // que los KPIs muestren abiertos / en curso / completados sin importar el toggle.
@@ -810,6 +873,18 @@ export async function getTickets(f: TicketFilters) {
   if (f.priority) sq = sq.eq('priority', f.priority);
   const { data: allRows } = await sq.limit(2000);
   const all = (allRows ?? []) as any[];
+
+  // Developers involucrados: sobre el conjunto COMPLETO (no los 500 visibles), para que no
+  // dependa del scope/orden. Antes se calculaba sobre `tickets` y devs con tickets viejos
+  // quedaban fuera del corte de 500 en scope "todos".
+  const devMap = new Map<string, { name: string; avatarUrl: string | null; count: number }>();
+  all.forEach((w) => {
+    if (!w.assignee_dev_id) return;
+    const name = devName.get(w.assignee_dev_id) ?? '—';
+    if (!devMap.has(name)) devMap.set(name, { name, avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null, count: 0 });
+    devMap.get(name)!.count++;
+  });
+  const developers = [...devMap.values()].sort((a, b) => b.count - a.count);
   const summary = {
     total: all.length,
     open: all.filter((w) => OPEN_STATES.includes(w.state)).length,
@@ -827,7 +902,11 @@ export async function getTickets(f: TicketFilters) {
     byState,
     byPriority,
     byProject,
+    bySource,
     developers,
+    topReviewers,
+    attributionMismatch,
+    withoutPr,
     tickets,
   };
 }

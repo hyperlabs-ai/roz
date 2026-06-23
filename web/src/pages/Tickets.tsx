@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Ticket as TicketIcon, CircleAlert, UserX, ExternalLink, CircleDot, CircleCheck } from 'lucide-react';
+import { Ticket as TicketIcon, CircleAlert, UserX, ExternalLink, CircleDot, CircleCheck, GitPullRequest, GitCommit, GitMerge } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { MetricCard } from '@/components/MetricCard';
 import { RankBars, Donut } from '@/components/charts';
@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useApi } from '@/lib/useApi';
-import { apiGet, type TicketsResponse, type TicketFilterOptions, type Ticket } from '@/lib/api';
+import { apiGet, type TicketsResponse, type TicketFilterOptions, type Ticket, type TicketPerson } from '@/lib/api';
 import { shortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -41,6 +41,63 @@ function stateVariant(state: string): 'success' | 'default' | 'secondary' {
   if (['completed', 'done'].includes(state)) return 'success';
   if (['started', 'in_progress'].includes(state)) return 'default';
   return 'secondary';
+}
+
+// Origen del ticket: cómo nació el trabajo (migración 0011).
+const SOURCE_LABEL: Record<string, string> = { pr: 'Pull Request', commit: 'Commit', linear: 'Linear' };
+const SOURCE_COLOR: Record<string, string> = {
+  pr: 'hsl(var(--chart-1))', commit: 'hsl(var(--chart-4))', linear: 'hsl(var(--muted-foreground))',
+};
+
+// Anillo del avatar según el veredicto de review.
+function reviewRing(state: string | null | undefined): string {
+  if (state === 'approved') return 'ring-success';
+  if (state === 'changes_requested') return 'ring-warning';
+  return 'ring-border';
+}
+
+/** Avatares apilados de revisores, con tooltip de nombre + veredicto. */
+function ReviewerStack({ reviewers }: { reviewers: TicketPerson[] }) {
+  if (!reviewers.length) return null;
+  return (
+    <div className="flex -space-x-1.5">
+      {reviewers.slice(0, 4).map((r, i) => (
+        <UserAvatar
+          key={r.login ?? r.name ?? i}
+          url={r.avatarUrl}
+          name={r.name}
+          className={cn('size-5 ring-2', reviewRing(r.reviewState))}
+          title={`${r.name}${r.reviewState ? ` · ${r.reviewState}` : ''}`}
+        />
+      ))}
+      {reviewers.length > 4 && <span className="pl-2.5 text-xs text-muted-foreground">+{reviewers.length - 4}</span>}
+    </div>
+  );
+}
+
+/** Celda "Código": link al PR (o commit/Linear) + revisores. El diferenciador vs. Linear. */
+function CodeCell({ t }: { t: Ticket }) {
+  return (
+    <div className="flex items-center gap-2">
+      {t.pr ? (
+        <a
+          href={t.pr.url}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 font-mono text-xs text-chart-1 hover:underline"
+          title={`${t.pr.repo} · PR #${t.pr.number}`}
+        >
+          <GitPullRequest className="size-3.5" /> #{t.pr.number}
+        </a>
+      ) : t.source === 'commit' ? (
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><GitCommit className="size-3.5" /> commit</span>
+      ) : (
+        <span className="text-xs text-muted-foreground">—</span>
+      )}
+      <ReviewerStack reviewers={t.reviewers} />
+    </div>
+  );
 }
 
 export default function Tickets() {
@@ -92,7 +149,7 @@ export default function Tickets() {
             <MetricCard label="Sin asignar" value={data.summary.unassigned} icon={UserX} colorVar="--chart-5" />
           </div>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          <div className="mt-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
             <Card className="min-w-0">
               <CardHeader><CardTitle>Por proyecto</CardTitle></CardHeader>
               <CardContent><RankBars data={data.byProject} height={180} /></CardContent>
@@ -107,25 +164,75 @@ export default function Tickets() {
                 <Donut data={data.byPriority.map((p) => ({ label: PRIO_ES[p.label] ?? p.label, value: p.value, color: PRIO_COLOR[p.label] ?? 'hsl(var(--muted-foreground))' }))} height={210} />
               </CardContent>
             </Card>
+            <Card className="min-w-0">
+              <CardHeader><CardTitle>Por origen</CardTitle></CardHeader>
+              <CardContent>
+                <Donut data={data.bySource.map((s) => ({ label: SOURCE_LABEL[s.label] ?? s.label, value: s.value, color: SOURCE_COLOR[s.label] ?? 'hsl(var(--muted-foreground))' }))} height={210} />
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Developers involucrados */}
-          <Card className="mt-4">
-            <CardHeader><CardTitle>Developers involucrados</CardTitle></CardHeader>
-            <CardContent>
-              {data.developers.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {data.developers.map((d) => (
-                    <div key={d.name} className="flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3">
-                      <UserAvatar url={d.avatarUrl} name={d.name} className="size-6" />
-                      <span className="text-sm">{d.name}</span>
-                      <Badge variant="secondary">{d.count}</Badge>
-                    </div>
-                  ))}
-                </div>
-              ) : <EmptyState>Sin responsables asignados</EmptyState>}
-            </CardContent>
-          </Card>
+          {/* Insight de atribución: lo que Linear no muestra. Solo si hay señal. */}
+          {(data.attributionMismatch > 0 || data.withoutPr > 0) && (
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              {data.attributionMismatch > 0 && (
+                <Card className="border-warning/40">
+                  <CardContent className="flex items-center gap-3 py-4">
+                    <GitMerge className="size-5 shrink-0 text-warning" />
+                    <p className="text-sm">
+                      <span className="font-semibold">{data.attributionMismatch}</span> ticket{data.attributionMismatch === 1 ? '' : 's'} mergeado{data.attributionMismatch === 1 ? '' : 's'} por alguien <span className="font-medium">distinto al autor</span>.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+              {data.withoutPr > 0 && (
+                <Card>
+                  <CardContent className="flex items-center gap-3 py-4">
+                    <GitPullRequest className="size-5 shrink-0 text-muted-foreground" />
+                    <p className="text-sm">
+                      <span className="font-semibold">{data.withoutPr}</span> ticket{data.withoutPr === 1 ? '' : 's'} cerrado{data.withoutPr === 1 ? '' : 's'} <span className="font-medium">sin PR vinculado</span>.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
+
+          {/* Personas: responsables vs. revisores (atribución por PR) */}
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader><CardTitle>Developers involucrados</CardTitle></CardHeader>
+              <CardContent>
+                {data.developers.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {data.developers.map((d) => (
+                      <div key={d.name} className="flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3">
+                        <UserAvatar url={d.avatarUrl} name={d.name} className="size-6" />
+                        <span className="text-sm">{d.name}</span>
+                        <Badge variant="secondary">{d.count}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                ) : <EmptyState>Sin responsables asignados</EmptyState>}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle>Top revisores</CardTitle></CardHeader>
+              <CardContent>
+                {data.topReviewers.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {data.topReviewers.map((r) => (
+                      <div key={r.name} className="flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3">
+                        <UserAvatar url={r.avatarUrl} name={r.name} className="size-6" />
+                        <span className="text-sm">{r.name}</span>
+                        <Badge variant="secondary">{r.count}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                ) : <EmptyState>Aún sin reviews registradas</EmptyState>}
+              </CardContent>
+            </Card>
+          </div>
         </>
       )}
 
@@ -149,13 +256,14 @@ export default function Tickets() {
               <TableHead>Estado</TableHead>
               <TableHead>Proyecto</TableHead>
               <TableHead>Responsable</TableHead>
+              <TableHead>Código</TableHead>
               <TableHead>Vence</TableHead>
               <TableHead className="w-8"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading && Array.from({ length: 8 }).map((_, i) => (
-              <TableRow key={i}><TableCell colSpan={7}><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+              <TableRow key={i}><TableCell colSpan={8}><Skeleton className="h-8 w-full" /></TableCell></TableRow>
             ))}
             {!loading && data?.tickets.map((t) => <TicketRow key={t.id} t={t} />)}
           </TableBody>
@@ -194,11 +302,17 @@ function TicketCardMobile({ t }: { t: Ticket }) {
             )}
             {t.dueDate && <span className={cn('ml-auto shrink-0', t.overdue && 'font-medium text-destructive')}>{shortDate(t.dueDate)}</span>}
           </div>
+          {(t.pr || t.source === 'commit' || t.reviewers.length > 0) && (
+            <div className="mt-2"><CodeCell t={t} /></div>
+          )}
         </div>
       </div>
     </Card>
   );
-  return t.url && t.url !== '#' ? <a href={t.url} target="_blank" rel="noreferrer" className="block">{inner}</a> : inner;
+  // Wrapper como div clickeable (no <a>) para no anidar anclas: CodeCell ya enlaza al PR.
+  return t.url && t.url !== '#'
+    ? <div role="link" tabIndex={0} className="block cursor-pointer" onClick={() => window.open(t.url!, '_blank', 'noopener')}>{inner}</div>
+    : inner;
 }
 
 function TicketRow({ t }: { t: Ticket }) {
@@ -225,6 +339,7 @@ function TicketRow({ t }: { t: Ticket }) {
           </div>
         ) : <span className="text-xs text-muted-foreground">Sin asignar</span>}
       </TableCell>
+      <TableCell><CodeCell t={t} /></TableCell>
       <TableCell>
         {t.dueDate ? (
           <span className={cn('text-xs', t.overdue ? 'font-medium text-destructive' : 'text-muted-foreground')}>{shortDate(t.dueDate)}</span>
