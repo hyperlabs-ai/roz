@@ -42,11 +42,33 @@ const raw = z
 
     ROZ_MCP_TOKEN: z.string().default(''),
     ROZ_INGEST_TOKEN: z.string().default(''),
+    // Secreto compartido para autenticar los crons de Vercel. Vercel inyecta
+    // `Authorization: Bearer <CRON_SECRET>` en cada invocación cuando este env var está seteado.
+    CRON_SECRET: z.string().default(''),
 
     // URL pública del dashboard (para el botón del digest semanal).
     DASHBOARD_URL: z.string().default('https://roz-ops.vercel.app'),
     // Destinatarios del digest semanal (coma-separados).
     DIGEST_RECIPIENTS: z.string().default('fer@hyperlabs.vc'),
+  })
+  // Fail-fast en producción: los secretos críticos de seguridad NO pueden quedar vacíos, o el
+  // server arrancaría con auth/firmas rotas (webhooks rechazando todo, crons abiertos, etc.).
+  .superRefine((v, ctx) => {
+    if (v.ROZ_ENV !== 'production') return;
+    const required: Record<string, string> = {
+      SUPABASE_URL: v.SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY: v.SUPABASE_SERVICE_ROLE_KEY,
+      SUPABASE_ANON_KEY: v.SUPABASE_ANON_KEY,
+      LINEAR_WEBHOOK_SECRET: v.LINEAR_WEBHOOK_SECRET,
+      GITHUB_WEBHOOK_SECRET: v.GITHUB_WEBHOOK_SECRET,
+      ROZ_MCP_TOKEN: v.ROZ_MCP_TOKEN,
+      ROZ_INGEST_TOKEN: v.ROZ_INGEST_TOKEN,
+      CRON_SECRET: v.CRON_SECRET,
+      ANTHROPIC_API_KEY: v.ANTHROPIC_API_KEY,
+    };
+    for (const [k, val] of Object.entries(required)) {
+      if (!val) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${k} es obligatorio en producción` });
+    }
   })
   .parse(process.env);
 
@@ -81,6 +103,7 @@ export const config = {
   supabaseAdmin: { token: raw.SUPABASE_ACCESS_TOKEN },
   mcp: { token: raw.ROZ_MCP_TOKEN },
   ingest: { token: raw.ROZ_INGEST_TOKEN },
+  cron: { secret: raw.CRON_SECRET },
 } as const;
 
 export type Config = typeof config;

@@ -5,6 +5,11 @@ import { config } from '../config.js';
 
 const API = 'https://api.github.com';
 
+/** Codifica un "owner/name" por segmento (preserva el `/` del path, evita traversal). */
+function encRepo(repo: string): string {
+  return repo.split('/').map(encodeURIComponent).join('/');
+}
+
 async function gh<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     headers: {
@@ -35,7 +40,7 @@ export async function getCommit(repo: string, sha: string): Promise<CommitMeta> 
     commit: { message: string; author?: { email?: string; date?: string } };
     author: { login: string } | null;
     stats?: { additions?: number; deletions?: number };
-  }>(`/repos/${repo}/commits/${sha}`);
+  }>(`/repos/${encRepo(repo)}/commits/${sha}`);
   return {
     sha: data.sha,
     message: data.commit.message,
@@ -58,7 +63,7 @@ export interface RepoMeta {
 /** Metadata del repo (para matching de proyecto y el correo de detección). */
 export async function getRepo(repo: string): Promise<RepoMeta> {
   const d = await gh<{ full_name: string; name: string; description: string | null; html_url: string }>(
-    `/repos/${repo}`,
+    `/repos/${encRepo(repo)}`,
   );
   return { fullName: d.full_name, name: d.name, description: d.description ?? null, url: d.html_url };
 }
@@ -95,7 +100,7 @@ export async function getPullRequest(repo: string, number: number): Promise<Pull
     base: { ref?: string } | null;
     user: { login?: string } | null;
     merged_by: { login?: string } | null;
-  }>(`/repos/${repo}/pulls/${number}`);
+  }>(`/repos/${encRepo(repo)}/pulls/${number}`);
   return {
     number: d.number,
     title: d.title,
@@ -119,7 +124,7 @@ export interface PrAuthor {
 export async function listPullRequestCommits(repo: string, number: number): Promise<PrAuthor[]> {
   const data = await gh<
     { author: { login?: string } | null; commit: { author?: { email?: string } } }[]
-  >(`/repos/${repo}/pulls/${number}/commits?per_page=100`);
+  >(`/repos/${encRepo(repo)}/pulls/${number}/commits?per_page=100`);
   const seen = new Set<string>();
   const out: PrAuthor[] = [];
   for (const c of data) {
@@ -141,7 +146,7 @@ export interface PrReview {
 /** Revisiones de una PR. Se queda con el ÚLTIMO estado por revisor (el que cuenta). */
 export async function listPullRequestReviews(repo: string, number: number): Promise<PrReview[]> {
   const data = await gh<{ user: { login?: string } | null; state: string }[]>(
-    `/repos/${repo}/pulls/${number}/reviews?per_page=100`,
+    `/repos/${encRepo(repo)}/pulls/${number}/reviews?per_page=100`,
   );
   const latest = new Map<string, string>(); // login -> state (las reviews llegan en orden cronológico)
   for (const r of data) {
@@ -162,7 +167,7 @@ export interface AssociatedPr {
  *  el flujo de PR (no el de commit), sin importar la estrategia de merge (squash/merge/rebase). */
 export async function commitPullRequests(repo: string, sha: string): Promise<AssociatedPr[]> {
   const data = await gh<{ number: number; merged_at: string | null; state: string }[]>(
-    `/repos/${repo}/commits/${sha}/pulls?per_page=20`,
+    `/repos/${encRepo(repo)}/commits/${sha}/pulls?per_page=20`,
   );
   return data.map((p) => ({ number: p.number, merged: !!p.merged_at, state: p.state }));
 }

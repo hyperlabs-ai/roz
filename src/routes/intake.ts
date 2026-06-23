@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { RozContext } from '../types/hono.js';
 import { config } from '../config.js';
+import { secureEqual, bearerToken } from '../utils/secure-compare.js';
 import { autoIngest } from '../intake/auto.js';
 import { AppError } from '../utils/errors.js';
 
@@ -21,10 +22,9 @@ const BodySchema = z.object({
 });
 
 intakeRoutes.post('/', async (c) => {
-  // Auth.
-  const auth = c.req.header('authorization') ?? '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!config.ingest.token || token !== config.ingest.token) {
+  // Auth (comparación en tiempo constante; fail-closed si el token no está configurado).
+  const token = bearerToken(c.req.header('authorization'));
+  if (!config.ingest.token || !secureEqual(token, config.ingest.token)) {
     return c.json({ error: { code: 'UNAUTHORIZED', message: 'token inválido' } }, 401);
   }
 
@@ -59,6 +59,7 @@ intakeRoutes.post('/', async (c) => {
       return c.json({ error: { code: err.code, message: err.message } }, err.status as 400);
     }
     c.get('logger')?.error({ err, app }, 'auto-ingest failed');
-    return c.json({ error: { code: 'INTERNAL', message: String(err) } }, 500);
+    // Mensaje genérico al cliente; el detalle queda solo en el log (no filtrar internos).
+    return c.json({ error: { code: 'INTERNAL', message: 'Internal Server Error' } }, 500);
   }
 });

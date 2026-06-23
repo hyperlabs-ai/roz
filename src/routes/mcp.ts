@@ -4,6 +4,7 @@
 import { Hono } from 'hono';
 import { config } from '../config.js';
 import type { RozContext } from '../types/hono.js';
+import { secureEqual, bearerToken } from '../utils/secure-compare.js';
 import { tools, toolsByName, toInputSchema } from '../mcp/server.js';
 
 export const mcpRoutes = new Hono<RozContext>();
@@ -18,10 +19,9 @@ function rpcError(id: unknown, code: number, message: string) {
 }
 
 mcpRoutes.post('/', async (c) => {
-  // Auth.
-  const auth = c.req.header('authorization') ?? '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!config.mcp.token || token !== config.mcp.token) {
+  // Auth (comparación en tiempo constante; fail-closed si el token no está configurado).
+  const token = bearerToken(c.req.header('authorization'));
+  if (!config.mcp.token || !secureEqual(token, config.mcp.token)) {
     return c.json(rpcError(null, -32001, 'Unauthorized'), 401);
   }
 

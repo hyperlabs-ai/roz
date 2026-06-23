@@ -45,7 +45,7 @@ interface ApiCountRow {
 /** Peticiones por tipo en las últimas 24 h (best-effort, aislado). interval válido: 1day. */
 async function fetchRequests(ref: string): Promise<Record<string, number> | null> {
   try {
-    const res = await fetch(`${BASE}/v1/projects/${ref}/analytics/endpoints/usage.api-counts?interval=1day`, { headers: headers() });
+    const res = await fetch(`${BASE}/v1/projects/${encodeURIComponent(ref)}/analytics/endpoints/usage.api-counts?interval=1day`, { headers: headers() });
     if (!res.ok) return null;
     const json = (await res.json()) as { result?: ApiCountRow[] };
     const rows = json.result ?? [];
@@ -72,7 +72,7 @@ interface HealthEntry {
 export async function probeSupabase(ref: string, _cfg: Record<string, unknown> = {}): Promise<ServiceProbe> {
   if (!config.supabaseAdmin.token) return degraded('SUPABASE_ACCESS_TOKEN no configurado');
   try {
-    const projRes = await fetch(`${BASE}/v1/projects/${ref}`, { headers: headers() });
+    const projRes = await fetch(`${BASE}/v1/projects/${encodeURIComponent(ref)}`, { headers: headers() });
     if (!projRes.ok) return degraded(`Supabase ${projRes.status}: ${await projRes.text().catch(() => projRes.statusText)}`);
     const proj = (await projRes.json()) as { status?: string; region?: string; database?: { version?: string; postgres_engine?: string } };
 
@@ -80,7 +80,7 @@ export async function probeSupabase(ref: string, _cfg: Record<string, unknown> =
     let health: HealthEntry[] = [];
     try {
       const q = ['db', 'auth', 'rest', 'realtime', 'storage'].map((s) => `services=${s}`).join('&');
-      const hRes = await fetch(`${BASE}/v1/projects/${ref}/health?${q}`, { headers: headers() });
+      const hRes = await fetch(`${BASE}/v1/projects/${encodeURIComponent(ref)}/health?${q}`, { headers: headers() });
       if (hRes.ok) health = (await hRes.json()) as HealthEntry[];
     } catch {
       /* salud opcional */
