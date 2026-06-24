@@ -263,10 +263,13 @@ async function resolveDevByLogin(
   login: string | null,
 ): Promise<{ id: string; linear_user_id: string | null } | null> {
   if (!login) return null;
+  // Los logins de GitHub son case-insensitive y la API los devuelve con casing variable
+  // (p.ej. "GermanMorelli" en la PR vs "germanmorelli" guardado). Se compara sin distinguir
+  // mayúsculas (ilike sin comodines = igualdad case-insensitive; los logins no llevan % ni _).
   const { data } = await supabase
     .from('dev')
     .select('id, linear_user_id')
-    .eq('github_login', login)
+    .ilike('github_login', login)
     .maybeSingle();
   return (data as { id: string; linear_user_id: string | null }) ?? null;
 }

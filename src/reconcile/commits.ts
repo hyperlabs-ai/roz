@@ -281,10 +281,11 @@ async function resolveDevByCommit(
     if (data) return data as { id: string; linear_user_id: string | null };
   }
   if (commit.author) {
+    // Login case-insensitive: GitHub devuelve casing variable y en roz.dev puede estar en minúsculas.
     const { data } = await supabase
       .from('dev')
       .select('id, linear_user_id')
-      .eq('github_login', commit.author)
+      .ilike('github_login', commit.author)
       .maybeSingle();
     if (data) return data as { id: string; linear_user_id: string | null };
   }

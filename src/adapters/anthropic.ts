@@ -24,8 +24,24 @@ export interface CompleteInput {
   maxTokens?: number;
 }
 
+// Directiva de idioma común a TODA llamada a Claude: el texto en prosa sale en español, pero las
+// claves JSON y los valores enumerados (kind/priority/category…) se conservan en inglés porque el
+// código los valida contra listas en inglés (traducirlos rompería la reconciliación). Va como
+// primer bloque de system para que la herede cualquier prompt, presente y futuro.
+const LANGUAGE_DIRECTIVE =
+  'IDIOMA: escribe TODO el texto en lenguaje natural (títulos, resúmenes, descripciones, ' +
+  'especificaciones, veredictos) en ESPAÑOL. Conserva en su idioma original los nombres de ' +
+  'herramientas, frameworks, librerías y servicios, los identificadores de código y los términos ' +
+  'técnicos sin traducción natural (p.ej. merge, commit, deploy, endpoint, pull request). MUY ' +
+  'IMPORTANTE: las claves del JSON y los valores de campos enumerados/categóricos (kind, priority, ' +
+  'category y sus valores: feature, bug, chore, refactor, urgent, high, medium, low, trivial, ' +
+  'substantive, NONE, etc.) van EXACTAMENTE como se especifican, en inglés y minúsculas — NO los traduzcas.';
+
 export async function complete(input: CompleteInput): Promise<string> {
-  const system: SystemBlock[] = [{ type: 'text', text: input.system }];
+  const system: SystemBlock[] = [
+    { type: 'text', text: LANGUAGE_DIRECTIVE },
+    { type: 'text', text: input.system },
+  ];
   if (input.cachedContext) {
     system.push({
       type: 'text',
