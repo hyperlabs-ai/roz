@@ -6,6 +6,7 @@ import { db } from '../db/supabase.js';
 import { notifyAssignment, notifyChangesDocumented, notifyRepoDetected } from '../notify/notifications.js';
 import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit, backfillPushCommits } from '../reconcile/commits.js';
+import { backfillRepoCommits } from '../reconcile/backfill.js';
 import { reconcilePullRequest } from '../reconcile/pull-request.js';
 import { handleRepoDetected } from '../reconcile/repos.js';
 import type { RepoMeta } from '../adapters/github.js';
@@ -21,6 +22,7 @@ export type OutboxEventType =
   | 'linear.project_upserted'
   | 'commit.received'
   | 'commits.backfill'
+  | 'repo.backfill'
   | 'pr.merged'
   | 'change.documented'
   | 'repo.detected'
@@ -213,6 +215,23 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
         after: String(payload.after ?? ''),
       });
       return;
+    // Backfill del historial de un repo recién vinculado (solo métricas, sin Claude/Linear). Se
+    // procesa una página por evento; si vino llena, se re-encola la siguiente (chunking acotado).
+    case 'repo.backfill': {
+      const repo = String(payload.repo ?? '');
+      const projectId = (payload.projectId as string | null) ?? null;
+      const sinceISO = String(payload.sinceISO ?? '');
+      const page = Number(payload.page ?? 1);
+      const r = await backfillRepoCommits({ repo, projectId, sinceISO, page });
+      if (r.hasMore) {
+        await emit(
+          'repo.backfill',
+          { repo, projectId, sinceISO, page: r.nextPage },
+          { idempotencyKey: `repo-backfill:${repo}:${r.nextPage}` },
+        );
+      }
+      return;
+    }
     // PR mergeada: documentar el trabajo en UN ticket con atribución (autor/revisor/merger).
     case 'pr.merged':
       await reconcilePullRequest({

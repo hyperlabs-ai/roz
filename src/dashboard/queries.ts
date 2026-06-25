@@ -176,6 +176,160 @@ export async function createProject(input: { name: string; key?: string | null; 
   return data as unknown as ProjectRow;
 }
 
+export interface NewDeveloperInput {
+  name: string;
+  email?: string | null;
+  githubLogin?: string | null;
+  githubEmail?: string | null;
+  linearUserId?: string | null;
+  availability?: number | null;
+}
+
+/**
+ * Da de alta un developer con las credenciales que hacen funcionar su flujo: github_login +
+ * github_email (atribución de commits/PRs), linear_user_id (mapear assignees de Linear y asignar
+ * tickets) y email (notificaciones). Rechaza duplicados en los campos de identidad porque la
+ * resolución de devs usa maybeSingle(), que ERRORA si dos devs comparten login/email/linear —
+ * un duplicado rompería la atribución de TODO el equipo, no solo del dev nuevo.
+ */
+export async function createDeveloper(input: NewDeveloperInput): Promise<{ id: string; name: string }> {
+  const supabase = db();
+  const name = input.name.trim();
+  const email = input.email?.trim() || null;
+  const githubLogin = input.githubLogin?.trim() || null;
+  const githubEmail = input.githubEmail?.trim().toLowerCase() || null;
+  const linearUserId = input.linearUserId?.trim() || null;
+
+  // Anti-duplicado por identidad. github_* son texto → comparación case-insensitive (ilike sin
+  // comodines = igualdad sin distinguir mayúsculas); linear_user_id es uuid → igualdad exacta.
+  const checks: { col: string; val: string; ci: boolean; label: string }[] = [];
+  if (githubLogin) checks.push({ col: 'github_login', val: githubLogin, ci: true, label: 'login de GitHub' });
+  if (githubEmail) checks.push({ col: 'github_email', val: githubEmail, ci: true, label: 'email de GitHub' });
+  if (linearUserId) checks.push({ col: 'linear_user_id', val: linearUserId, ci: false, label: 'usuario de Linear' });
+  for (const ch of checks) {
+    const base = supabase.from('dev').select('id, name');
+    const { data: dupe } = await (ch.ci ? base.ilike(ch.col, ch.val) : base.eq(ch.col, ch.val)).maybeSingle();
+    if (dupe) throw new Error(`Ya existe un developer (${(dupe as { name: string }).name}) con ese ${ch.label}`);
+  }
+
+  const { data, error } = await supabase
+    .from('dev')
+    .insert({
+      name,
+      email,
+      github_login: githubLogin,
+      github_email: githubEmail,
+      linear_user_id: linearUserId,
+      availability: input.availability ?? 1,
+      active: true,
+    })
+    .select('id, name')
+    .single();
+  if (error) throw error;
+  const dev = data as unknown as { id: string; name: string };
+
+  // Cierra el ciclo: el trabajo del dev ya ingerido con dev_id=null (porque no existía al llegar)
+  // se le atribuye ahora por su identidad de GitHub. Sin esto, solo contaría su trabajo futuro.
+  await reattributeOrphans(dev.id, githubLogin, githubEmail);
+  return dev;
+}
+
+export interface DeveloperPatch {
+  name?: string;
+  email?: string | null;
+  githubLogin?: string | null;
+  githubEmail?: string | null;
+  linearUserId?: string | null;
+  availability?: number;
+  active?: boolean;
+}
+
+export interface DeveloperCredentials {
+  id: string;
+  name: string;
+  email: string | null;
+  githubLogin: string | null;
+  githubEmail: string | null;
+  linearUserId: string | null;
+  availability: number;
+  active: boolean;
+}
+
+/** Credenciales editables de un dev (para prellenar el formulario de edición). */
+export async function getDeveloperCredentials(id: string): Promise<DeveloperCredentials | null> {
+  const { data } = await db()
+    .from('dev')
+    .select('id, name, email, github_login, github_email, linear_user_id, availability, active')
+    .eq('id', id)
+    .maybeSingle();
+  if (!data) return null;
+  const d = data as Record<string, any>;
+  return {
+    id: d.id,
+    name: d.name,
+    email: d.email,
+    githubLogin: d.github_login,
+    githubEmail: d.github_email,
+    linearUserId: d.linear_user_id,
+    availability: d.availability,
+    active: d.active,
+  };
+}
+
+/**
+ * Edita las credenciales de un dev. Solo aplica los campos presentes. Rechaza identidades que ya
+ * usa OTRO dev (mismo motivo que createDeveloper: maybeSingle() en la resolución falla con dupes).
+ * Tras guardar, re-atribuye su trabajo huérfano por la identidad de GitHub vigente — así corregir
+ * o agregar el email/login recupera los commits que habían entrado sin dueño.
+ */
+export async function updateDeveloper(id: string, patch: DeveloperPatch): Promise<{ id: string; name: string }> {
+  const supabase = db();
+
+  const row: Record<string, unknown> = {};
+  if (patch.name !== undefined) row.name = patch.name.trim();
+  if (patch.email !== undefined) row.email = patch.email?.trim() || null;
+  if (patch.githubLogin !== undefined) row.github_login = patch.githubLogin?.trim() || null;
+  if (patch.githubEmail !== undefined) row.github_email = patch.githubEmail?.trim().toLowerCase() || null;
+  if (patch.linearUserId !== undefined) row.linear_user_id = patch.linearUserId?.trim() || null;
+  if (patch.availability !== undefined) row.availability = patch.availability;
+  if (patch.active !== undefined) row.active = patch.active;
+
+  // Anti-duplicado sobre los campos de identidad que se están cambiando, excluyendo al propio dev.
+  const checks: { col: string; val: unknown; ci: boolean; label: string }[] = [];
+  if (typeof row.github_login === 'string') checks.push({ col: 'github_login', val: row.github_login, ci: true, label: 'login de GitHub' });
+  if (typeof row.github_email === 'string') checks.push({ col: 'github_email', val: row.github_email, ci: true, label: 'email de GitHub' });
+  if (typeof row.linear_user_id === 'string') checks.push({ col: 'linear_user_id', val: row.linear_user_id, ci: false, label: 'usuario de Linear' });
+  for (const ch of checks) {
+    const base = supabase.from('dev').select('id, name').neq('id', id);
+    const { data: dupe } = await (ch.ci ? base.ilike(ch.col, ch.val as string) : base.eq(ch.col, ch.val as string)).maybeSingle();
+    if (dupe) throw new Error(`Otro developer (${(dupe as { name: string }).name}) ya usa ese ${ch.label}`);
+  }
+
+  row.updated_at = new Date().toISOString();
+  const { data, error } = await supabase.from('dev').update(row).eq('id', id).select('id, name, github_login, github_email').single();
+  if (error) throw error;
+  const d = data as Record<string, any>;
+
+  await reattributeOrphans(d.id, d.github_login ?? null, d.github_email ?? null);
+  return { id: d.id, name: d.name };
+}
+
+/**
+ * Atribuye al dev el trabajo huérfano (dev_id=null) que coincide con su identidad de GitHub:
+ * commits por email (más confiable) y por login, y actores de PR (work_item_actor) por login.
+ * Case-insensitive (ilike sin comodines = igualdad sin distinguir mayúsculas). Idempotente.
+ */
+async function reattributeOrphans(devId: string, githubLogin: string | null, githubEmail: string | null): Promise<void> {
+  const supabase = db();
+  if (githubEmail) {
+    await supabase.from('commit').update({ dev_id: devId }).is('dev_id', null).ilike('author_email', githubEmail);
+  }
+  if (githubLogin) {
+    await supabase.from('commit').update({ dev_id: devId }).is('dev_id', null).ilike('author_login', githubLogin);
+    await supabase.from('work_item_actor').update({ dev_id: devId }).is('dev_id', null).ilike('github_login', githubLogin);
+  }
+}
+
 /** Edita nombre / key / kind de un proyecto. Solo aplica los campos presentes. */
 export async function updateProject(id: string, patch: { name?: string; key?: string; kind?: 'client' | 'internal' }): Promise<ProjectRow> {
   const row: Record<string, unknown> = {};

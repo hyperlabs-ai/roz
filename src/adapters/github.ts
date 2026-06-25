@@ -58,6 +58,46 @@ export async function getCommit(repo: string, sha: string): Promise<CommitMeta> 
   };
 }
 
+export interface RepoCommitListItem {
+  sha: string;
+  message: string;
+  url: string;
+  authorLogin: string | null; // login de GitHub (si el email del commit está enlazado a una cuenta)
+  authorEmail: string | null; // email de git (match de dev más confiable)
+  committedAt: string | null;
+  isMerge: boolean; // ≥2 padres → no es trabajo nuevo (no cuenta líneas)
+}
+
+/**
+ * Commits de la RAMA POR DEFECTO desde `sinceISO` (una página de 100). Para backfill del historial:
+ * el endpoint de listado NO trae stats (additions/deletions) —esas requieren un GET por sha—, pero
+ * sí trae `parents` para descartar merges sin una llamada extra. La lista omite ramas no mergeadas
+ * (default branch), igual que el conteo en vivo. Devuelve [] en 404 (repo sin acceso).
+ */
+export async function listRepoCommits(repo: string, sinceISO: string, page = 1): Promise<RepoCommitListItem[]> {
+  const data = await gh<
+    {
+      sha: string;
+      html_url: string;
+      commit: { message: string; author?: { email?: string; date?: string } };
+      author: { login?: string } | null;
+      parents?: unknown[];
+    }[]
+  >(`/repos/${encRepo(repo)}/commits?since=${encodeURIComponent(sinceISO)}&per_page=100&page=${page}`).catch((e) => {
+    if (String(e).includes('404')) return [] as never[];
+    throw e;
+  });
+  return data.map((d) => ({
+    sha: d.sha,
+    message: d.commit.message,
+    url: d.html_url,
+    authorLogin: d.author?.login ?? null,
+    authorEmail: d.commit.author?.email ?? null,
+    committedAt: d.commit.author?.date ?? null,
+    isMerge: (d.parents?.length ?? 0) >= 2,
+  }));
+}
+
 export interface RepoMeta {
   fullName: string; // "owner/name"
   name: string; // solo el nombre del repo (sin owner)

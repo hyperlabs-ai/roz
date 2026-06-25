@@ -67,6 +67,16 @@ export interface DeveloperListItem {
 
 export interface Ticket { id: string; identifier: string; title: string; state: string; priority: string | null; url: string | null; }
 
+/** Miembro del workspace de Linear, para el selector al crear un developer. */
+export interface LinearUserOption { id: string; name: string; displayName: string | null; email: string | null; }
+
+/** Credenciales editables de un developer (formulario de alta/edición). */
+export interface DeveloperCredentials {
+  id: string; name: string; email: string | null;
+  githubLogin: string | null; githubEmail: string | null; linearUserId: string | null;
+  availability: number; active: boolean;
+}
+
 export interface DeveloperProfile {
   dev: { id: string; name: string; email: string | null; githubLogin: string | null; avatarUrl: string | null; active: boolean; availability: number };
   kpis: { commits: Metric; ticketsResolved: Metric; avgCycleTimeHours: Metric; linesChanged: Metric };

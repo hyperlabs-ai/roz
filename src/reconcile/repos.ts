@@ -13,6 +13,7 @@ import { getRepo, type RepoMeta } from '../adapters/github.js';
 import { emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
 import { addProjectRepo } from '../dashboard/queries.js';
+import { enqueueRepoBackfill } from './backfill.js';
 
 export interface RepoDetectedInput {
   repo: string; // "owner/name"
@@ -61,8 +62,12 @@ export async function handleRepoDetected(input: RepoDetectedInput): Promise<void
     { idempotencyKey: `repo-notify:${repo}` },
   );
 
-  // 3. Vincular si hubo match (idempotente: tolera el unique sobre repo).
-  if (match) await addProjectRepoIfAbsent(match.id, repo);
+  // 3. Vincular si hubo match (idempotente: tolera el unique sobre repo) y backfillear su historial
+  //    (solo métricas): los commits previos a la vinculación no llegaron por webhook. Idempotente.
+  if (match) {
+    await addProjectRepoIfAbsent(match.id, repo);
+    await enqueueRepoBackfill(repo, match.id);
+  }
 }
 
 /** Inserta el mapeo repo→proyecto tolerando el unique (23505) para reintentos seguros del outbox. */

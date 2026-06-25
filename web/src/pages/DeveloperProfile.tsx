@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2 } from 'lucide-react';
+import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { MetricCard } from '@/components/MetricCard';
 import { AreaTrend, RankBars, FocusRadar } from '@/components/charts';
 import { UserAvatar, EmptyState, StateBadge, LineDelta, SkillMeters } from '@/components/bits';
 import { AvailabilityControl } from '@/components/AvailabilityControl';
+import { DeveloperDialog } from '@/components/DeveloperDialog';
+import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,8 +21,11 @@ import { comparisonRange, defaultPeriod } from '@/lib/period';
 export default function DeveloperProfile() {
   const { id } = useParams();
   const [period, setPeriod] = useState(defaultPeriod());
+  const [editOpen, setEditOpen] = useState(false);
+  const { user } = useAuth();
+  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
   const compare = useMemo(() => comparisonRange(period.range, period.compare), [period.range, period.compare]);
-  const { data, loading, error } = useApi<Profile>(
+  const { data, loading, error, reload } = useApi<Profile>(
     () => apiGet(`/developers/${id}`, period.range, compare),
     [id, period.range.from, period.range.to, compare?.from, compare?.to],
   );
@@ -29,7 +34,16 @@ export default function DeveloperProfile() {
     <Layout
       title={data?.dev.name ?? 'Developer'}
       subtitle={data?.dev.githubLogin ? `@${data.dev.githubLogin}` : undefined}
-      actions={<PeriodPicker value={period} onChange={setPeriod} />}
+      actions={
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <Button variant="outline" onClick={() => setEditOpen(true)}>
+              <Pencil /> Editar credenciales
+            </Button>
+          )}
+          <PeriodPicker value={period} onChange={setPeriod} />
+        </div>
+      }
     >
       <Button asChild variant="ghost" size="sm" className="mb-4 -ml-2 text-muted-foreground">
         <Link to="/developers"><ArrowLeft /> Developers</Link>
@@ -144,6 +158,8 @@ export default function DeveloperProfile() {
           </div>
         </>
       )}
+
+      <DeveloperDialog devId={id} open={editOpen} onOpenChange={setEditOpen} onSaved={reload} />
     </Layout>
   );
 }

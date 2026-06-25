@@ -1,0 +1,122 @@
+// Backfill del HISTORIAL de commits al vincular un repo/proyecto. roz solo reacciona a webhooks
+// en vivo, así que todo lo anterior a la vinculación es invisible: este módulo lo recupera.
+//
+// Es backfill SOLO de métricas (roz.commit para el dashboard): NO llama a Claude ni crea/enlaza
+// tickets en Linear (eso inundaría Linear con cientos de issues históricos). Mismas reglas de
+// conteo que el flujo en vivo: rama por defecto, cada sha una vez, merges NO cuentan (recontarían
+// líneas ya atribuidas). Idempotente por (repo, sha) → re-correr es seguro.
+//
+// Se procesa una PÁGINA (100 commits) por evento y se re-encola la siguiente: cada invocación del
+// drain queda acotada muy por debajo del maxDuration serverless, aunque el repo tenga miles de
+// commits. El stats (líneas) es un GET por commit; 100 por página caben de sobra en una invocación.
+import { db } from '../db/supabase.js';
+import { listRepoCommits, getCommit } from '../adapters/github.js';
+import { emit } from '../events/outbox.js';
+
+export const BACKFILL_DAYS = 90;
+
+export interface DevMaps {
+  byEmail: Map<string, string>; // email (minúsculas) → dev_id
+  byLogin: Map<string, string>; // login (minúsculas) → dev_id
+}
+
+/** Carga los devs una vez en mapas (login/email en minúsculas) para atribuir en lote sin N queries.
+ *  El match en minúsculas es case-insensitive por construcción (GitHub varía el casing del login). */
+export async function loadDevMaps(): Promise<DevMaps> {
+  const { data: devs } = await db().from('dev').select('id, github_login, github_email');
+  const byEmail = new Map<string, string>();
+  const byLogin = new Map<string, string>();
+  for (const d of (devs ?? []) as { id: string; github_login: string | null; github_email: string | null }[]) {
+    if (d.github_email) byEmail.set(d.github_email.toLowerCase(), d.id);
+    if (d.github_login) byLogin.set(d.github_login.toLowerCase(), d.id);
+  }
+  return { byEmail, byLogin };
+}
+
+export interface BackfillRepoInput {
+  repo: string;
+  projectId: string | null;
+  sinceISO: string;
+  page?: number;
+  /** Mapas de dev precargados (para loops del script: se cargan una sola vez). */
+  devMaps?: DevMaps;
+}
+
+export interface BackfillRepoResult {
+  persisted: number;
+  skippedMerges: number;
+  attributed: number;
+  hasMore: boolean; // la página vino llena (100) → puede haber más
+  nextPage: number;
+}
+
+/** Procesa UNA página del historial de un repo: persiste commits no-merge con su atribución y líneas. */
+export async function backfillRepoCommits(input: BackfillRepoInput): Promise<BackfillRepoResult> {
+  const supabase = db();
+  const page = input.page ?? 1;
+  const maps = input.devMaps ?? (await loadDevMaps());
+
+  const list = await listRepoCommits(input.repo, input.sinceISO, page);
+  let persisted = 0;
+  let skippedMerges = 0;
+  let attributed = 0;
+
+  for (const item of list) {
+    // Merge commit: su diff combinado recontaría líneas ya atribuidas a los commits que trae. No
+    // se persiste (mismo criterio que reconcileBody en el flujo en vivo).
+    if (item.isMerge) {
+      skippedMerges++;
+      continue;
+    }
+
+    const email = item.authorEmail?.toLowerCase() ?? null;
+    const login = item.authorLogin?.toLowerCase() ?? null;
+    const devId = (email && maps.byEmail.get(email)) || (login && maps.byLogin.get(login)) || null;
+    if (devId) attributed++;
+
+    // Líneas (stats): requieren un GET por commit. Best-effort: si falla, se persiste sin líneas.
+    let additions: number | null = null;
+    let deletions: number | null = null;
+    try {
+      const c = await getCommit(input.repo, item.sha);
+      additions = c.additions;
+      deletions = c.deletions;
+    } catch {
+      /* sin stats: el commit igual cuenta, solo no suma líneas */
+    }
+
+    await supabase.from('commit').upsert(
+      {
+        sha: item.sha,
+        repo: input.repo,
+        project_id: input.projectId,
+        dev_id: devId,
+        author_login: item.authorLogin,
+        author_email: item.authorEmail,
+        message: item.message,
+        url: item.url,
+        additions,
+        deletions,
+        committed_at: item.committedAt,
+      },
+      { onConflict: 'repo,sha' },
+    );
+    persisted++;
+  }
+
+  return { persisted, skippedMerges, attributed, hasMore: list.length >= 100, nextPage: page + 1 };
+}
+
+/**
+ * Encola el backfill del historial (últimos BACKFILL_DAYS días) de un repo recién vinculado. La
+ * llave de idempotencia por (repo, página 1) hace que cada repo se backfillee una sola vez aunque
+ * se re-vincule; el drain re-encola las páginas siguientes con su propia llave.
+ */
+export async function enqueueRepoBackfill(repo: string, projectId: string | null): Promise<void> {
+  const sinceISO = new Date(Date.now() - BACKFILL_DAYS * 86_400_000).toISOString();
+  await emit(
+    'repo.backfill',
+    { repo, projectId, sinceISO, page: 1 },
+    { idempotencyKey: `repo-backfill:${repo}:1` },
+  );
+}

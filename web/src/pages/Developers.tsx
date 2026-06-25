@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ChevronRight, GitCommitHorizontal, Code2, CircleCheck, CircleDot, FolderGit2 } from 'lucide-react';
+import { Search, ChevronRight, GitCommitHorizontal, Code2, CircleCheck, CircleDot, FolderGit2, Plus } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { UserAvatar, EmptyState, SkillChip } from '@/components/bits';
+import { DeveloperDialog } from '@/components/DeveloperDialog';
+import { useAuth } from '@/auth/AuthContext';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperListItem } from '@/lib/api';
@@ -16,8 +19,11 @@ import { cn } from '@/lib/utils';
 export default function Developers() {
   const [period, setPeriod] = useState(defaultPeriod());
   const [q, setQ] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const { user } = useAuth();
+  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
   const nav = useNavigate();
-  const { data, loading, error } = useApi<{ developers: DeveloperListItem[] }>(
+  const { data, loading, error, reload } = useApi<{ developers: DeveloperListItem[] }>(
     () => apiGet('/developers', period.range),
     [period.range.from, period.range.to],
   );
@@ -28,7 +34,16 @@ export default function Developers() {
   );
 
   return (
-    <Layout title="Developers" subtitle="Quién contribuye y en qué" actions={<PeriodPicker value={period} onChange={setPeriod} />}>
+    <Layout
+      title="Developers"
+      subtitle="Quién contribuye y en qué"
+      actions={
+        <div className="flex items-center gap-2">
+          {isAdmin && <Button onClick={() => setCreateOpen(true)}><Plus /> Nuevo developer</Button>}
+          <PeriodPicker value={period} onChange={setPeriod} />
+        </div>
+      }
+    >
       <div className="mb-4">
         <div className="relative w-full sm:max-w-xs">
           <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -43,7 +58,13 @@ export default function Developers() {
         {!loading && rows.map((d) => <DevRow key={d.id} d={d} onClick={() => nav(`/developers/${d.id}`)} />)}
       </div>
 
-      {!loading && !rows.length && <Card className="mt-2"><EmptyState>No hay developers que coincidan</EmptyState></Card>}
+      {!loading && !rows.length && (
+        <Card className="mt-2">
+          <EmptyState>{q ? 'No hay developers que coincidan' : 'Aún no hay developers'}</EmptyState>
+        </Card>
+      )}
+
+      <DeveloperDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={reload} />
     </Layout>
   );
 }

@@ -6,6 +6,7 @@
 //    así un repo nuevo en github_repositories queda trackeado sin onboarding.
 //  · Linear Project → roz.project: por linear_project_id (auto-onboarding desde webhook).
 import { db, dbPublic } from '../db/supabase.js';
+import { enqueueRepoBackfill } from '../reconcile/backfill.js';
 
 export interface RozProject {
   id: string;
@@ -122,7 +123,35 @@ export async function upsertLinearProject(data: {
     .select('id')
     .single();
   if (error) throw error;
+
+  // Backfill del historial de los repos YA asociados al proyecto recién onboardeado: si un repo
+  // existía en github_repositories antes que roz, nunca disparó `repo.detected`, así que su trabajo
+  // previo es invisible. Best-effort: un fallo aquí no debe tumbar el onboarding (es reintenable).
+  await enqueueProjectRepoBackfills(ins.id, hyperopsId).catch(() => {});
   return { created: true, projectId: ins.id };
+}
+
+/**
+ * Encola el backfill del historial de todos los repos resolubles a un proyecto: los del mapeo
+ * directo (roz.project_repo) y los del fallback de HyperOps (github_repositories activos con el
+ * mismo hyperops_project_id). Deduplica por full_name. Idempotente aguas abajo (llave por repo).
+ */
+async function enqueueProjectRepoBackfills(projectId: string, hyperopsId: string | null): Promise<void> {
+  const repos = new Set<string>();
+
+  const { data: links } = await db().from('project_repo').select('repo').eq('project_id', projectId);
+  for (const l of (links ?? []) as { repo: string }[]) if (l.repo) repos.add(l.repo);
+
+  if (hyperopsId) {
+    const { data: ghRepos } = await dbPublic()
+      .from('github_repositories')
+      .select('full_name')
+      .eq('project_id', hyperopsId)
+      .eq('active', true);
+    for (const r of (ghRepos ?? []) as { full_name: string }[]) if (r.full_name) repos.add(r.full_name);
+  }
+
+  for (const repo of repos) await enqueueRepoBackfill(repo, projectId);
 }
 
 export function slugKey(name: string): string {

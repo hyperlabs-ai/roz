@@ -6,6 +6,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { RozContext } from '../types/hono.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
+import { listUsers } from '../adapters/linear.js';
 import {
   type Period,
   currentMonthPeriod,
@@ -15,6 +16,9 @@ import {
   listProjects,
   getProject,
   createProject,
+  createDeveloper,
+  getDeveloperCredentials,
+  updateDeveloper,
   updateProject,
   deleteProject,
   addProjectRepo,
@@ -94,6 +98,74 @@ dashboardRoutes.get('/overview', async (c) => {
 dashboardRoutes.get('/developers', async (c) => {
   try {
     return c.json({ developers: await listDevelopers(period(c)) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Miembros del workspace de Linear (para el selector al crear un developer): el linear_user_id
+// es un uuid imposible de saber a mano, así que el front lo elige de esta lista (admin).
+dashboardRoutes.get('/linear/users', requireAdmin, async (c) => {
+  try {
+    const users = await listUsers();
+    return c.json({ users: users.map((u) => ({ id: u.id, name: u.name, displayName: u.displayName, email: u.email })) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Alta de developer (admin). Todas las credenciales que arrancan su flujo: github_login/email
+// (atribución), linear_user_id (asignación de tickets) y email (notificaciones). name es lo único
+// obligatorio; el resto es opcional pero recomendado. createDeveloper rechaza identidades duplicadas.
+const DeveloperCreate = z.object({
+  name: z.string().min(1),
+  email: z.string().email().nullish(),
+  githubLogin: z.string().min(1).nullish(),
+  githubEmail: z.string().email().nullish(),
+  linearUserId: z.string().min(1).nullish(),
+  availability: z.number().min(0).max(1).optional(),
+});
+
+dashboardRoutes.post('/developers', requireAdmin, async (c) => {
+  const parsed = DeveloperCreate.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    return c.json({ developer: await createDeveloper(parsed.data) }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Credenciales editables de un developer (admin) — para prellenar el formulario de edición.
+dashboardRoutes.get('/developers/:id/credentials', requireAdmin, async (c) => {
+  try {
+    const dev = await getDeveloperCredentials(c.req.param('id'));
+    if (!dev) return c.json({ error: { code: 'NOT_FOUND', message: 'developer no existe' } }, 404);
+    return c.json({ developer: dev });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Editar credenciales de un developer (admin). Todos los campos opcionales; al guardar, re-atribuye
+// su trabajo huérfano por la identidad de GitHub. `null` limpia un campo; ausente lo deja igual.
+const DeveloperPatch = z
+  .object({
+    name: z.string().min(1).optional(),
+    email: z.string().email().nullish(),
+    githubLogin: z.string().min(1).nullish(),
+    githubEmail: z.string().email().nullish(),
+    linearUserId: z.string().min(1).nullish(),
+    availability: z.number().min(0).max(1).optional(),
+    active: z.boolean().optional(),
+  })
+  .refine((b) => Object.keys(b).length > 0, 'sin cambios');
+
+dashboardRoutes.patch('/developers/:id', requireAdmin, async (c) => {
+  const parsed = DeveloperPatch.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    return c.json({ developer: await updateDeveloper(c.req.param('id'), parsed.data) });
   } catch (err) {
     return fail(c, err);
   }
