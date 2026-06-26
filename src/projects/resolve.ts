@@ -24,11 +24,13 @@ const PROJECT_COLS = 'id, key, name, linear_team_id, linear_project_id, hyperops
 export async function resolveProjectByRepo(fullName: string): Promise<RozProject | null> {
   const supabase = db();
 
-  // 1. Mapeo directo roz.project_repo (interno o cliente).
+  // 1. Mapeo directo roz.project_repo (interno o cliente). Los repos se guardan en minúsculas
+  //    (ver normalizeRepo); el webhook puede traer otro casing ("owner/Mind-playground"), así que
+  //    se compara contra la forma en minúsculas para no perder la vinculación.
   const { data: link } = await supabase
     .from('project_repo')
     .select('project_id')
-    .eq('repo', fullName)
+    .eq('repo', fullName.toLowerCase())
     .maybeSingle();
   if (link?.project_id) {
     const { data: project } = await supabase.from('project').select(PROJECT_COLS).eq('id', link.project_id).maybeSingle();

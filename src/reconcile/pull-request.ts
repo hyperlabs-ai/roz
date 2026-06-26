@@ -17,7 +17,7 @@ import {
   type PrAuthor,
   type PrReview,
 } from '../adapters/github.js';
-import { createIssue, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
+import { createIssue, moveIssueToCompleted, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
 import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
 
@@ -103,6 +103,7 @@ async function reconcileBody(
   if (linked) {
     await supabase.from('work_item').update({ documented: true }).eq('identifier', linked);
     await attributePr(supabase, linked, input, pr, authors, reviews, mergerDev?.id ?? null);
+    await completeLinkedIssue(supabase, linked);
     return { action: 'linked', identifier: linked, detail: 'enlazado por la integración nativa' };
   }
 
@@ -156,6 +157,7 @@ async function reconcileBody(
   if (matched) {
     await supabase.from('work_item').update({ documented: true }).eq('identifier', a.matchedIdentifier!);
     await attributePr(supabase, a.matchedIdentifier!, input, pr, authors, reviews, mergerDev?.id ?? null);
+    await completeLinkedIssue(supabase, a.matchedIdentifier!);
     return {
       action: 'matched',
       identifier: a.matchedIdentifier!,
@@ -295,6 +297,32 @@ async function attributePr(
     .update({ repo: input.repo, pr_number: pr.number, merger_dev_id: mergerDevId })
     .eq('id', wi.id);
   await persistActors(supabase, wi.id, { authors, reviews, mergerLogin: pr.mergedByLogin });
+}
+
+/**
+ * Cierra (mueve a Done) en Linear un work_item EXISTENTE que una PR mergeada resolvió, y espeja el
+ * estado localmente. Las PRs huérfanas ya nacen 'completed' al auto-documentarse, pero los issues
+ * pre-creados en Linear (source=null) se quedaban en su estado original (p.ej. Backlog): roz solo
+ * marcaba `documented` y delegaba el cierre a la integración nativa Linear↔GitHub, que no siempre
+ * lo mueve. Aquí roz lo cierra explícitamente → PR mergeada implica ticket Done, sea auto-creado o
+ * pre-existente (consistencia entre devs). Mueve PRIMERO en Linear (fuente de verdad) y solo si eso
+ * funciona espeja local, para no dejar un estado que el siguiente webhook revertiría. Best-effort:
+ * un fallo de Linear no debe tumbar la reconciliación de la PR.
+ */
+async function completeLinkedIssue(supabase: ReturnType<typeof db>, identifier: string): Promise<void> {
+  const { data: wi } = await supabase
+    .from('work_item')
+    .select('id, linear_id, state')
+    .eq('identifier', identifier)
+    .maybeSingle();
+  if (!wi?.id || !wi.linear_id) return;
+  if (wi.state === 'completed' || wi.state === 'canceled') return; // ya cerrado: no re-tocar
+  const done = await moveIssueToCompleted(wi.linear_id); // resuelve el estado del team del issue
+  if (!done) return; // Linear falló o sin estado completed: no espejamos algo que no aplicamos
+  await supabase
+    .from('work_item')
+    .update({ state: 'completed', state_name: done.stateName, completed_at: new Date().toISOString() })
+    .eq('id', wi.id);
 }
 
 /**

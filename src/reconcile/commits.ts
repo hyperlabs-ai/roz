@@ -308,7 +308,9 @@ async function persistCommit(
   await supabase.from('commit').upsert(
     {
       sha: commit.sha,
-      repo: input.repo,
+      // Casing canónico en minúsculas: el upsert (repo,sha) deduplica aunque el webhook y el
+      // backfill traigan el repo con distinto casing (p.ej. "owner/Mind-playground").
+      repo: input.repo.toLowerCase(),
       project_id: projectId,
       dev_id: devId,
       author_login: commit.author,

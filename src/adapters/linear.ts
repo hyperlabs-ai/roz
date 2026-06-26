@@ -68,6 +68,52 @@ export async function resolveInitialStateId(
   }
 }
 
+/**
+ * Estado tipo "completed" (Done) del team, con su nombre para espejar localmente. null si el team
+ * no tiene un estado de ese tipo o si la API falla. Reusa la cache de getTeamStates.
+ */
+export async function resolveCompletedState(teamId: string): Promise<WorkflowState | null> {
+  try {
+    const states = await getTeamStates(teamId);
+    return states.find((s) => s.type === 'completed') ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Mueve un issue EXISTENTE a un estado del workflow (p.ej. cerrarlo cuando su PR se mergea). */
+export async function updateIssueState(issueId: string, stateId: string): Promise<void> {
+  await gql(
+    `mutation Move($id: String!, $stateId: String!) {
+       issueUpdate(id: $id, input: { stateId: $stateId }) { success }
+     }`,
+    { id: issueId, stateId },
+  );
+}
+
+/**
+ * Mueve un issue a su estado "completed" (Done). Resuelve el estado del TEAM DEL PROPIO ISSUE (no
+ * del proyecto de roz): un issue pre-existente puede vivir en otro team que el que roz usaría para
+ * crear, y un stateId de otro team sería rechazado. Devuelve el nombre del estado aplicado (para
+ * espejar) o null si el issue no existe, no tiene team, no hay estado completed o la API falla.
+ */
+export async function moveIssueToCompleted(issueId: string): Promise<{ stateName: string } | null> {
+  try {
+    const data = await gql<{ issue: { team: { id: string } | null } | null }>(
+      `query IssueTeam($id: String!) { issue(id: $id) { team { id } } }`,
+      { id: issueId },
+    );
+    const teamId = data.issue?.team?.id;
+    if (!teamId) return null;
+    const done = await resolveCompletedState(teamId);
+    if (!done) return null;
+    await updateIssueState(issueId, done.id);
+    return { stateName: done.name };
+  } catch {
+    return null;
+  }
+}
+
 export interface LinearTeam {
   id: string;
   key: string;

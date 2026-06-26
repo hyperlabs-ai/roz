@@ -141,13 +141,20 @@ async function allProjects(): Promise<{ id: string; name: string; key: string; k
 
 /** Normaliza un repo a full_name "owner/name" (acepta "name", URL de GitHub, o full_name). */
 export function normalizeRepo(input: string): string {
-  const r = input.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/$/, '');
+  // GitHub trata owner/repo como case-insensitive y preserva solo el casing de visualización; roz
+  // guarda y compara en minúsculas para que un webhook "owner/Mind-playground" matchee el repo
+  // vinculado "owner/mind-playground" (ver resolveProjectByRepo).
+  const r = input.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/i, '').replace(/\/$/, '').toLowerCase();
   return r.includes('/') ? r : `hyperlabs-ai/${r}`;
 }
 
-export async function addProjectRepo(projectId: string, repo: string) {
-  const { error } = await db().from('project_repo').insert({ project_id: projectId, repo: normalizeRepo(repo) });
+/** Vincula un repo a un proyecto (idempotente por repo). Devuelve el repo normalizado para que el
+ *  caller pueda encolar su backfill de historial. */
+export async function addProjectRepo(projectId: string, repo: string): Promise<string> {
+  const normalized = normalizeRepo(repo);
+  const { error } = await db().from('project_repo').insert({ project_id: projectId, repo: normalized });
   if (error) throw error;
+  return normalized;
 }
 
 export async function removeProjectRepo(projectId: string, repo: string) {

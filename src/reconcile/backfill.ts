@@ -13,7 +13,7 @@ import { db } from '../db/supabase.js';
 import { listRepoCommits, getCommit } from '../adapters/github.js';
 import { emit } from '../events/outbox.js';
 
-export const BACKFILL_DAYS = 90;
+export const BACKFILL_DAYS = 30;
 
 export interface DevMaps {
   byEmail: Map<string, string>; // email (minúsculas) → dev_id
@@ -88,7 +88,7 @@ export async function backfillRepoCommits(input: BackfillRepoInput): Promise<Bac
     await supabase.from('commit').upsert(
       {
         sha: item.sha,
-        repo: input.repo,
+        repo: input.repo.toLowerCase(), // casing canónico: deduplica (repo,sha) con el flujo en vivo
         project_id: input.projectId,
         dev_id: devId,
         author_login: item.authorLogin,

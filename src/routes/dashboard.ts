@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { RozContext } from '../types/hono.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
 import { listUsers } from '../adapters/linear.js';
+import { enqueueRepoBackfill } from '../reconcile/backfill.js';
 import {
   type Period,
   currentMonthPeriod,
@@ -239,7 +240,10 @@ dashboardRoutes.post('/projects/:id/repos', requireAdmin, async (c) => {
   const parsed = RepoBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
-    await addProjectRepo(c.req.param('id'), parsed.data.repo);
+    const projectId = c.req.param('id');
+    const repo = await addProjectRepo(projectId, parsed.data.repo);
+    // Vincular en vivo solo trackea hacia adelante; recupera el historial reciente (BACKFILL_DAYS).
+    await enqueueRepoBackfill(repo, projectId).catch(() => {});
     return c.json({ ok: true });
   } catch (err) {
     return fail(c, err);
