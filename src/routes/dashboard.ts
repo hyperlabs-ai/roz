@@ -131,7 +131,13 @@ dashboardRoutes.post('/developers', requireAdmin, async (c) => {
   const parsed = DeveloperCreate.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
-    return c.json({ developer: await createDeveloper(parsed.data) }, 201);
+    // name garantizado por el schema (min 1); z.infer lo marca opcional (ver fix "inferencia de
+    // campos en dashboard"), así que se destructura y asevera como en createProject/linkService.
+    const { name, email, githubLogin, githubEmail, linearUserId, availability } = parsed.data;
+    return c.json(
+      { developer: await createDeveloper({ name: name!, email, githubLogin, githubEmail, linearUserId, availability }) },
+      201,
+    );
   } catch (err) {
     return fail(c, err);
   }
