@@ -66,8 +66,22 @@ app.get('/assets/*', async (c) => {
   }
 });
 
-// Fallback del SPA: cualquier otra ruta GET sirve index.html (router del lado cliente).
+// Fallback del SPA. Si la ruta tiene extensión (favicon, /roz.png y demás de web/public que
+// el build copia a dist), se sirve ese archivo; si no existe o no tiene extensión, cae al
+// index.html para que resuelva el router del lado cliente.
 app.get('*', async (c) => {
+  const rel = c.req.path.replace(/^\/+/, '');
+  if (rel && extname(rel)) {
+    try {
+      const buf = await readFile(join(SPA_DIST, rel));
+      return c.body(buf, 200, {
+        'content-type': MIME[extname(rel)] ?? 'application/octet-stream',
+        'cache-control': 'public, max-age=3600',
+      });
+    } catch {
+      /* no es un archivo del build: cae al SPA */
+    }
+  }
   try {
     return c.html(await readFile(join(SPA_DIST, 'index.html'), 'utf8'));
   } catch {
