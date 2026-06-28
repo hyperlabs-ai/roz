@@ -13,12 +13,12 @@ import {
 import { cn } from '@/lib/utils';
 
 const NAV = [
-  { to: '/', label: 'Resumen', icon: LayoutDashboard, end: true },
-  { to: '/developers', label: 'Developers', icon: Users, end: false },
-  { to: '/projects', label: 'Proyectos', icon: FolderGit2, end: false },
-  { to: '/infra', label: 'Infraestructura', icon: Server, end: false },
-  { to: '/tickets', label: 'Tickets', icon: Ticket, end: false },
-  { to: '/skills', label: 'Skills', icon: Sparkles, end: false },
+  { to: '/app', label: 'Resumen', icon: LayoutDashboard, end: true },
+  { to: '/app/developers', label: 'Developers', icon: Users, end: false },
+  { to: '/app/projects', label: 'Proyectos', icon: FolderGit2, end: false },
+  { to: '/app/infra', label: 'Infraestructura', icon: Server, end: false },
+  { to: '/app/tickets', label: 'Tickets', icon: Ticket, end: false },
+  { to: '/app/skills', label: 'Skills', icon: Sparkles, end: false },
 ];
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {

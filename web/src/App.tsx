@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
 import Login from '@/auth/Login';
+import Landing from '@/pages/Landing';
 import Overview from '@/pages/Overview';
 import Developers from '@/pages/Developers';
 import DeveloperProfile from '@/pages/DeveloperProfile';
@@ -22,7 +23,10 @@ function ScrollToTop() {
   return null;
 }
 
-export default function App() {
+// Puerta de autenticación SOLO para el dashboard (/app/*). La landing pública (/) queda fuera.
+// Sin sesión muestra el login; con sesión renderiza la ruta hija (Outlet). El listener de
+// onAuthStateChange actualiza la sesión tras iniciar, así que esto re-renderiza solo.
+function RequireAuth() {
   const { session, loading } = useAuth();
 
   if (loading) {
@@ -34,21 +38,31 @@ export default function App() {
   }
 
   if (!session) return <Login />;
+  return <Outlet />;
+}
 
+export default function App() {
   return (
     <>
-    <ScrollToTop />
-    <Routes>
-      <Route path="/" element={<Overview />} />
-      <Route path="/developers" element={<Developers />} />
-      <Route path="/developers/:id" element={<DeveloperProfile />} />
-      <Route path="/projects" element={<Projects />} />
-      <Route path="/projects/:id" element={<ProjectDetail />} />
-      <Route path="/infra" element={<Infra />} />
-      <Route path="/tickets" element={<Tickets />} />
-      <Route path="/skills" element={<Skills />} />
-      <Route path="*" element={<Overview />} />
-    </Routes>
+      <ScrollToTop />
+      <Routes>
+        {/* Pública: landing del producto (self-host / GitHub Developer Program) */}
+        <Route path="/" element={<Landing />} />
+
+        {/* Dashboard operativo, detrás de login */}
+        <Route path="/app" element={<RequireAuth />}>
+          <Route index element={<Overview />} />
+          <Route path="developers" element={<Developers />} />
+          <Route path="developers/:id" element={<DeveloperProfile />} />
+          <Route path="projects" element={<Projects />} />
+          <Route path="projects/:id" element={<ProjectDetail />} />
+          <Route path="infra" element={<Infra />} />
+          <Route path="tickets" element={<Tickets />} />
+          <Route path="skills" element={<Skills />} />
+        </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </>
   );
 }

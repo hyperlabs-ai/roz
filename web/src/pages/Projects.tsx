@@ -62,7 +62,7 @@ export default function Projects() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {data.projects.map((p) => (
-            <ProjectCard key={p.projectId} p={p} isAdmin={isAdmin} onChanged={reload} onOpen={() => nav(`/projects/${p.projectId}`)} />
+            <ProjectCard key={p.projectId} p={p} isAdmin={isAdmin} onChanged={reload} onOpen={() => nav(`/app/projects/${p.projectId}`)} />
           ))}
         </div>
       )}

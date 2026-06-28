@@ -48,7 +48,7 @@ export default function Overview() {
           </div>
 
           {/* Estado de infraestructura (primer vistazo) */}
-          <InfraHealth onOpen={() => nav('/infra')} />
+          <InfraHealth onOpen={() => nav('/app/infra')} />
 
           {/* Actividad + Cliente vs Interno */}
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -112,7 +112,7 @@ export default function Overview() {
                       const max = Math.max(...data.byDeveloper.map((x) => x.commits + x.ticketsResolved));
                       const v = d.commits + d.ticketsResolved;
                       return (
-                        <div key={d.devId} className="flex cursor-pointer items-center gap-3" onClick={() => nav(`/developers/${d.devId}`)}>
+                        <div key={d.devId} className="flex cursor-pointer items-center gap-3" onClick={() => nav(`/app/developers/${d.devId}`)}>
                           <UserAvatar url={d.avatarUrl} name={d.name} className="size-7" />
                           <div className="w-20 shrink-0 truncate text-sm">{d.name}</div>
                           <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
@@ -136,7 +136,7 @@ export default function Overview() {
                 <CardDescription>Tickets abiertos asignados, ponderados por prioridad</CardDescription>
               </CardHeader>
               <CardContent>
-                <Workload rows={data.workload} onPick={(id) => nav(`/developers/${id}`)} />
+                <Workload rows={data.workload} onPick={(id) => nav(`/app/developers/${id}`)} />
               </CardContent>
             </Card>
 

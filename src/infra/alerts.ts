@@ -100,7 +100,7 @@ function render(t: ServiceTransition, dashboardUrl: string): { subject: string; 
     ? `${esc(svc)} en <b>${esc(t.projectName)}</b> ${verb}. Revisa el estado.`
     : `${esc(svc)} en <b>${esc(t.projectName)}</b> volvió a estar operativo tras <b>${fmtDuration(t.downtimeMs)}</b>.`;
 
-  const button = `<a href="${dashboardUrl}/infra" style="display:inline-block;background:#2853ff;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver en el dashboard →</a>`;
+  const button = `<a href="${dashboardUrl}/app/infra" style="display:inline-block;background:#2853ff;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver en el dashboard →</a>`;
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
@@ -123,7 +123,7 @@ function render(t: ServiceTransition, dashboardUrl: string): { subject: string; 
 </body></html>`;
 
   const textRows = rows.map(([k, v]) => `${k}: ${v.replace(/<[^>]+>/g, '')}`).join('\n');
-  const text = `ROZ · ${subject}\n\n${sub.replace(/<[^>]+>/g, '')}\n\n${textRows}\n\nDashboard: ${dashboardUrl}/infra\n\n— ROZ`;
+  const text = `ROZ · ${subject}\n\n${sub.replace(/<[^>]+>/g, '')}\n\n${textRows}\n\nDashboard: ${dashboardUrl}/app/infra\n\n— ROZ`;
 
   return { subject, html, text };
 }

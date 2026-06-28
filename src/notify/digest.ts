@@ -192,7 +192,7 @@ function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof 
         .join('')
     : `<tr><td style="padding:6px 0;color:#9ca3af;font-size:13px">Sin tickets cerrados esta semana</td></tr>`;
 
-  const button = `<a href="${url}/developers/${p.dev.id}" style="display:inline-block;background:#2853ff;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver tu perfil completo →</a>`;
+  const button = `<a href="${url}/app/developers/${p.dev.id}" style="display:inline-block;background:#2853ff;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver tu perfil completo →</a>`;
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
@@ -234,7 +234,7 @@ function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof 
     `Líneas cambiadas: ${k.linesChanged.value}\nCycle time: ${k.avgCycleTimeHours.value}h\n\n` +
     `En qué trabajaste:\n${projects.map((pr) => `- ${pr.name}: ${pr.commits} commits`).join('\n') || '- Sin commits esta semana'}\n\n` +
     `Tickets que cerraste:\n${resolved.map((t) => `- ${t.identifier}: ${t.title}`).join('\n') || '- Ninguno'}\n\n` +
-    `Tu perfil: ${url}/developers/${p.dev.id}\n\n— ROZ`;
+    `Tu perfil: ${url}/app/developers/${p.dev.id}\n\n— ROZ`;
 
   return { html, text };
 }

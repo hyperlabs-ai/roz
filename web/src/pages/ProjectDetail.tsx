@@ -85,7 +85,7 @@ export default function ProjectDetail() {
   return (
     <Layout title={data?.project.name ?? 'Proyecto'} subtitle={data?.project.key} actions={<PeriodPicker value={period} onChange={setPeriod} />}>
       <Button asChild variant="ghost" size="sm" className="mb-4 -ml-2 text-muted-foreground">
-        <Link to="/projects"><ArrowLeft /> Proyectos</Link>
+        <Link to="/app/projects"><ArrowLeft /> Proyectos</Link>
       </Button>
 
       {loading || !data ? (

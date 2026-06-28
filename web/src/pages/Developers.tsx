@@ -55,7 +55,7 @@ export default function Developers() {
 
       <div className="space-y-3">
         {loading && Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
-        {!loading && rows.map((d) => <DevRow key={d.id} d={d} onClick={() => nav(`/developers/${d.id}`)} />)}
+        {!loading && rows.map((d) => <DevRow key={d.id} d={d} onClick={() => nav(`/app/developers/${d.id}`)} />)}
       </div>
 
       {!loading && !rows.length && (

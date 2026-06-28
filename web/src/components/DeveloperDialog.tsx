@@ -147,7 +147,7 @@ export function DeveloperDialog({
 
           <div className="space-y-1.5">
             <Label htmlFor="dev-email">Email (notificaciones)</Label>
-            <Input id="dev-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="fer@hyperdigital.mx" />
+            <Input id="dev-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="dev@empresa.com" />
           </div>
 
           <div className="grid grid-cols-2 gap-3">

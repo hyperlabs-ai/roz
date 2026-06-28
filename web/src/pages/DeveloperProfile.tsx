@@ -46,7 +46,7 @@ export default function DeveloperProfile() {
       }
     >
       <Button asChild variant="ghost" size="sm" className="mb-4 -ml-2 text-muted-foreground">
-        <Link to="/developers"><ArrowLeft /> Developers</Link>
+        <Link to="/app/developers"><ArrowLeft /> Developers</Link>
       </Button>
 
       {error && <Card><CardContent className="py-4 text-sm text-destructive">{error}</CardContent></Card>}

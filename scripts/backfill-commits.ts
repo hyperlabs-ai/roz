@@ -9,6 +9,7 @@
 // Uso:  npx tsx scripts/backfill-commits.ts [días] [filtro-repo]   (default 90 días)
 import 'dotenv/config';
 import { db, dbPublic } from '../src/db/supabase.js';
+import { config } from '../src/config.js';
 import { backfillRepoCommits, loadDevMaps, BACKFILL_DAYS } from '../src/reconcile/backfill.js';
 
 const DAYS = Number(process.argv[2] ?? BACKFILL_DAYS);
@@ -24,19 +25,26 @@ async function resolveLinkedRepos(): Promise<Map<string, string | null>> {
     if (l.repo) repos.set(l.repo, l.project_id ?? null);
   }
 
-  // Fallback HyperOps: github_repositories activos → roz.project por hyperops_project_id.
-  const { data: projects } = await supabase.from('project').select('id, hyperops_project_id');
-  const rozByHyperops = new Map<string, string>();
-  for (const p of (projects ?? []) as { id: string; hyperops_project_id: string | null }[]) {
-    if (p.hyperops_project_id) rozByHyperops.set(p.hyperops_project_id, p.id);
-  }
-  const { data: ghRepos } = await dbPublic()
-    .from('github_repositories')
-    .select('full_name, project_id')
-    .eq('active', true);
-  for (const r of (ghRepos ?? []) as { full_name: string; project_id: string | null }[]) {
-    if (!r.full_name || repos.has(r.full_name)) continue; // el mapeo directo manda
-    repos.set(r.full_name, (r.project_id && rozByHyperops.get(r.project_id)) || null);
+  // Fallback HyperOps opcional (HYPEROPS_FALLBACK=true): github_repositories activos → roz.project
+  // por hyperops_project_id. En self-host puro queda off y solo cuenta el mapeo directo.
+  if (config.hyperops.fallback) {
+    try {
+      const { data: projects } = await supabase.from('project').select('id, hyperops_project_id');
+      const rozByHyperops = new Map<string, string>();
+      for (const p of (projects ?? []) as { id: string; hyperops_project_id: string | null }[]) {
+        if (p.hyperops_project_id) rozByHyperops.set(p.hyperops_project_id, p.id);
+      }
+      const { data: ghRepos } = await dbPublic()
+        .from('github_repositories')
+        .select('full_name, project_id')
+        .eq('active', true);
+      for (const r of (ghRepos ?? []) as { full_name: string; project_id: string | null }[]) {
+        if (!r.full_name || repos.has(r.full_name)) continue; // el mapeo directo manda
+        repos.set(r.full_name, (r.project_id && rozByHyperops.get(r.project_id)) || null);
+      }
+    } catch {
+      /* schema public ausente: solo mapeo directo */
+    }
   }
 
   return repos;

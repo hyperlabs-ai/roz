@@ -6,6 +6,7 @@
 //    así un repo nuevo en github_repositories queda trackeado sin onboarding.
 //  · Linear Project → roz.project: por linear_project_id (auto-onboarding desde webhook).
 import { db, dbPublic } from '../db/supabase.js';
+import { config } from '../config.js';
 import { enqueueRepoBackfill } from '../reconcile/backfill.js';
 
 export interface RozProject {
@@ -37,16 +38,23 @@ export async function resolveProjectByRepo(fullName: string): Promise<RozProject
     if (project) return project as RozProject;
   }
 
-  // 2. Fallback: repo → project_id (HyperOps) → roz.project por hyperops_project_id.
-  const { data: repo } = await dbPublic()
-    .from('github_repositories')
-    .select('project_id')
-    .eq('full_name', fullName)
-    .eq('active', true)
-    .maybeSingle();
-  if (!repo?.project_id) return null;
-  const { data: project } = await supabase.from('project').select(PROJECT_COLS).eq('hyperops_project_id', repo.project_id).maybeSingle();
-  return (project as RozProject) ?? null;
+  // 2. Fallback opcional de HyperOps (solo si HYPEROPS_FALLBACK=true): repo → project_id en
+  //    public.github_repositories → roz.project por hyperops_project_id. Defensivo: si el schema
+  //    `public` no existe/expone en este deploy, no rompe la resolución.
+  if (!config.hyperops.fallback) return null;
+  try {
+    const { data: repo } = await dbPublic()
+      .from('github_repositories')
+      .select('project_id')
+      .eq('full_name', fullName)
+      .eq('active', true)
+      .maybeSingle();
+    if (!repo?.project_id) return null;
+    const { data: project } = await supabase.from('project').select(PROJECT_COLS).eq('hyperops_project_id', repo.project_id).maybeSingle();
+    return (project as RozProject) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Resuelve el roz.project de un issue de Linear por su Linear Project (fallback: team). */
@@ -103,14 +111,21 @@ export async function upsertLinearProject(data: {
     return { created: false, projectId: existing.id };
   }
 
-  // Best-effort: enlazar con un proyecto de HyperOps por nombre (case-insensitive).
+  // Best-effort: enlazar con un proyecto de HyperOps por nombre (case-insensitive). Solo si el
+  // fallback de HyperOps está activo; en self-host puro no hay schema `public` que consultar.
   let hyperopsId: string | null = null;
-  const { data: hop } = await dbPublic()
-    .from('projects')
-    .select('id')
-    .ilike('name', name)
-    .maybeSingle();
-  hyperopsId = hop?.id ?? null;
+  if (config.hyperops.fallback) {
+    try {
+      const { data: hop } = await dbPublic()
+        .from('projects')
+        .select('id')
+        .ilike('name', name)
+        .maybeSingle();
+      hyperopsId = hop?.id ?? null;
+    } catch {
+      hyperopsId = null;
+    }
+  }
 
   const key = slugKey(name);
   const { data: ins, error } = await supabase
@@ -144,13 +159,17 @@ async function enqueueProjectRepoBackfills(projectId: string, hyperopsId: string
   const { data: links } = await db().from('project_repo').select('repo').eq('project_id', projectId);
   for (const l of (links ?? []) as { repo: string }[]) if (l.repo) repos.add(l.repo);
 
-  if (hyperopsId) {
-    const { data: ghRepos } = await dbPublic()
-      .from('github_repositories')
-      .select('full_name')
-      .eq('project_id', hyperopsId)
-      .eq('active', true);
-    for (const r of (ghRepos ?? []) as { full_name: string }[]) if (r.full_name) repos.add(r.full_name);
+  if (config.hyperops.fallback && hyperopsId) {
+    try {
+      const { data: ghRepos } = await dbPublic()
+        .from('github_repositories')
+        .select('full_name')
+        .eq('project_id', hyperopsId)
+        .eq('active', true);
+      for (const r of (ghRepos ?? []) as { full_name: string }[]) if (r.full_name) repos.add(r.full_name);
+    } catch {
+      /* schema public ausente en self-host: ignora */
+    }
   }
 
   for (const repo of repos) await enqueueRepoBackfill(repo, projectId);

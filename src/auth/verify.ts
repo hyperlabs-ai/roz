@@ -46,13 +46,20 @@ export const requireDashboardAuth: MiddlewareHandler<RozContext> = async (c, nex
     return c.json({ error: { code: 'FORBIDDEN', message: 'dominio no permitido' } }, 403);
   }
 
-  // Rol y nombre desde user_profiles (mismo modelo que OpsHyper). Best-effort: sin perfil → null.
-  const { data: profile } = await dbPublic()
-    .from('user_profiles')
-    .select('role, full_name')
-    .eq('user_id', data.user.id)
-    .maybeSingle();
-  const p = profile as { role?: string | null; full_name?: string | null } | null;
+  // Rol y nombre desde public.user_profiles (role, full_name). Best-effort y defensivo: si la tabla
+  // no existe (self-host sin ese esquema) o el schema `public` no está expuesto, el rol queda null
+  // (dashboard de solo lectura) sin romper la sesión. Crea esa tabla para habilitar admins.
+  let p: { role?: string | null; full_name?: string | null } | null = null;
+  try {
+    const { data: profile } = await dbPublic()
+      .from('user_profiles')
+      .select('role, full_name')
+      .eq('user_id', data.user.id)
+      .maybeSingle();
+    p = profile as { role?: string | null; full_name?: string | null } | null;
+  } catch {
+    p = null;
+  }
 
   c.set('user', {
     id: data.user.id,

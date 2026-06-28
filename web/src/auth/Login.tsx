@@ -6,7 +6,12 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { RozLogo } from '@/components/RozLogo';
 
-const ALLOWED = ['hyperdigital.mx', 'hyperlabs.vc'];
+// Dominios permitidos (coma-separados) vía VITE_ALLOWED_EMAIL_DOMAINS. Vacío = sin pre-filtro
+// en el cliente; el backend igual valida el dominio (DASHBOARD_ALLOWED_DOMAINS).
+const ALLOWED = (import.meta.env.VITE_ALLOWED_EMAIL_DOMAINS ?? '')
+  .split(',')
+  .map((d: string) => d.trim().toLowerCase())
+  .filter(Boolean);
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -18,8 +23,8 @@ export default function Login() {
     e.preventDefault();
     setError(null);
     const domain = email.trim().toLowerCase().split('@')[1];
-    if (!domain || !ALLOWED.includes(domain)) {
-      setError('Solo correos de @hyperdigital.mx o @hyperlabs.vc');
+    if (ALLOWED.length && (!domain || !ALLOWED.includes(domain))) {
+      setError(`Solo correos de: ${ALLOWED.map((d: string) => '@' + d).join(', ')}`);
       return;
     }
     setBusy(true);
@@ -40,11 +45,11 @@ export default function Login() {
             </div>
           </div>
           <h1 className="text-xl font-semibold">Inicia sesión</h1>
-          <p className="mb-6 mt-1 text-sm text-muted-foreground">Con tu cuenta de HyperOps.</p>
+          <p className="mb-6 mt-1 text-sm text-muted-foreground">Con tu cuenta del equipo.</p>
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="email">Correo</Label>
-              <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@hyperdigital.mx" required autoFocus />
+              <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@empresa.com" required autoFocus />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="pass">Contraseña</Label>

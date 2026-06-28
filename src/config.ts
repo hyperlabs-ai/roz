@@ -13,8 +13,9 @@ const raw = z
     // anon key: solo para validar el JWT de usuario del dashboard (auth.getUser). Nunca da acceso
     // a datos por sí sola (RLS), a diferencia del service_role.
     SUPABASE_ANON_KEY: z.string().default(''),
-    // Dominios permitidos para el dashboard (mismo criterio que OpsHyper).
-    DASHBOARD_ALLOWED_DOMAINS: z.string().default('hyperdigital.mx,hyperlabs.vc'),
+    // Dominios permitidos para el dashboard (coma-separados). Vacío por defecto: cada deploy
+    // configura los suyos. Si queda vacío en producción, nadie pasa el filtro de dominio.
+    DASHBOARD_ALLOWED_DOMAINS: z.string().default(''),
 
     ANTHROPIC_API_KEY: z.string().default(''),
     ROZ_CLAUDE_MODEL: z.string().default('claude-haiku-4-5'),
@@ -33,6 +34,14 @@ const raw = z
     RESEND_API_KEY: z.string().default(''),
     RESEND_FROM: z.string().default('roz <onboarding@resend.dev>'),
 
+    // Fallback opcional de HyperOps: leer el schema `public` (github_repositories, projects) para
+    // resolver repo→proyecto cuando no hay mapeo directo. Off por defecto: el self-host usa el
+    // mapeo directo en roz.project_repo + proyectos manuales, sin depender de un schema ajeno.
+    HYPEROPS_FALLBACK: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+
     // Observabilidad de infraestructura (fase "solo datos"). Todos opcionales: sin token, el
     // adapter correspondiente degrada (reporta ok:false) sin romper el resto del sondeo.
     VERCEL_API_TOKEN: z.string().default(''),
@@ -46,10 +55,12 @@ const raw = z
     // `Authorization: Bearer <CRON_SECRET>` en cada invocación cuando este env var está seteado.
     CRON_SECRET: z.string().default(''),
 
-    // URL pública del dashboard (para el botón del digest semanal).
-    DASHBOARD_URL: z.string().default('https://roz-ops.vercel.app'),
-    // Destinatarios del digest semanal (coma-separados).
-    DIGEST_RECIPIENTS: z.string().default('fer@hyperlabs.vc'),
+    // URL pública del dashboard (para el botón del digest semanal). Vacío por defecto; en local
+    // apunta a http://localhost:3000.
+    DASHBOARD_URL: z.string().default(''),
+    // Destinatarios del digest semanal (coma-separados). Vacío por defecto: sin destinatarios,
+    // el digest de equipo no se envía.
+    DIGEST_RECIPIENTS: z.string().default(''),
   })
   // Fail-fast en producción: los secretos críticos de seguridad NO pueden quedar vacíos, o el
   // server arrancaría con auth/firmas rotas (webhooks rechazando todo, crons abiertos, etc.).
@@ -97,6 +108,7 @@ export const config = {
   },
   linear: { apiKey: raw.LINEAR_API_KEY, webhookSecret: raw.LINEAR_WEBHOOK_SECRET },
   github: { token: raw.GITHUB_TOKEN, webhookSecret: raw.GITHUB_WEBHOOK_SECRET },
+  hyperops: { fallback: raw.HYPEROPS_FALLBACK },
   resend: { apiKey: raw.RESEND_API_KEY, from: raw.RESEND_FROM },
   vercel: { token: raw.VERCEL_API_TOKEN, teamId: raw.VERCEL_TEAM_ID },
   railway: { token: raw.RAILWAY_API_TOKEN },
