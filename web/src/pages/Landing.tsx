@@ -34,6 +34,14 @@ function LandingStyles() {
       @keyframes rozFade   { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
       .roz-fade { animation: rozFade .35s ease both; }
 
+      /* smooth in-page navigation (offset for the sticky header) */
+      html { scroll-padding-top: 84px; }
+      @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+
+      /* scroll-reveal: blocks fade up as they enter the viewport */
+      [data-reveal] { opacity: 0; transform: translateY(20px); transition: opacity .7s cubic-bezier(.22,.61,.36,1), transform .7s cubic-bezier(.22,.61,.36,1); will-change: opacity, transform; }
+      [data-reveal].is-visible { opacity: 1; transform: none; }
+
       .roz-conn { position: relative; height: 2px; border-radius: 9999px; background: hsl(var(--border)); overflow: visible; }
       .roz-conn-glow { position: absolute; inset: 0; border-radius: 9999px;
         background: linear-gradient(90deg, transparent, hsl(var(--primary)/.85), transparent);
@@ -51,6 +59,7 @@ function LandingStyles() {
       @media (prefers-reduced-motion: reduce) {
         .roz-conn-glow, .roz-packet, .roz-ring, .roz-float, .roz-blink, .roz-dash, .roz-bar, .roz-spin, .roz-fade { animation: none !important; }
         .roz-packet { display: none; }
+        [data-reveal] { opacity: 1 !important; transform: none !important; transition: none !important; }
       }
     `}</style>
   );
@@ -145,7 +154,7 @@ function NodeBadge({ icon: Ico, size = 'md' }: { icon: Icon; size?: 'sm' | 'md' 
 /** Compact animated strip for the hero. */
 function PipelineStrip() {
   return (
-    <div className="mx-auto mt-16 max-w-3xl">
+    <div data-reveal style={{ transitionDelay: '.12s' }} className="mx-auto mt-16 max-w-3xl">
       <div className="flex items-center overflow-x-auto rounded-2xl border border-border bg-card/60 px-5 py-7 backdrop-blur scrollbar-thin">
         <div className="flex min-w-[520px] flex-1 items-center">
           {STAGES.map((s, i) => (
@@ -174,7 +183,7 @@ function Hero() {
     <section id="top" className="relative overflow-hidden">
       <div aria-hidden className="pointer-events-none absolute inset-x-0 -top-40 mx-auto h-[420px] max-w-4xl rounded-full bg-primary/20 blur-[120px]" />
       <div className="relative mx-auto max-w-6xl px-5 pb-16 pt-20 md:pb-24 md:pt-28">
-        <div className="mx-auto max-w-3xl text-center">
+        <div data-reveal className="mx-auto max-w-3xl text-center">
           <GitHubPill className="mb-6" />
           <h1 className="text-balance text-4xl font-extrabold leading-[1.05] tracking-tight md:text-6xl">
             The intelligence layer over <span className="text-primary">GitHub &amp; Linear</span>
@@ -276,7 +285,7 @@ function FlowChip({ x, y, w, label }: { x: number; y: number; w: number; label: 
 function Problem() {
   return (
     <section className="mx-auto max-w-6xl px-5 py-20">
-      <div className="grid gap-10 lg:grid-cols-5 lg:items-center">
+      <div data-reveal className="grid gap-10 lg:grid-cols-5 lg:items-center">
         <div className="lg:col-span-2">
           <div className="mb-3 text-sm font-semibold uppercase tracking-wider text-primary">The idea</div>
           <h2 className="text-balance text-2xl font-bold tracking-tight md:text-4xl">
@@ -321,7 +330,7 @@ function How() {
           sub="Four moves. Everything converges on the same context — no humans in the loop unless you want them." />
 
         {/* interactive stepper — select a move, watch the detail update */}
-        <div className="mt-12 grid gap-4 md:grid-cols-[300px_1fr] md:gap-6">
+        <div data-reveal className="mt-12 grid gap-4 md:grid-cols-[300px_1fr] md:gap-6">
           <div className="flex flex-col gap-2">
             {STAGES.map((s, i) => {
               const on = i === active;
@@ -419,7 +428,7 @@ function Features() {
     <section id="features" className="mx-auto max-w-6xl px-5 py-20">
       <SectionHead eyebrow="What you get" title="Context, routing and notification — automated"
         sub="The pieces that turn scattered activity into something your whole team can trust." />
-      <div className="mt-12 grid auto-rows-fr gap-4 md:grid-cols-3">
+      <div data-reveal className="mt-12 grid auto-rows-fr gap-4 md:grid-cols-3">
         <FeatureTile className="md:col-span-2" icon={Brain} title="Reasons, doesn’t just record"
           body="Claude decides what a change means, whether it’s worth tracking, and which issue it belongs to — then writes the documentation for you."
           visual={<MiniReason />} />
@@ -521,7 +530,7 @@ function GitHubSection() {
   return (
     <section id="github" className="border-t border-border bg-card/40">
       <div className="mx-auto max-w-6xl px-5 py-20">
-        <div className="mx-auto max-w-2xl text-center">
+        <div data-reveal className="mx-auto max-w-2xl text-center">
           <GitHubPill className="mb-5" />
           <h2 className="text-balance text-2xl font-bold tracking-tight md:text-4xl">Built on the GitHub API</h2>
           <p className="mt-4 text-pretty text-muted-foreground">
@@ -530,11 +539,11 @@ function GitHubSection() {
           </p>
         </div>
 
-        <div className="mx-auto mt-12 max-w-4xl rounded-3xl border border-border bg-background/60 p-4 sm:p-8">
+        <div data-reveal className="mx-auto mt-12 max-w-4xl rounded-3xl border border-border bg-background/60 p-4 sm:p-8">
           <WebhookFlow />
         </div>
 
-        <div className="mt-10 grid gap-4 sm:grid-cols-2">
+        <div data-reveal className="mt-10 grid gap-4 sm:grid-cols-2">
           {GH_POINTS.map((p, i) => (
             <div key={i} className="flex gap-3 rounded-xl border border-border bg-card p-4">
               <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><p.icon className="size-[18px]" /></div>
@@ -564,7 +573,7 @@ const STEPS = [
 function SelfHost() {
   return (
     <section id="selfhost" className="mx-auto max-w-6xl px-5 py-20">
-      <div className="overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-primary/10 via-card to-card p-8 md:p-12">
+      <div data-reveal className="overflow-hidden rounded-3xl border border-border bg-gradient-to-br from-primary/10 via-card to-card p-8 md:p-12">
         <div className="grid gap-10 md:grid-cols-2 md:items-center">
           <div>
             <h2 className="text-2xl font-bold tracking-tight md:text-3xl">Own your data. Deploy your own.</h2>
@@ -596,7 +605,7 @@ function SelfHost() {
 
 function SectionHead({ eyebrow, title, sub }: { eyebrow: string; title: string; sub: string }) {
   return (
-    <div className="mx-auto max-w-2xl text-center">
+    <div data-reveal className="mx-auto max-w-2xl text-center">
       <div className="mb-3 text-sm font-semibold uppercase tracking-wider text-primary">{eyebrow}</div>
       <h2 className="text-balance text-2xl font-bold tracking-tight md:text-4xl">{title}</h2>
       <p className="mt-4 text-pretty text-muted-foreground">{sub}</p>
@@ -662,6 +671,23 @@ function FooterLink({ href, children }: { href: string; children: ReactNode }) {
 }
 
 export default function Landing() {
+  useEffect(() => {
+    const els = Array.from(document.querySelectorAll<HTMLElement>('[data-reveal]'));
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || !('IntersectionObserver' in window)) {
+      els.forEach((e) => e.classList.add('is-visible'));
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => entries.forEach((en) => {
+        if (en.isIntersecting) { en.target.classList.add('is-visible'); io.unobserve(en.target); }
+      }),
+      { rootMargin: '0px 0px -8% 0px', threshold: 0.08 },
+    );
+    els.forEach((e) => io.observe(e));
+    return () => io.disconnect();
+  }, []);
+
   return (
     <div className="min-h-dvh bg-background text-foreground">
       <LandingStyles />
