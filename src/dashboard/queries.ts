@@ -139,6 +139,17 @@ async function allProjects(): Promise<{ id: string; name: string; key: string; k
   return (data ?? []) as unknown as { id: string; name: string; key: string; kind: string }[];
 }
 
+/**
+ * Colores fijados por proyecto (roz.project.color). Aparte de allProjects para NO acoplar infra/
+ * overview a esta columna, y tolerante: si la migración 0012 aún no se aplicó (columna inexistente),
+ * devuelve un mapa vacío y el front cae al color automático en vez de romper.
+ */
+async function projectColors(): Promise<Map<string, string | null>> {
+  const { data, error } = await db().from('project').select('id, color');
+  if (error) return new Map();
+  return new Map((data as unknown as { id: string; color: string | null }[]).map((r) => [r.id, r.color]));
+}
+
 /** Normaliza un repo a full_name "owner/name" (acepta "name", URL de GitHub, o full_name). */
 export function normalizeRepo(input: string): string {
   // GitHub trata owner/repo como case-insensitive y preserva solo el casing de visualización; roz
@@ -167,20 +178,23 @@ export interface ProjectRow {
   name: string;
   key: string;
   kind: string;
+  color: string | null;
 }
 
 /** Crea un proyecto manual (sin ancla a Linear/HyperOps). La `key` se deriva del nombre si no
  *  se da; queda en MAYÚSCULAS y debe ser única (lo garantiza el unique de la tabla). */
-export async function createProject(input: { name: string; key?: string | null; kind?: 'client' | 'internal' }): Promise<ProjectRow> {
+export async function createProject(input: { name: string; key?: string | null; kind?: 'client' | 'internal'; color?: string | null }): Promise<ProjectRow> {
   const name = input.name.trim();
   const key = (input.key?.trim() || slugKey(name)).toUpperCase();
-  const { data, error } = await db()
-    .from('project')
-    .insert({ name, key, kind: input.kind ?? 'internal' })
-    .select('id, name, key, kind')
-    .single();
-  if (error) throw error;
-  return data as unknown as ProjectRow;
+  const base = { name, key, kind: input.kind ?? 'internal' };
+  let res = await db().from('project').insert({ ...base, color: input.color?.trim() || null }).select('id, name, key, kind, color').single();
+  if (res.error && /color/i.test(res.error.message ?? '')) {
+    // columna color aún no migrada (0012): crea sin color.
+    res = await db().from('project').insert(base).select('id, name, key, kind').single();
+  }
+  if (res.error) throw res.error;
+  const d = res.data as Record<string, any>;
+  return { id: d.id, name: d.name, key: d.key, kind: d.kind, color: d.color ?? null };
 }
 
 export interface NewDeveloperInput {
@@ -338,15 +352,23 @@ async function reattributeOrphans(devId: string, githubLogin: string | null, git
 }
 
 /** Edita nombre / key / kind de un proyecto. Solo aplica los campos presentes. */
-export async function updateProject(id: string, patch: { name?: string; key?: string; kind?: 'client' | 'internal' }): Promise<ProjectRow> {
+export async function updateProject(id: string, patch: { name?: string; key?: string; kind?: 'client' | 'internal'; color?: string | null }): Promise<ProjectRow> {
   const row: Record<string, unknown> = {};
   if (patch.name !== undefined) row.name = patch.name.trim();
   if (patch.key !== undefined) row.key = patch.key.trim().toUpperCase();
   if (patch.kind !== undefined) row.kind = patch.kind;
+  if (patch.color !== undefined) row.color = patch.color?.trim() || null;
   row.updated_at = new Date().toISOString();
-  const { data, error } = await db().from('project').update(row).eq('id', id).select('id, name, key, kind').single();
-  if (error) throw error;
-  return data as unknown as ProjectRow;
+  let res = await db().from('project').update(row).eq('id', id).select('id, name, key, kind, color').single();
+  if (res.error && /color/i.test(res.error.message ?? '')) {
+    // columna color aún no migrada (0012): actualiza sin color.
+    const { color: _color, ...rest } = row as Record<string, unknown>;
+    void _color;
+    res = await db().from('project').update(rest).eq('id', id).select('id, name, key, kind').single();
+  }
+  if (res.error) throw res.error;
+  const d = res.data as Record<string, any>;
+  return { id: d.id, name: d.name, key: d.key, kind: d.kind, color: d.color ?? null };
 }
 
 /** Borra un proyecto. Los repos (project_repo) caen por cascade; el trabajo y el conocimiento
@@ -730,12 +752,13 @@ function slimTicket(w: WorkItemRow) {
 // ---- Proyectos (historial de commits + líneas) ----
 
 export async function listProjects(period: Period) {
-  const [commits, projects, resolved, devs, repoLinks] = await Promise.all([
+  const [commits, projects, resolved, devs, repoLinks, colorById] = await Promise.all([
     commitsInRange(period.from, period.to),
     allProjects(),
     resolvedInRange(period.from, period.to),
     allDevs(),
     projectRepos(),
+    projectColors(),
   ]);
   const devName = new Map(devs.map((d) => [d.id, d.name]));
   const kindById = new Map(projects.map((p) => [p.id, p.kind]));
@@ -766,6 +789,7 @@ export async function listProjects(period: Period) {
       name: p.name,
       key: keyById.get(p.projectId) ?? '',
       kind: kindById.get(p.projectId) ?? 'internal',
+      color: colorById.get(p.projectId) ?? null,
       commits: p.commits,
       additions: p.additions,
       deletions: p.deletions,
@@ -787,6 +811,7 @@ export async function getProject(projectId: string, period: Period) {
   const proj = await db().from('project').select('id, name, key, kind').eq('id', projectId).maybeSingle();
   const p = proj.data as unknown as { id: string; name: string; key: string; kind: string } | null;
   if (!p) return null;
+  const color = (await projectColors()).get(projectId) ?? null;
 
   const [commits, devs, resolved, repoRows, openRows, allItemRows] = await Promise.all([
     commitsInRange(period.from, period.to, { projectId }),
@@ -878,7 +903,7 @@ export async function getProject(projectId: string, period: Period) {
     .sort((a, b) => (PRIO_ORDER[a.priority ?? ''] ?? 9) - (PRIO_ORDER[b.priority ?? ''] ?? 9));
 
   return {
-    project: { id: p.id, name: p.name, key: p.key, kind: p.kind },
+    project: { id: p.id, name: p.name, key: p.key, kind: p.kind, color },
     repos,
     period,
     totals: { commits: commits.length, additions: lines.additions, deletions: lines.deletions, ticketsResolved: resolved.length, contributors: contribMap.size, openTickets: openTickets.length },

@@ -88,10 +88,18 @@ export interface DeveloperProfile {
   activity: { type: 'commit' | 'ticket_resolved'; ts: string; title: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
 }
 
+/** Cuadrícula de contribuciones de GitHub (la del perfil público), traída vía GraphQL API. */
+export interface GithubContributions {
+  linked: boolean;
+  login: string | null;
+  totalContributions: number;
+  weeks: { days: { date: string; count: number; level: 0 | 1 | 2 | 3 | 4; weekday: number }[] }[];
+}
+
 export type ProjectKind = 'client' | 'internal';
 
 export interface ProjectListItem {
-  projectId: string; name: string; key: string; kind: ProjectKind; commits: number; additions: number; deletions: number;
+  projectId: string; name: string; key: string; kind: ProjectKind; color: string | null; commits: number; additions: number; deletions: number;
   contributors: string[]; repos: string[]; ticketsResolved: number;
 }
 
@@ -101,7 +109,7 @@ export interface CommitHistoryItem {
 }
 
 export interface ProjectDetail {
-  project: { id: string; name: string; key: string; kind: ProjectKind };
+  project: { id: string; name: string; key: string; kind: ProjectKind; color: string | null };
   repos: string[];
   totals: { commits: number; additions: number; deletions: number; ticketsResolved: number; contributors: number; openTickets: number };
   contributors: { name: string; avatarUrl: string | null; commits: number; lines: number }[];

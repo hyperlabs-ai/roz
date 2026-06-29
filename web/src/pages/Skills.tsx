@@ -35,7 +35,7 @@ export default function Skills() {
   return (
     <Layout title="Skills" subtitle="Capacidades y cobertura del equipo" actions={isAdmin ? <SkillDialog onSaved={reload} /> : undefined}>
       <Tabs defaultValue="map">
-        <TabsList>
+        <TabsList className="mx-auto flex w-fit">
           <TabsTrigger value="map">Mapa de habilidades</TabsTrigger>
           <TabsTrigger value="catalog">Catálogo</TabsTrigger>
         </TabsList>

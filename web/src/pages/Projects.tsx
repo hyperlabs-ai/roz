@@ -72,22 +72,55 @@ export default function Projects() {
   );
 }
 
+// Color determinístico por proyecto (mismo seed → mismo color) como fallback cuando no hay uno fijado.
+function projectHue(seed: string): number {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (Math.imul(h, 31) + seed.charCodeAt(i)) | 0;
+  return ((h % 360) + 360) % 360;
+}
+
+/** Color del proyecto: el fijado manualmente (hex) o uno generado a partir de la key. */
+function projectColor(p: { color: string | null; key: string; name: string }): string {
+  return p.color || `hsl(${projectHue(p.key || p.name)} 62% 45%)`;
+}
+
+/** HSL → hex, para previsualizar en el <input type="color"> el color automático generado. */
+function hslToHex(h: number, s: number, l: number): string {
+  s /= 100; l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const c = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(255 * c).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
 function ProjectCard({ p, isAdmin, onChanged, onOpen }: { p: ProjectListItem; isAdmin: boolean; onChanged: () => void; onOpen: () => void }) {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+
+  const accent = projectColor(p);
+  const monogram = (p.key || p.name).replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase();
 
   return (
     <>
       <Card className="group cursor-pointer transition-shadow hover:shadow-md" onClick={onOpen}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary"><FolderGit2 className="size-[18px]" /></div>
-              <div>
-                <div className="font-semibold">{p.name}</div>
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div
+                className="flex size-9 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold tracking-tight text-white shadow-sm"
+                style={{ background: accent }}
+              >
+                {monogram}
+              </div>
+              <div className="min-w-0">
+                <div className="truncate font-semibold">{p.name}</div>
                 <div className="mt-0.5 flex items-center gap-1.5">
                   <Badge variant={p.kind === 'client' ? 'default' : 'secondary'}>{p.kind === 'client' ? 'Cliente' : 'Interno'}</Badge>
-                  <span className="text-xs text-muted-foreground">{p.repos.length} repo{p.repos.length !== 1 ? 's' : ''}</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">{p.key}</span>
+                  <span className="text-xs text-muted-foreground">· {p.repos.length} repo{p.repos.length !== 1 ? 's' : ''}</span>
                 </div>
               </div>
             </div>
@@ -161,6 +194,7 @@ function ProjectDialog({ project, open, onOpenChange, onSaved }: { project?: Pro
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [kind, setKind] = useState<ProjectKind>('internal');
+  const [color, setColor] = useState(''); // '' = automático (color generado por la key)
   const [busy, setBusy] = useState(false);
 
   // Al abrir, (re)inicializa el formulario con los valores del proyecto (o vacío al crear).
@@ -169,6 +203,7 @@ function ProjectDialog({ project, open, onOpenChange, onSaved }: { project?: Pro
       setName(project?.name ?? '');
       setKey(project?.key ?? '');
       setKind(project?.kind ?? 'internal');
+      setColor(project?.color ?? '');
     }
   }, [open, project]);
 
@@ -177,10 +212,10 @@ function ProjectDialog({ project, open, onOpenChange, onSaved }: { project?: Pro
     setBusy(true);
     try {
       if (editing) {
-        await apiSend('PATCH', `/projects/${project!.projectId}`, { name: name.trim(), key: key.trim() || project!.key, kind });
+        await apiSend('PATCH', `/projects/${project!.projectId}`, { name: name.trim(), key: key.trim() || project!.key, kind, color: color || null });
         toast.success('Proyecto actualizado', { description: name.trim() });
       } else {
-        await apiSend('POST', '/projects', { name: name.trim(), key: key.trim() || undefined, kind });
+        await apiSend('POST', '/projects', { name: name.trim(), key: key.trim() || undefined, kind, color: color || null });
         toast.success('Proyecto creado', { description: name.trim() });
       }
       onOpenChange(false);
@@ -227,6 +262,27 @@ function ProjectDialog({ project, open, onOpenChange, onSaved }: { project?: Pro
                 <SelectItem value="client">Cliente</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="proj-color">Color</Label>
+            <div className="flex items-center gap-2">
+              <input
+                id="proj-color"
+                type="color"
+                value={color || hslToHex(projectHue(key.trim() || name || 'x'), 62, 45)}
+                onChange={(e) => setColor(e.target.value)}
+                className="size-9 shrink-0 cursor-pointer rounded-md border bg-transparent p-0.5"
+                aria-label="Color del proyecto"
+              />
+              <Input
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                placeholder="Automático (se genera de la clave)"
+                className="font-mono"
+              />
+              {color && <Button type="button" variant="ghost" size="sm" onClick={() => setColor('')}>Auto</Button>}
+            </div>
+            <p className="text-xs text-muted-foreground">Color de identidad del proyecto. Déjalo en automático o usa tu hex de marca (#RRGGBB).</p>
           </div>
         </div>
         <DialogFooter>

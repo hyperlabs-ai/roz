@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { RozContext } from '../types/hono.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
 import { listUsers } from '../adapters/linear.js';
+import { getContributionCalendar } from '../adapters/github.js';
 import { enqueueRepoBackfill } from '../reconcile/backfill.js';
 import {
   type Period,
@@ -189,6 +190,25 @@ dashboardRoutes.get('/developers/:id', async (c) => {
   }
 });
 
+// Cuadrícula de contribuciones de GitHub del developer (la del perfil público, últimos 12 meses).
+// No es calculada por roz: viene directo de la GraphQL API de GitHub vía el PAT. Si el dev no tiene
+// github_login o el usuario no existe en GitHub, devuelve linked:false (el front muestra vacío).
+dashboardRoutes.get('/developers/:id/contributions', async (c) => {
+  try {
+    const dev = await getDeveloperCredentials(c.req.param('id'));
+    if (!dev) return c.json({ error: { code: 'NOT_FOUND', message: 'developer no existe' } }, 404);
+    if (!dev.githubLogin) return c.json({ linked: false, login: null, totalContributions: 0, weeks: [] });
+    const to = new Date();
+    const from = new Date(to);
+    from.setFullYear(from.getFullYear() - 1);
+    const cal = await getContributionCalendar(dev.githubLogin, from.toISOString(), to.toISOString());
+    if (!cal) return c.json({ linked: false, login: dev.githubLogin, totalContributions: 0, weeks: [] });
+    return c.json({ linked: true, login: dev.githubLogin, ...cal });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
 // Ajustar disponibilidad (admin). Afecta al router de asignación de roz.
 const AvailabilityBody = z.object({ availability: z.number().min(0).max(1) });
 
@@ -212,18 +232,22 @@ dashboardRoutes.get('/projects', async (c) => {
 });
 
 // Crear un proyecto manual (admin). La key se autogenera del nombre si no se manda.
+// Color: hex "#RGB"/"#RRGGBB" o null para limpiar (cae al color determinístico en el front).
+const HexColor = z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, 'color hex inválido');
+
 const ProjectCreate = z.object({
   name: z.string().min(1),
   key: z.string().min(1).optional(),
   kind: z.enum(['client', 'internal']).optional(),
+  color: HexColor.nullish(),
 });
 
 dashboardRoutes.post('/projects', requireAdmin, async (c) => {
   const parsed = ProjectCreate.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
-    const { name, key, kind } = parsed.data; // name garantizado por el schema (min 1)
-    return c.json({ project: await createProject({ name: name!, key, kind }) }, 201);
+    const { name, key, kind, color } = parsed.data; // name garantizado por el schema (min 1)
+    return c.json({ project: await createProject({ name: name!, key, kind, color }) }, 201);
   } catch (err) {
     return fail(c, err);
   }
@@ -273,8 +297,9 @@ const ProjectPatch = z
     name: z.string().min(1).optional(),
     key: z.string().min(1).optional(),
     kind: z.enum(['client', 'internal']).optional(),
+    color: HexColor.nullish(),
   })
-  .refine((b) => b.name !== undefined || b.key !== undefined || b.kind !== undefined, 'sin cambios');
+  .refine((b) => b.name !== undefined || b.key !== undefined || b.kind !== undefined || b.color !== undefined, 'sin cambios');
 
 dashboardRoutes.patch('/projects/:id', requireAdmin, async (c) => {
   const parsed = ProjectPatch.safeParse(await c.req.json().catch(() => null));

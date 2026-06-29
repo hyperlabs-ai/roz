@@ -4,10 +4,11 @@ import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, 
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { MetricCard } from '@/components/MetricCard';
-import { AreaTrend, RankBars, FocusRadar } from '@/components/charts';
+import { AreaTrend, FocusRadar } from '@/components/charts';
 import { UserAvatar, EmptyState, StateBadge, LineDelta, SkillMeters } from '@/components/bits';
 import { AvailabilityControl } from '@/components/AvailabilityControl';
 import { DeveloperDialog } from '@/components/DeveloperDialog';
+import { GithubContributions } from '@/components/GithubContributions';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -79,6 +80,8 @@ export default function DeveloperProfile() {
             <MetricCard label="Cycle time" value={data.kpis.avgCycleTimeHours.value} metric={data.kpis.avgCycleTimeHours} icon={Timer} invert format={hours} colorVar="--chart-5" />
           </div>
 
+          <GithubContributions devId={data.dev.id} />
+
           <Card className="mt-4">
             <CardHeader>
               <CardTitle>Commits por día</CardTitle>
@@ -99,9 +102,12 @@ export default function DeveloperProfile() {
               </CardContent>
             </Card>
             <Card className="min-w-0">
-              <CardHeader><CardTitle>Repos</CardTitle></CardHeader>
+              <CardHeader className="flex-row items-center justify-between space-y-0">
+                <CardTitle>Repos</CardTitle>
+                {data.repos.length > 0 && <span className="text-sm text-muted-foreground tabular-nums">{data.repos.length}</span>}
+              </CardHeader>
               <CardContent>
-                {data.repos.length ? <RankBars data={data.repos.map((r) => ({ label: r.repo.split('/')[1] ?? r.repo, value: r.commits }))} color="hsl(var(--chart-4))" height={340} /> : <EmptyState>Sin actividad</EmptyState>}
+                {data.repos.length ? <RepoBars repos={data.repos} /> : <EmptyState>Sin actividad</EmptyState>}
               </CardContent>
             </Card>
           </div>
@@ -116,29 +122,31 @@ export default function DeveloperProfile() {
             </CardContent>
           </Card>
 
+          {/* Fila a dos columnas: ambas cards se estiran a la misma altura (grid) y su contenido
+              hace scroll interno; cap compartido para cuando ambas son muy largas. Solo en desktop. */}
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <Card className="min-w-0">
+            <Card className="min-w-0 lg:flex lg:max-h-[480px] lg:flex-col">
               <CardHeader>
                 <CardTitle>Tickets</CardTitle>
                 <CardDescription>{data.tickets.inProgress.length} en curso · {data.tickets.open.length} abiertos · {data.tickets.resolved.length} resueltos</CardDescription>
               </CardHeader>
-              <CardContent>
-                <Tabs defaultValue="active">
-                  <TabsList>
+              <CardContent className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+                <Tabs defaultValue="active" className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+                  <TabsList className="lg:mx-auto lg:flex lg:w-fit lg:shrink-0">
                     <TabsTrigger value="active">Activos</TabsTrigger>
                     <TabsTrigger value="resolved">Resueltos</TabsTrigger>
                   </TabsList>
-                  <TabsContent value="active"><TicketList tickets={[...data.tickets.inProgress, ...data.tickets.open]} /></TabsContent>
-                  <TabsContent value="resolved"><TicketList tickets={data.tickets.resolved} /></TabsContent>
+                  <TabsContent value="active" className="scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1"><TicketList tickets={[...data.tickets.inProgress, ...data.tickets.open]} /></TabsContent>
+                  <TabsContent value="resolved" className="scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1"><TicketList tickets={data.tickets.resolved} /></TabsContent>
                 </Tabs>
               </CardContent>
             </Card>
 
-            <Card className="min-w-0">
+            <Card className="min-w-0 lg:flex lg:max-h-[480px] lg:flex-col">
               <CardHeader><CardTitle>Actividad reciente</CardTitle></CardHeader>
-              <CardContent>
+              <CardContent className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
                 {data.activity.length ? (
-                  <div className="space-y-0.5">
+                  <div className="space-y-0.5 scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
                     {data.activity.map((a, i) => (
                       <div key={i} className="flex items-center gap-3 border-b py-2 last:border-0">
                         <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">
@@ -161,6 +169,33 @@ export default function DeveloperProfile() {
 
       <DeveloperDialog devId={id} open={editOpen} onOpenChange={setEditOpen} onSaved={reload} />
     </Layout>
+  );
+}
+
+/**
+ * Repos del dev como barras proporcionales. Altura acotada con scroll: sin importar cuántos repos
+ * haya, el card no se estira (a diferencia de RankBars, cuya altura crecía con el nº de repos).
+ */
+function RepoBars({ repos }: { repos: Profile['repos'] }) {
+  const sorted = [...repos].sort((a, b) => b.commits - a.commits);
+  const max = sorted[0]?.commits || 1;
+  return (
+    <div className="space-y-2.5 lg:max-h-[340px] lg:overflow-y-auto lg:pr-3 lg:[scrollbar-color:hsl(var(--border))_transparent] lg:[scrollbar-width:thin] lg:[&::-webkit-scrollbar-thumb]:rounded-full lg:[&::-webkit-scrollbar-thumb]:bg-border hover:lg:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/40 lg:[&::-webkit-scrollbar-track]:bg-transparent lg:[&::-webkit-scrollbar]:w-1.5">
+      {sorted.map((r) => {
+        const name = r.repo.split('/')[1] ?? r.repo;
+        return (
+          <div key={r.repo} className="space-y-1">
+            <div className="flex items-center justify-between gap-2 text-sm">
+              <span className="min-w-0 truncate font-medium">{name}</span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">{r.commits}</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full" style={{ width: `${(r.commits / max) * 100}%`, background: 'hsl(var(--chart-4))' }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

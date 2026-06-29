@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ChevronRight, GitCommitHorizontal, Code2, CircleCheck, CircleDot, FolderGit2, Plus } from 'lucide-react';
+import { Search, ChevronRight, GitCommitHorizontal, Code2, CircleCheck, CircleDot, FolderGit2, Plus, Trophy, Crown, Sparkles } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { UserAvatar, EmptyState, SkillChip } from '@/components/bits';
@@ -28,9 +28,23 @@ export default function Developers() {
     [period.range.from, period.range.to],
   );
 
+  const sorted = useMemo(
+    () => [...(data?.developers ?? [])].sort((a, b) => b.commits - a.commits),
+    [data],
+  );
+
+  const top3 = useMemo(() => sorted.filter((d) => d.commits > 0).slice(0, 3), [sorted]);
+
   const rows = useMemo(
-    () => (data?.developers ?? []).filter((d) => d.name.toLowerCase().includes(q.toLowerCase()) || (d.githubLogin ?? '').toLowerCase().includes(q.toLowerCase())),
-    [data, q],
+    () => sorted.filter((d) => d.name.toLowerCase().includes(q.toLowerCase()) || (d.githubLogin ?? '').toLowerCase().includes(q.toLowerCase())),
+    [sorted, q],
+  );
+
+  const search = (
+    <div className="relative w-full">
+      <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar developer…" className="pl-8" />
+    </div>
   );
 
   return (
@@ -39,19 +53,31 @@ export default function Developers() {
       subtitle="Quién contribuye y en qué"
       actions={
         <div className="flex items-center gap-2">
+          {/* Buscador en la topbar solo en desktop; en móvil va en el cuerpo */}
+          <div className="hidden w-56 sm:block">{search}</div>
           {isAdmin && <Button onClick={() => setCreateOpen(true)}><Plus /> Nuevo developer</Button>}
           <PeriodPicker value={period} onChange={setPeriod} />
         </div>
       }
     >
-      <div className="mb-4">
-        <div className="relative w-full sm:max-w-xs">
-          <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar developer…" className="pl-8" />
-        </div>
-      </div>
+      {/* Buscador en el cuerpo solo en móvil */}
+      <div className="mb-4 sm:hidden">{search}</div>
 
       {error && <Card className="p-4 text-sm text-destructive">{error}</Card>}
+
+      {!loading && !q && top3.length > 0 && (
+        <div className="mb-8">
+          <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
+            <Trophy className="size-4 text-amber-500" /> Top 3 por commits
+          </div>
+          {/* Podio: #1 centrado, grande y elevado; #2 izquierda, #3 derecha */}
+          <div className="mx-auto flex max-w-2xl items-end justify-center gap-1.5 pt-7 sm:gap-3 sm:pt-8">
+            {[top3[1], top3[0], top3[2]].map((d) =>
+              d ? <TopCard key={d.id} d={d} rank={top3.indexOf(d) + 1} onClick={() => nav(`/app/developers/${d.id}`)} /> : null,
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-3">
         {loading && Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
@@ -66,6 +92,110 @@ export default function Developers() {
 
       <DeveloperDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={reload} />
     </Layout>
+  );
+}
+
+const RANK_STYLES: Record<number, {
+  card: string; ring: string; medal: string; pedestal: string; pedestalH: string;
+  avatar: string; commits: string; basis: string; lift: string;
+}> = {
+  1: {
+    card: 'bg-gradient-to-b from-amber-100 to-background ring-2 ring-amber-400 shadow-lg shadow-amber-400/25 dark:from-amber-500/15',
+    ring: 'ring-2 ring-amber-400 ring-offset-2 ring-offset-background sm:ring-4',
+    medal: '🥇',
+    pedestal: 'bg-gradient-to-b from-amber-400 to-amber-500 text-white text-xl sm:text-2xl',
+    pedestalH: 'h-16 sm:h-24',
+    avatar: 'size-14 sm:size-24',
+    commits: 'text-2xl sm:text-5xl',
+    basis: 'flex-[1.3] sm:flex-[1.4]',
+    lift: '-mt-6 sm:-mt-8',
+  },
+  2: {
+    card: 'bg-gradient-to-b from-slate-100 to-background ring-1 ring-slate-300 dark:from-slate-400/10',
+    ring: 'ring-2 ring-slate-300',
+    medal: '🥈',
+    pedestal: 'bg-gradient-to-b from-slate-300 to-slate-400 text-white text-base sm:text-lg',
+    pedestalH: 'h-11 sm:h-16',
+    avatar: 'size-11 sm:size-16',
+    commits: 'text-lg sm:text-2xl',
+    basis: 'flex-1',
+    lift: '',
+  },
+  3: {
+    card: 'bg-gradient-to-b from-orange-100/70 to-background ring-1 ring-orange-300 dark:from-orange-500/10',
+    ring: 'ring-2 ring-orange-400/70',
+    medal: '🥉',
+    pedestal: 'bg-gradient-to-b from-orange-400 to-orange-500 text-white text-base sm:text-lg',
+    pedestalH: 'h-8 sm:h-10',
+    avatar: 'size-11 sm:size-16',
+    commits: 'text-lg sm:text-2xl',
+    basis: 'flex-1',
+    lift: '',
+  },
+};
+
+function TopCard({ d, rank, onClick }: { d: DeveloperListItem; rank: number; onClick: () => void }) {
+  const s = RANK_STYLES[rank];
+  const isFirst = rank === 1;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn('group relative flex min-w-0 flex-col items-center focus:outline-none', s?.basis, s?.lift)}
+    >
+      {/* Resplandor difuso detrás del ganador */}
+      {isFirst && (
+        <div className="pointer-events-none absolute -top-6 left-1/2 size-40 -translate-x-1/2 rounded-full bg-amber-300/40 blur-3xl dark:bg-amber-400/20" aria-hidden />
+      )}
+
+      <Card
+        className={cn(
+          'relative z-10 flex w-full flex-col items-center gap-1.5 overflow-visible rounded-b-none px-1.5 pb-4 text-center backdrop-blur-sm transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-xl sm:gap-2 sm:px-3 sm:pb-5',
+          isFirst ? 'pt-8 sm:pt-10' : 'pt-6 sm:pt-7',
+          s?.card,
+        )}
+      >
+        {isFirst && (
+          <>
+            <Crown className="absolute left-1/2 -top-3 size-7 -translate-x-1/2 fill-amber-400 text-amber-500 drop-shadow-md transition-transform duration-300 group-hover:-translate-y-0.5 sm:-top-4 sm:size-9" aria-hidden />
+            <Sparkles className="absolute right-2 top-2 size-3.5 text-amber-400/80 sm:right-3 sm:top-3 sm:size-4" aria-hidden />
+          </>
+        )}
+        <div className="relative">
+          {/* Halo del avatar */}
+          <div className={cn('absolute inset-0 -z-10 rounded-full blur-md', isFirst ? 'bg-amber-400/40' : 'bg-transparent')} aria-hidden />
+          <UserAvatar url={d.avatarUrl} name={d.name} className={cn('shrink-0', s?.ring, s?.avatar)} />
+          <span className={cn('absolute -bottom-1.5 -right-1.5 leading-none drop-shadow-sm', isFirst ? 'text-lg sm:text-3xl' : 'text-base sm:text-xl')} aria-hidden>{s?.medal}</span>
+        </div>
+        <div className="min-w-0 w-full">
+          <div className={cn('truncate font-semibold', isFirst ? 'text-sm sm:text-lg' : 'text-xs sm:text-sm')}>{d.name}</div>
+          {d.githubLogin && <div className="hidden truncate text-xs text-muted-foreground sm:block">@{d.githubLogin}</div>}
+        </div>
+        <div className="mt-0.5 flex flex-col items-center leading-none">
+          <span
+            className={cn(
+              'bg-clip-text font-extrabold tabular-nums text-transparent',
+              s?.commits,
+              isFirst ? 'bg-gradient-to-b from-amber-500 to-amber-600' : 'bg-gradient-to-b from-primary to-primary/70',
+            )}
+          >
+            {compact(d.commits)}
+          </span>
+          <span className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+            <GitCommitHorizontal className="size-3" /> commits
+          </span>
+        </div>
+      </Card>
+
+      {/* Pedestal: la altura comunica el puesto */}
+      <div className={cn('relative w-full overflow-hidden rounded-b-lg shadow-inner', s?.pedestal, s?.pedestalH)}>
+        {/* Brillo superior tipo gloss */}
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/35 to-transparent" aria-hidden />
+        <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-black leading-none opacity-95 drop-shadow-sm">
+          {rank}
+        </span>
+      </div>
+    </button>
   );
 }
 

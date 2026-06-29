@@ -129,6 +129,7 @@ export default function ProjectDetail() {
               <div className="flex flex-wrap gap-2">
                 {data.repos.map((r) => (
                   <span key={r} className="inline-flex items-center gap-1.5 rounded-md border bg-muted/40 py-1 pl-2.5 pr-1.5 text-sm">
+                    <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
                     <span className="font-mono text-xs">{r.replace('hyperlabs-ai/', '')}</span>
                     {isAdmin && (
                       <button onClick={() => removeRepo(r)} className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Desvincular">
@@ -166,7 +167,7 @@ export default function ProjectDetail() {
             </CardContent>
           </Card>
 
-          <div className="mt-4 grid items-start gap-4 lg:grid-cols-3">
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
             <div className="min-w-0 space-y-4">
               <Card className="min-w-0">
                 <CardHeader><CardTitle>Contribuidores</CardTitle></CardHeader>
@@ -227,16 +228,19 @@ export default function ProjectDetail() {
               </Card>
             </div>
 
-            <Card className="min-w-0 lg:col-span-2">
+            <Card className="min-w-0 lg:col-span-2 lg:flex lg:flex-col">
               <CardHeader><CardTitle>Historial de commits</CardTitle></CardHeader>
-              <CardContent className="p-0">
+              {/* relative + tabla en absolute (abajo): saca la tabla del flujo para que la altura de
+                  la fila la marque la columna IZQUIERDA; el Historial se estira a ella y scrollea. */}
+              <CardContent className="p-0 lg:relative lg:min-h-0 lg:flex-1">
                 {!data.history.length && <EmptyState>Sin commits en este período</EmptyState>}
 
-                {/* Desktop: tabla */}
+                {/* Desktop: tabla. En lg llena el alto de la card (= altura de la izquierda) con scroll
+                    interno y header fijo, así ambas columnas terminan a la misma altura. */}
                 {data.history.length > 0 && (
-                  <div className="hidden md:block">
+                  <div className="hidden md:block lg:absolute lg:inset-0 lg:[&>div]:h-full">
                     <Table>
-                      <TableHeader>
+                      <TableHeader className="sticky top-0 z-10 bg-card">
                         <TableRow>
                           <TableHead>Commit</TableHead>
                           <TableHead>Autor</TableHead>

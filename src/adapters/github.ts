@@ -22,6 +22,88 @@ async function gh<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Llama a la GraphQL API v4 (la REST v3 no expone el calendario de contribuciones). */
+async function ghGraphQL<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${API}/graphql`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${config.github.token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) throw new Error(`GitHub GraphQL error ${res.status}: ${await res.text()}`);
+  const json = (await res.json()) as { data?: T; errors?: { message: string }[] };
+  if (json.errors?.length) throw new Error(`GitHub GraphQL: ${json.errors.map((e) => e.message).join('; ')}`);
+  return json.data as T;
+}
+
+export interface ContributionDay {
+  date: string; // YYYY-MM-DD
+  count: number;
+  level: 0 | 1 | 2 | 3 | 4; // intensidad (igual que la cuadrícula del perfil)
+  weekday: number; // 0=Dom … 6=Sáb (para alinear semanas parciales)
+}
+export interface ContributionCalendar {
+  totalContributions: number;
+  weeks: { days: ContributionDay[] }[]; // una columna por semana, hasta 7 días (Dom→Sáb)
+}
+
+const LEVEL: Record<string, 0 | 1 | 2 | 3 | 4> = {
+  NONE: 0,
+  FIRST_QUARTILE: 1,
+  SECOND_QUARTILE: 2,
+  THIRD_QUARTILE: 3,
+  FOURTH_QUARTILE: 4,
+};
+
+/**
+ * Cuadrícula de contribuciones de un usuario tal cual aparece en su perfil de GitHub, en el rango
+ * [fromISO, toISO] (máx. 1 año por restricción de la API). Incluye contribuciones públicas; las
+ * privadas solo si el PAT tiene visibilidad sobre ellas. Devuelve null si el usuario no existe.
+ */
+export async function getContributionCalendar(
+  login: string,
+  fromISO: string,
+  toISO: string,
+): Promise<ContributionCalendar | null> {
+  const data = await ghGraphQL<{
+    user: {
+      contributionsCollection: {
+        contributionCalendar: {
+          totalContributions: number;
+          weeks: { contributionDays: { date: string; contributionCount: number; contributionLevel: string; weekday: number }[] }[];
+        };
+      };
+    } | null;
+  }>(
+    `query($login: String!, $from: DateTime!, $to: DateTime!) {
+      user(login: $login) {
+        contributionsCollection(from: $from, to: $to) {
+          contributionCalendar {
+            totalContributions
+            weeks { contributionDays { date contributionCount contributionLevel weekday } }
+          }
+        }
+      }
+    }`,
+    { login, from: fromISO, to: toISO },
+  );
+  if (!data.user) return null;
+  const cal = data.user.contributionsCollection.contributionCalendar;
+  return {
+    totalContributions: cal.totalContributions,
+    weeks: cal.weeks.map((w) => ({
+      days: w.contributionDays.map((d) => ({
+        date: d.date,
+        count: d.contributionCount,
+        level: LEVEL[d.contributionLevel] ?? 0,
+        weekday: d.weekday,
+      })),
+    })),
+  };
+}
+
 export interface CommitMeta {
   sha: string;
   message: string;

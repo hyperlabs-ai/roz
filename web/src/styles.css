@@ -92,6 +92,10 @@
 
 /* Scrollbars discretas */
 @layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
   .scrollbar-thin::-webkit-scrollbar {
     height: 8px;
     width: 8px;
