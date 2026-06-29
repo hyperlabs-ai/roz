@@ -110,8 +110,8 @@ function Header() {
         </nav>
         <div className="ml-auto flex items-center gap-1.5">
           <ThemeToggle />
-          <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
-            <Link to="/app">Dashboard</Link>
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/app"><LayoutDashboard className="size-4" /><span className="hidden sm:inline">Dashboard</span></Link>
           </Button>
           <Button asChild size="sm">
             <a href={REPO} target="_blank" rel="noreferrer"><GitHubMark className="size-4" /> GitHub</a>
