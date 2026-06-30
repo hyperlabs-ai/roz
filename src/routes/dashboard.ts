@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { RozContext } from '../types/hono.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
 import { listUsers } from '../adapters/linear.js';
-import { getContributionCalendar } from '../adapters/github.js';
+import { getContributionCalendar, getRepo } from '../adapters/github.js';
 import { enqueueRepoBackfill } from '../reconcile/backfill.js';
 import {
   type Period,
@@ -24,6 +24,7 @@ import {
   updateProject,
   deleteProject,
   addProjectRepo,
+  normalizeRepo,
   removeProjectRepo,
   listInfra,
   linkService,
@@ -271,7 +272,10 @@ dashboardRoutes.post('/projects/:id/repos', requireAdmin, async (c) => {
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     const projectId = c.req.param('id');
-    const repo = await addProjectRepo(projectId, parsed.data.repo);
+    // Sella el id numérico inmutable (best-effort): ancla el vínculo para sobrevivir renames. Si el
+    // repo es privado/inaccesible para el PAT, se vincula sin id y se sellará en el primer push/rename.
+    const githubId = await getRepo(normalizeRepo(parsed.data.repo)).then((m) => m.githubId).catch(() => null);
+    const repo = await addProjectRepo(projectId, parsed.data.repo, githubId);
     // Vincular en vivo solo trackea hacia adelante; recupera el historial reciente (BACKFILL_DAYS).
     await enqueueRepoBackfill(repo, projectId).catch(() => {});
     return c.json({ ok: true });

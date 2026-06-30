@@ -24,6 +24,8 @@ import { resolveProjectByRepo } from '../projects/resolve.js';
 export interface ReconcilePrInput {
   repo: string; // "owner/name"
   number: number;
+  /** id numérico inmutable del repo (del payload del webhook): habilita la auto-sanación de renames. */
+  githubId?: number | null;
 }
 
 export interface ReconcilePrResult {
@@ -85,7 +87,8 @@ async function reconcileBody(
   const pr = await getPullRequest(input.repo, input.number);
   if (!pr.merged) return { action: 'not-merged', detail: `PR #${input.number} no está mergeada` };
 
-  const project = await resolveProjectByRepo(input.repo);
+  // Se pasa githubId para auto-sanar un repo renombrado (cuyo nombre ya no resuelve) por su id.
+  const project = await resolveProjectByRepo(input.repo, input.githubId);
 
   // Atribución de la PR (autores reales de los commits + revisores + quién mergeó). Se necesita en
   // TODAS las ramas (linked / matched / documented) para alimentar la conexión-con-código del

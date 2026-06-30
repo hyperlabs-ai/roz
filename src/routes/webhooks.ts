@@ -64,12 +64,18 @@ webhookRoutes.post('/github', async (c) => {
     ref?: string; // "refs/heads/<branch>" en push
     before?: string; // tip anterior de la rama (push)
     after?: string; // tip nuevo de la rama (push)
-    repository?: { full_name?: string; name?: string; description?: string | null; html_url?: string; default_branch?: string };
+    repository?: { id?: number; full_name?: string; name?: string; description?: string | null; html_url?: string; default_branch?: string };
     commits?: any[];
     action?: string;
+    // En `repository` action renamed/transferred GitHub manda el estado anterior aquí.
+    changes?: {
+      repository?: { name?: { from?: string } }; // renamed: nombre corto viejo
+      owner?: { from?: { user?: { login?: string }; organization?: { login?: string } } }; // transferred: owner viejo
+    };
     pull_request?: { number?: number; merged?: boolean };
   };
   const repo = payload.repository?.full_name;
+  const repoId = payload.repository?.id ?? null; // id numérico inmutable (ancla para renames)
 
   // Detección de repos: desde el evento `repository` (action: created), no desde el push. El
   // payload ya trae la metadata del repo, así que la pasamos y evitamos una llamada a la API de
@@ -78,10 +84,25 @@ webhookRoutes.post('/github', async (c) => {
   if (event === 'repository' && payload.action === 'created' && repo) {
     const r = payload.repository!;
     const meta =
-      r.name && r.html_url
-        ? { fullName: repo, name: r.name, description: r.description ?? null, url: r.html_url }
+      r.id != null && r.name && r.html_url
+        ? { githubId: r.id, fullName: repo, name: r.name, description: r.description ?? null, url: r.html_url }
         : undefined; // si faltara algo, se omite y handleRepoDetected hace el fetch
     await emit('repo.detected', { repo, meta }, { idempotencyKey: `repo-detected:${repo}` });
+  }
+
+  // Rename/transfer: el full_name ("owner/name") cambió. Mover el vínculo y re-etiquetar el historial
+  // al nombre nuevo (handleRepoRenamed); sin esto, el trabajo siguiente caería huérfano. El id
+  // numérico (repoId) ancla la corrección aunque también haya cambiado el owner (transfer).
+  if (event === 'repository' && (payload.action === 'renamed' || payload.action === 'transferred') && repo) {
+    const from = renamedFrom(payload);
+    const to = repo.toLowerCase();
+    if (from && from.toLowerCase() !== to) {
+      await emit(
+        'repo.renamed',
+        { from, to, githubId: repoId },
+        { idempotencyKey: `repo-renamed:${repoId ?? to}:${to}` },
+      );
+    }
   }
 
   if (event === 'push' && repo) {
@@ -96,7 +117,7 @@ webhookRoutes.post('/github', async (c) => {
       for (const commit of commits) {
         await emit(
           'commit.received',
-          { repo, sha: commit.id },
+          { repo, sha: commit.id, githubId: repoId },
           { idempotencyKey: `commit:${repo}:${commit.id}` },
         );
       }
@@ -107,7 +128,7 @@ webhookRoutes.post('/github', async (c) => {
       if (commits.length >= GITHUB_PUSH_COMMIT_CAP && payload.before && payload.after && payload.before !== ZERO_SHA) {
         await emit(
           'commits.backfill',
-          { repo, before: payload.before, after: payload.after },
+          { repo, before: payload.before, after: payload.after, githubId: repoId },
           { idempotencyKey: `push-backfill:${repo}:${payload.after}` },
         );
       }
@@ -120,8 +141,33 @@ webhookRoutes.post('/github', async (c) => {
   if (event === 'pull_request' && repo && payload.action === 'closed' && payload.pull_request?.merged) {
     const number = payload.pull_request.number;
     if (number != null) {
-      await emit('pr.merged', { repo, number }, { idempotencyKey: `pr:${repo}:${number}` });
+      await emit('pr.merged', { repo, number, githubId: repoId }, { idempotencyKey: `pr:${repo}:${number}` });
     }
   }
   return c.json({ ok: true });
 });
+
+/**
+ * Reconstruye el full_name VIEJO de un repo desde el payload de `repository` renamed/transferred.
+ *  · renamed: cambia solo el nombre corto → owner (del full_name nuevo) + nombre viejo (changes).
+ *  · transferred: cambia el owner → owner viejo (changes) + nombre corto actual (repository.name).
+ * Devuelve null si el payload no trae el estado anterior esperado.
+ */
+export function renamedFrom(payload: {
+  repository?: { full_name?: string; name?: string };
+  changes?: {
+    repository?: { name?: { from?: string } };
+    owner?: { from?: { user?: { login?: string }; organization?: { login?: string } } };
+  };
+}): string | null {
+  const full = payload.repository?.full_name;
+  if (!full) return null;
+
+  const fromName = payload.changes?.repository?.name?.from;
+  if (fromName) return `${full.split('/')[0]}/${fromName}`;
+
+  const fromOwner = payload.changes?.owner?.from?.user?.login ?? payload.changes?.owner?.from?.organization?.login;
+  if (fromOwner && payload.repository?.name) return `${fromOwner}/${payload.repository.name}`;
+
+  return null;
+}

@@ -8,7 +8,7 @@ import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit, backfillPushCommits } from '../reconcile/commits.js';
 import { backfillRepoCommits } from '../reconcile/backfill.js';
 import { reconcilePullRequest } from '../reconcile/pull-request.js';
-import { handleRepoDetected } from '../reconcile/repos.js';
+import { handleRepoDetected, handleRepoRenamed } from '../reconcile/repos.js';
 import type { RepoMeta } from '../adapters/github.js';
 import { upsertLinearProject } from '../projects/resolve.js';
 import { documentCompletedWork } from '../brain/document.js';
@@ -26,6 +26,7 @@ export type OutboxEventType =
   | 'pr.merged'
   | 'change.documented'
   | 'repo.detected'
+  | 'repo.renamed'
   | 'repo.notify'
   | 'notification.requested';
 
@@ -205,6 +206,7 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
       await reconcileCommit({
         repo: String(payload.repo ?? ''),
         sha: String(payload.sha ?? ''),
+        githubId: (payload.githubId as number | null) ?? null,
       });
       return;
     // Backfill de un push truncado (>20 commits): enumera el rango completo y encola cada commit.
@@ -213,6 +215,7 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
         repo: String(payload.repo ?? ''),
         before: String(payload.before ?? ''),
         after: String(payload.after ?? ''),
+        githubId: (payload.githubId as number | null) ?? null,
       });
       return;
     // Backfill del historial de un repo recién vinculado (solo métricas, sin Claude/Linear). Se
@@ -237,6 +240,7 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
       await reconcilePullRequest({
         repo: String(payload.repo ?? ''),
         number: Number(payload.number ?? 0),
+        githubId: (payload.githubId as number | null) ?? null,
       });
       return;
     // Resumen de cambios documentados (auto-creados desde commits). Agrupado por dev+ventana
@@ -253,6 +257,15 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
       await handleRepoDetected({
         repo: String(payload.repo ?? ''),
         meta: (payload.meta as RepoMeta | undefined) ?? undefined,
+      });
+      return;
+    // Repo renombrado/transferido en GitHub: mover el vínculo y re-etiquetar el historial al nombre
+    // nuevo (lo emite el webhook `repository/renamed|transferred` o la auto-sanación de resolve).
+    case 'repo.renamed':
+      await handleRepoRenamed({
+        from: String(payload.from ?? ''),
+        to: String(payload.to ?? ''),
+        githubId: (payload.githubId as number | null) ?? null,
       });
       return;
     // Broadcast a todos los devs: se detectó/vinculó un repo.

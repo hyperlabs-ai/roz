@@ -159,11 +159,14 @@ export function normalizeRepo(input: string): string {
   return r.includes('/') ? r : `hyperlabs-ai/${r}`;
 }
 
-/** Vincula un repo a un proyecto (idempotente por repo). Devuelve el repo normalizado para que el
- *  caller pueda encolar su backfill de historial. */
-export async function addProjectRepo(projectId: string, repo: string): Promise<string> {
+/** Vincula un repo a un proyecto (idempotente por repo). Si se conoce el id numérico de GitHub se
+ *  sella como ancla inmutable (sobrevive renames/transfers). Devuelve el repo normalizado para que
+ *  el caller pueda encolar su backfill de historial. */
+export async function addProjectRepo(projectId: string, repo: string, githubId?: number | null): Promise<string> {
   const normalized = normalizeRepo(repo);
-  const { error } = await db().from('project_repo').insert({ project_id: projectId, repo: normalized });
+  const row: Record<string, unknown> = { project_id: projectId, repo: normalized };
+  if (githubId != null) row.github_repo_id = githubId;
+  const { error } = await db().from('project_repo').insert(row);
   if (error) throw error;
   return normalized;
 }

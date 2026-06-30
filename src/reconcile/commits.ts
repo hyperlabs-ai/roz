@@ -17,6 +17,8 @@ import { resolveProjectByRepo } from '../projects/resolve.js';
 export interface ReconcileInput {
   repo: string; // "owner/name"
   sha: string;
+  /** id numérico inmutable del repo (del payload del webhook): habilita la auto-sanación de renames. */
+  githubId?: number | null;
   /** Para pruebas: si se pasa, no se consulta la API de GitHub. */
   commit?: CommitMeta;
 }
@@ -62,11 +64,11 @@ function extractJson(s: string): any | null {
  * webhook no se duplican). Cada commit se reconcilia luego por su propio camino (incluido el
  * descarte de merges), así que aquí solo se hace fan-out.
  */
-export async function backfillPushCommits(input: { repo: string; before: string; after: string }): Promise<{ enqueued: number }> {
+export async function backfillPushCommits(input: { repo: string; before: string; after: string; githubId?: number | null }): Promise<{ enqueued: number }> {
   if (!input.repo || !input.before || !input.after) return { enqueued: 0 };
   const shas = await pushCommitShas(input.repo, input.before, input.after);
   for (const sha of shas) {
-    await emit('commit.received', { repo: input.repo, sha }, { idempotencyKey: `commit:${input.repo}:${sha}` });
+    await emit('commit.received', { repo: input.repo, sha, githubId: input.githubId ?? null }, { idempotencyKey: `commit:${input.repo}:${sha}` });
   }
   return { enqueued: shas.length };
 }
@@ -106,8 +108,9 @@ async function reconcileBody(
   }
 
   // Resolver proyecto y dev autor una sola vez: se usan para persistir el commit (dashboard) y,
-  // en el camino huérfano, para asignar el issue resultante.
-  const project = await resolveProjectByRepo(input.repo);
+  // en el camino huérfano, para asignar el issue resultante. Se pasa githubId para que un repo
+  // renombrado (cuyo nombre ya no resuelve) se auto-sane por su id inmutable.
+  const project = await resolveProjectByRepo(input.repo, input.githubId);
   const dev = await resolveDevByCommit(supabase, commit);
 
   // Persistir el commit SIEMPRE (el dashboard cuenta TODO el trabajo, incluso el de ramas y PRs):

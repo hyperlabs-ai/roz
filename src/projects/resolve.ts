@@ -8,6 +8,7 @@
 import { db, dbPublic } from '../db/supabase.js';
 import { config } from '../config.js';
 import { enqueueRepoBackfill } from '../reconcile/backfill.js';
+import { emit } from '../events/outbox.js';
 
 export interface RozProject {
   id: string;
@@ -21,21 +22,54 @@ export interface RozProject {
 const PROJECT_COLS = 'id, key, name, linear_team_id, linear_project_id, hyperops_project_id';
 
 /** Resuelve el roz.project de un repo. Primero el mapeo directo en roz (cubre repos internos y
- *  de cliente configurados explícitamente); como fallback, la tabla de repos de HyperOps. */
-export async function resolveProjectByRepo(fullName: string): Promise<RozProject | null> {
+ *  de cliente configurados explícitamente); como fallback, la tabla de repos de HyperOps.
+ *  `githubId` (id numérico inmutable del repo) habilita la auto-sanación de renames/transfers:
+ *  si el nombre ya no matchea pero el id sí, el vínculo se corrige solo (ver paso 1b). */
+export async function resolveProjectByRepo(fullName: string, githubId?: number | null): Promise<RozProject | null> {
   const supabase = db();
+  const repoN = fullName.toLowerCase();
 
   // 1. Mapeo directo roz.project_repo (interno o cliente). Los repos se guardan en minúsculas
   //    (ver normalizeRepo); el webhook puede traer otro casing ("owner/Mind-playground"), así que
   //    se compara contra la forma en minúsculas para no perder la vinculación.
   const { data: link } = await supabase
     .from('project_repo')
-    .select('project_id')
-    .eq('repo', fullName.toLowerCase())
+    .select('project_id, github_repo_id')
+    .eq('repo', repoN)
     .maybeSingle();
   if (link?.project_id) {
+    // Sella el id inmutable de forma oportunista: si la fila aún no lo tiene y este evento sí lo
+    // trae, lo guardamos. Así los repos ya vinculados (pre-migración) quedan anclados en su próximo
+    // push, sin un backfill manual → la auto-sanación (paso 1b) funciona aunque se pierda un webhook.
+    if (githubId != null && link.github_repo_id == null) {
+      await supabase.from('project_repo').update({ github_repo_id: githubId }).eq('repo', repoN).is('github_repo_id', null).then(() => {}, () => {});
+    }
     const { data: project } = await supabase.from('project').select(PROJECT_COLS).eq('id', link.project_id).maybeSingle();
     if (project) return project as RozProject;
+  }
+
+  // 1b. Auto-sanación por id inmutable. El nombre no matcheó, pero si traemos el id de GitHub y hay
+  //     una fila con ese id bajo OTRO nombre, el repo se renombró/transfirió (y nos perdimos o aún
+  //     no procesamos el webhook `repository/renamed`). Encola la corrección del nombre + historial
+  //     (idempotente; la procesa handleRepoRenamed) y resuelve ya por el id para no perder este
+  //     evento. Misma idempotency key que el webhook → no se duplica el trabajo de rename.
+  if (githubId != null) {
+    const { data: byId } = await supabase
+      .from('project_repo')
+      .select('project_id, repo')
+      .eq('github_repo_id', githubId)
+      .maybeSingle();
+    if (byId?.project_id) {
+      if (byId.repo !== repoN) {
+        await emit(
+          'repo.renamed',
+          { from: byId.repo, to: repoN, githubId },
+          { idempotencyKey: `repo-renamed:${githubId}:${repoN}` },
+        ).catch(() => {});
+      }
+      const { data: project } = await supabase.from('project').select(PROJECT_COLS).eq('id', byId.project_id).maybeSingle();
+      if (project) return project as RozProject;
+    }
   }
 
   // 2. Fallback opcional de HyperOps (solo si HYPEROPS_FALLBACK=true): repo → project_id en

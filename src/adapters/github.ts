@@ -181,6 +181,7 @@ export async function listRepoCommits(repo: string, sinceISO: string, page = 1):
 }
 
 export interface RepoMeta {
+  githubId: number; // id numérico INMUTABLE del repo (no cambia al renombrar/transferir)
   fullName: string; // "owner/name"
   name: string; // solo el nombre del repo (sin owner)
   description: string | null;
@@ -189,10 +190,10 @@ export interface RepoMeta {
 
 /** Metadata del repo (para matching de proyecto y el correo de detección). */
 export async function getRepo(repo: string): Promise<RepoMeta> {
-  const d = await gh<{ full_name: string; name: string; description: string | null; html_url: string }>(
+  const d = await gh<{ id: number; full_name: string; name: string; description: string | null; html_url: string }>(
     `/repos/${encRepo(repo)}`,
   );
-  return { fullName: d.full_name, name: d.name, description: d.description ?? null, url: d.html_url };
+  return { githubId: d.id, fullName: d.full_name, name: d.name, description: d.description ?? null, url: d.html_url };
 }
 
 /** Heurística barata: ¿el mensaje del commit referencia un issue de Linear (ABC-123)? */
