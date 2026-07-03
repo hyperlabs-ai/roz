@@ -2,7 +2,7 @@
 // API directa). Crea issues ya asignados y lee carga (issues `in progress` por dev).
 import { config } from '../config.js';
 
-const ENDPOINT = 'https://api.linear.app/graphql';
+const ENDPOINT = config.linear.endpoint;
 
 async function gql<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
   const res = await fetch(ENDPOINT, {
@@ -204,6 +204,25 @@ export async function listUsers(): Promise<LinearMember[]> {
      } }`,
   );
   return data.users.nodes;
+}
+
+/**
+ * Agrega un comentario a un issue. Best-effort: devuelve false ante cualquier error. Sirve para
+ * dejar el enlace del PR/commit DENTRO del issue (util cuando el backend no es Linear y no hay una
+ * integracion nativa que lo muestre). Misma mutation en Linear y en un backend compatible.
+ */
+export async function createComment(issueId: string, body: string): Promise<boolean> {
+  try {
+    const data = await gql<{ commentCreate: { success: boolean } }>(
+      `mutation Comment($issueId: String!, $body: String!) {
+         commentCreate(input: { issueId: $issueId, body: $body }) { success }
+       }`,
+      { issueId, body },
+    );
+    return data.commentCreate.success;
+  } catch {
+    return false;
+  }
 }
 
 /** Carga derivada: nº de issues `in progress` (startedAt no nulo, no completados) por assignee. */

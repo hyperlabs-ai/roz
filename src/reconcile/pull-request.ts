@@ -17,9 +17,10 @@ import {
   type PrAuthor,
   type PrReview,
 } from '../adapters/github.js';
-import { createIssue, moveIssueToCompleted, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
+import { createComment, createIssue, moveIssueToCompleted, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
 import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
+import { config } from '../config.js';
 
 export interface ReconcilePrInput {
   repo: string; // "owner/name"
@@ -107,6 +108,7 @@ async function reconcileBody(
     await supabase.from('work_item').update({ documented: true }).eq('identifier', linked);
     await attributePr(supabase, linked, input, pr, authors, reviews, mergerDev?.id ?? null);
     await completeLinkedIssue(supabase, linked);
+    await postPrLinkComment(supabase, linked, input, pr);
     return { action: 'linked', identifier: linked, detail: 'enlazado por la integración nativa' };
   }
 
@@ -161,6 +163,7 @@ async function reconcileBody(
     await supabase.from('work_item').update({ documented: true }).eq('identifier', a.matchedIdentifier!);
     await attributePr(supabase, a.matchedIdentifier!, input, pr, authors, reviews, mergerDev?.id ?? null);
     await completeLinkedIssue(supabase, a.matchedIdentifier!);
+    await postPrLinkComment(supabase, a.matchedIdentifier!, input, pr);
     return {
       action: 'matched',
       identifier: a.matchedIdentifier!,
@@ -260,6 +263,30 @@ async function reconcileBody(
   }
 
   return { action: 'documented', identifier: issue.identifier, detail: 'issue creado desde PR con atribución' };
+}
+
+/**
+ * Publica un comentario con el enlace del PR DENTRO del issue (para backends sin integracion
+ * nativa con GitHub, p.ej. Ops). Off por defecto (config.linear.postPrComments) para no cambiar el
+ * comportamiento con Linear. Best-effort: nunca tumba la reconciliacion. Solo para issues que ya
+ * existian (linked/matched); los auto-documentados ya llevan el link en su descripcion.
+ */
+async function postPrLinkComment(
+  supabase: ReturnType<typeof db>,
+  identifier: string,
+  input: ReconcilePrInput,
+  pr: { number: number; url: string; mergedByLogin: string | null },
+): Promise<void> {
+  if (!config.linear.postPrComments) return;
+  const { data: wi } = await supabase
+    .from('work_item')
+    .select('linear_id')
+    .eq('identifier', identifier)
+    .maybeSingle();
+  if (!wi?.linear_id) return;
+  const merger = pr.mergedByLogin ? ` · mergeó @${pr.mergedByLogin}` : '';
+  const body = `🔗 PR #${pr.number} mergeada en \`${input.repo}\`${merger}\n${pr.url}`;
+  await createComment(wi.linear_id, body).catch(() => false);
 }
 
 /** Resuelve un dev de roz por su github_login. */

@@ -27,6 +27,16 @@ const raw = z
 
     LINEAR_API_KEY: z.string().default(''),
     LINEAR_WEBHOOK_SECRET: z.string().default(''),
+    // Endpoint GraphQL. Default: Linear. Se puede apuntar a un backend compatible con el
+    // protocolo de Linear (p.ej. la fachada de Ops) sin tocar codigo; el switch es reversible.
+    LINEAR_API_ENDPOINT: z.string().default('https://api.linear.app/graphql'),
+    // Publicar un comentario con el enlace del PR dentro del issue al reconciliar. Off por
+    // defecto: con Linear la integracion nativa ya muestra el link, asi no cambia su comportamiento.
+    // Se enciende al apuntar a un backend sin integracion nativa con GitHub (p.ej. Ops).
+    LINEAR_POST_PR_COMMENTS: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
 
     GITHUB_TOKEN: z.string().default(''),
     GITHUB_WEBHOOK_SECRET: z.string().default(''),
@@ -106,7 +116,12 @@ export const config = {
     embeddingModel: raw.ROZ_EMBEDDING_MODEL,
     embeddingDim: raw.ROZ_EMBEDDING_DIM,
   },
-  linear: { apiKey: raw.LINEAR_API_KEY, webhookSecret: raw.LINEAR_WEBHOOK_SECRET },
+  linear: {
+    apiKey: raw.LINEAR_API_KEY,
+    webhookSecret: raw.LINEAR_WEBHOOK_SECRET,
+    endpoint: raw.LINEAR_API_ENDPOINT,
+    postPrComments: raw.LINEAR_POST_PR_COMMENTS,
+  },
   github: { token: raw.GITHUB_TOKEN, webhookSecret: raw.GITHUB_WEBHOOK_SECRET },
   hyperops: { fallback: raw.HYPEROPS_FALLBACK },
   resend: { apiKey: raw.RESEND_API_KEY, from: raw.RESEND_FROM },
