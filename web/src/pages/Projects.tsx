@@ -52,6 +52,15 @@ export default function Projects() {
   const [order, setOrder] = useState<string[]>([]);
   const [dragging, setDragging] = useState<string | null>(null);
   const dragIdRef = useRef<string | null>(null);
+  const dragImgRef = useRef<HTMLImageElement | null>(null);
+
+  // Imagen de arrastre transparente: oculta la copia translúcida nativa. Así el arrastre se percibe
+  // moviendo la tarjeta REAL entre posiciones (colisión/reorden en vivo), sin fantasma transparente.
+  useEffect(() => {
+    const img = new Image();
+    img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    dragImgRef.current = img;
+  }, []);
 
   useEffect(() => {
     const ids = data?.projects.map((p) => p.projectId) ?? [];
@@ -68,7 +77,8 @@ export default function Projects() {
     return list.length ? list : (data?.projects ?? []);
   }, [order, data?.projects]);
 
-  function reorder(overId: string) {
+  // Reorden en vivo: al pasar por encima de otra tarjeta, la arrastrada toma su posición (colisión).
+  function liveReorder(overId: string) {
     const from = dragIdRef.current;
     if (!from || from === overId) return;
     setOrder((prev) => {
@@ -110,15 +120,17 @@ export default function Projects() {
             <div
               key={p.projectId}
               draggable
-              onDragStart={(e) => { dragIdRef.current = p.projectId; setDragging(p.projectId); e.dataTransfer.effectAllowed = 'move'; }}
-              onDragEnter={() => reorder(p.projectId)}
-              onDragOver={(e) => e.preventDefault()}
+              onDragStart={(e) => {
+                dragIdRef.current = p.projectId;
+                setDragging(p.projectId);
+                e.dataTransfer.effectAllowed = 'move';
+                if (dragImgRef.current) e.dataTransfer.setDragImage(dragImgRef.current, 0, 0);
+              }}
+              onDragOver={(e) => { e.preventDefault(); liveReorder(p.projectId); }}
               onDragEnd={() => { setDragging(null); dragIdRef.current = null; }}
               className={cn(
-                'transition-[transform,opacity] duration-200 ease-spring',
-                dragging === p.projectId
-                  ? 'scale-[0.97] opacity-50'
-                  : dragging && 'rounded-xl ring-2 ring-transparent hover:ring-primary/40',
+                'rounded-xl transition-[transform,box-shadow] duration-200 ease-spring',
+                dragging === p.projectId && 'z-10 scale-[1.03] shadow-xl ring-2 ring-primary',
               )}
             >
               <ProjectCard p={p} isAdmin={isAdmin} onChanged={reload} onOpen={() => nav(`/app/projects/${p.projectId}`)} />

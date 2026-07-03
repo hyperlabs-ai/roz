@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, GitCommitHorizontal, CircleCheck, Users, Plus, Minus, ExternalLink, X, GitBranch, RefreshCw, Loader2, Check, CircleAlert } from 'lucide-react';
+import { ArrowLeft, GitCommitHorizontal, CircleCheck, Users, Plus, Minus, ExternalLink, X, GitBranch, RefreshCw, Check, CircleAlert, Search } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { AreaTrend, RankBars } from '@/components/charts';
@@ -39,21 +39,147 @@ function MiniStat({ icon, label, value, valueClassName, className }: { icon: Rea
   );
 }
 
-/** Indicador de sincronización (backfill) de un repo: en cola / % o commits / ✓ / error. */
-function RepoSyncBadge({ s }: { s?: RepoSyncStatus }) {
-  if (!s || s.status === 'idle') return null;
-  if (s.status === 'done') return <Check className="size-3.5 shrink-0 text-success" aria-label="Sincronizado" />;
-  if (s.status === 'error') {
-    return <CircleAlert className="size-3.5 shrink-0 text-destructive" aria-label={s.error ?? 'Error al sincronizar'} />;
-  }
-  // queued | syncing
-  const pct = s.totalPages ? Math.min(100, Math.round((s.pages / s.totalPages) * 100)) : null;
-  const label = s.status === 'queued' ? 'en cola' : pct != null ? `${pct}%` : `${s.commits}`;
+function syncPct(s?: RepoSyncStatus): number | null {
+  return s?.totalPages ? Math.min(100, Math.round((s.pages / s.totalPages) * 100)) : null;
+}
+
+/**
+ * Fila de un repo vinculado. Una sola señal de estado por vez (sin iconos repetidos): mientras
+ * sincroniza muestra SOLO una barra de progreso (el botón de re-sync se oculta); al terminar, un
+ * "Listo ✓" efímero (solo si la corrida es reciente, para no dejar checks permanentes); en error,
+ * una etiqueta roja con reintento. En reposo, la fila queda limpia y las acciones aparecen al hover.
+ */
+function RepoRow({ repo, status, live, isAdmin, active, onResync, onRemove }: {
+  repo: string;
+  status?: RepoSyncStatus;
+  live: boolean;
+  isAdmin: boolean;
+  active: boolean;
+  onResync: () => void;
+  onRemove: () => void;
+}) {
+  const name = repo.replace('hyperlabs-ai/', '');
+  const pct = syncPct(status);
+  const isError = status?.status === 'error';
+  const justDone = status?.status === 'done' && live;
+
   return (
-    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground" title={`${s.commits} commits · ${s.pages}${s.totalPages ? `/${s.totalPages}` : ''} páginas`}>
-      <Loader2 className="size-3.5 animate-spin" />
-      {label}
-    </span>
+    <div className="group relative flex items-center gap-2 rounded-lg border bg-card px-2.5 py-2 transition-colors hover:border-primary/30 hover:bg-accent/40">
+      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground transition-colors group-hover:bg-background">
+        <GitBranch className="size-3.5" />
+      </span>
+      <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={repo}>{name}</span>
+
+      {active ? (
+        <div className="flex shrink-0 items-center gap-1.5" title={`${status?.commits ?? 0} commits · ${status?.pages ?? 0}${status?.totalPages ? `/${status.totalPages}` : ''} páginas`}>
+          <div className={cn('h-1.5 w-12 overflow-hidden rounded-full bg-muted', pct == null && 'shimmer')}>
+            <div className="h-full rounded-full bg-primary transition-[width] duration-500 ease-spring" style={{ width: pct != null ? `${pct}%` : '35%' }} />
+          </div>
+          <span className="w-7 text-right text-[11px] tabular-nums text-muted-foreground">
+            {status?.status === 'queued' ? '···' : pct != null ? `${pct}%` : status?.commits ?? 0}
+          </span>
+        </div>
+      ) : justDone ? (
+        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-success animate-fade-in"><Check className="size-3.5" /> Listo</span>
+      ) : isError ? (
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-destructive/10 px-1.5 py-0.5 text-[11px] font-medium text-destructive" title={status?.error ?? 'Error al sincronizar'}>
+          <CircleAlert className="size-3" /> Error
+        </span>
+      ) : null}
+
+      {isAdmin && (
+        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-accent/90 pl-1.5 opacity-0 shadow-sm backdrop-blur-sm transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
+          {!active && (
+            <button onClick={onResync} title={isError ? 'Reintentar sincronización' : 'Re-sincronizar historial'} className="press rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-foreground">
+              <RefreshCw className="size-3.5" />
+            </button>
+          )}
+          <button onClick={onRemove} title="Desvincular" className="press rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Autocomplete propio para vincular un repo: input con búsqueda + lista flotante navegable con
+ *  teclado. Reemplaza el <datalist> nativo (feo y con estilos del sistema). */
+function RepoCombobox({ available, linked, busy, onAdd }: {
+  available: string[];
+  linked: string[];
+  busy: boolean;
+  onAdd: (repo: string) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  const matches = useMemo(() => {
+    const linkedSet = new Set(linked);
+    const needle = q.trim().toLowerCase();
+    return available
+      .filter((r) => !linkedSet.has(r))
+      .filter((r) => !needle || r.toLowerCase().includes(needle))
+      .slice(0, 8);
+  }, [available, q, linked]);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  function submit(repo: string) {
+    const v = repo.trim();
+    if (!v) return;
+    onAdd(v);
+    setQ('');
+    setOpen(false);
+  }
+
+  return (
+    <div ref={boxRef} className="relative max-w-md">
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={q}
+            onChange={(e) => { setQ(e.target.value); setOpen(true); setHi(0); }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHi((i) => Math.min(i + 1, matches.length - 1)); }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((i) => Math.max(i - 1, 0)); }
+              else if (e.key === 'Enter') { e.preventDefault(); submit(matches[hi] ?? q); }
+              else if (e.key === 'Escape') setOpen(false);
+            }}
+            placeholder="Buscar repositorio…"
+            className="pl-8"
+          />
+        </div>
+        <Button onClick={() => submit(q)} disabled={busy || !q.trim()}><Plus /> Vincular</Button>
+      </div>
+      {open && matches.length > 0 && (
+        <div className="animate-fade-in-up absolute z-20 mt-1.5 w-full overflow-hidden rounded-lg border bg-popover shadow-lg">
+          <ul className="scrollbar-thin max-h-64 overflow-y-auto py-1">
+            {matches.map((r, i) => (
+              <li key={r}>
+                <button
+                  type="button"
+                  onMouseEnter={() => setHi(i)}
+                  onClick={() => submit(r)}
+                  className={cn('flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors', i === hi ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/60')}
+                >
+                  <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{r.replace('hyperlabs-ai/', '')}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -62,7 +188,6 @@ export default function ProjectDetail() {
   const { user } = useAuth();
   const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
   const [period, setPeriod] = usePeriod();
-  const [newRepo, setNewRepo] = useState('');
   const [busy, setBusy] = useState(false);
   const [available, setAvailable] = useState<string[]>([]);
   const { syncs, trigger, isActive } = useSync();
@@ -77,6 +202,7 @@ export default function ProjectDetail() {
   // Estado de sync en vivo desde el widget global (no repolleamos la página aquí); el inicial del
   // payload sirve de fallback en el primer render.
   const liveByRepo = new Map(syncs.map((s) => [s.repo, s]));
+  const liveSet = new Set(syncs.map((s) => s.repo));
   const statusFor = (r: string) => liveByRepo.get(r) ?? (data?.repoSync ?? []).find((x) => x.repo === r);
 
   // Un ÚNICO reload cuando un repo de este proyecto termina de sincronizar: refresca totales/gráficas
@@ -100,14 +226,13 @@ export default function ProjectDetail() {
     }
   }
 
-  async function addRepo() {
-    const repo = newRepo.trim();
-    if (!repo) return;
+  async function linkRepo(repo: string) {
+    const v = repo.trim();
+    if (!v) return;
     setBusy(true);
     try {
-      await apiSend('POST', `/projects/${id}/repos`, { repo });
-      toast.success('Repo vinculado', { description: repo });
-      setNewRepo('');
+      await apiSend('POST', `/projects/${id}/repos`, { repo: v });
+      toast.success('Repo vinculado', { description: v });
       reload();
     } catch (e: any) {
       toast.error('No se pudo vincular', { description: String(e.message ?? e) });
@@ -179,39 +304,27 @@ export default function ProjectDetail() {
               )}
             </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap gap-2">
-                {data.repos.map((r) => (
-                  <span key={r} className="inline-flex items-center gap-1.5 rounded-md border bg-muted/40 py-1 pl-2.5 pr-1.5 text-sm">
-                    <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="font-mono text-xs">{r.replace('hyperlabs-ai/', '')}</span>
-                    <RepoSyncBadge s={statusFor(r)} />
-                    {isAdmin && (
-                      <>
-                        <button onClick={() => resyncRepo(r)} disabled={isActive(r)} className="rounded p-0.5 text-muted-foreground hover:bg-accent disabled:opacity-40" title="Re-sincronizar este repo">
-                          <RefreshCw className={cn('size-3.5', isActive(r) && 'animate-spin')} />
-                        </button>
-                        <button onClick={() => removeRepo(r)} className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Desvincular">
-                          <X className="size-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </span>
-                ))}
-                {!data.repos.length && <EmptyState>Sin repos vinculados</EmptyState>}
-              </div>
+              {data.repos.length ? (
+                <div className="grid gap-1.5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {data.repos.map((r) => (
+                    <RepoRow
+                      key={r}
+                      repo={r}
+                      status={statusFor(r)}
+                      live={liveSet.has(r)}
+                      isAdmin={isAdmin}
+                      active={isActive(r)}
+                      onResync={() => resyncRepo(r)}
+                      onRemove={() => removeRepo(r)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <EmptyState icon={<GitBranch className="size-6" />}>Sin repos vinculados</EmptyState>
+              )}
               {isAdmin && (
-                <div className="mt-3 flex max-w-sm gap-2">
-                  <Input
-                    list="available-repos"
-                    value={newRepo}
-                    onChange={(e) => setNewRepo(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && addRepo()}
-                    placeholder="nombre-del-repo (o owner/repo)"
-                  />
-                  <datalist id="available-repos">
-                    {available.filter((r) => !data.repos.includes(r)).map((r) => <option key={r} value={r} />)}
-                  </datalist>
-                  <Button onClick={addRepo} disabled={busy || !newRepo.trim()}><Plus /> Vincular</Button>
+                <div className="mt-4 border-t pt-4">
+                  <RepoCombobox available={available} linked={data.repos} busy={busy} onAdd={linkRepo} />
                 </div>
               )}
             </CardContent>
@@ -238,9 +351,9 @@ export default function ProjectDetail() {
                   {data.contributors.length ? (
                     data.contributors.map((c, i) => (
                       <div key={i} className="flex items-center gap-3">
-                        <UserAvatar url={c.avatarUrl} name={c.name} className="size-7" />
-                        <span className="flex-1 truncate text-sm">{c.name}</span>
-                        <span className="text-xs text-muted-foreground">{c.commits} commits · {compact(c.lines)} líneas</span>
+                        <UserAvatar url={c.avatarUrl} name={c.name} className="size-7 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{c.commits} commits · {compact(c.lines)} líneas</span>
                       </div>
                     ))
                   ) : <EmptyState>Sin contribuidores</EmptyState>}
@@ -302,30 +415,35 @@ export default function ProjectDetail() {
                     interno y header fijo, así ambas columnas terminan a la misma altura. */}
                 {data.history.length > 0 && (
                   <div className="hidden md:block lg:absolute lg:inset-0 lg:[&>div]:h-full">
-                    <Table>
+                    <Table className="table-fixed">
                       <TableHeader className="sticky top-0 z-10 bg-card">
                         <TableRow>
                           <TableHead>Commit</TableHead>
-                          <TableHead>Autor</TableHead>
-                          <TableHead className="text-right">Cambios</TableHead>
-                          <TableHead className="text-right">Fecha</TableHead>
+                          <TableHead className="w-32">Autor</TableHead>
+                          <TableHead className="w-24 text-right">Cambios</TableHead>
+                          <TableHead className="w-24 text-right">Fecha</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {data.history.map((c) => (
                           <TableRow key={c.sha}>
                             <TableCell>
-                              <div className="flex items-center gap-2">
-                                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{c.sha}</code>
-                                <span className="max-w-[36ch] truncate text-sm">
-                                  {c.url && c.url !== '#' ? <a href={c.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline">{c.message}<ExternalLink className="size-3 opacity-60" /></a> : c.message}
-                                </span>
+                              <div className="flex min-w-0 items-center gap-2">
+                                <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{c.sha}</code>
+                                {c.url && c.url !== '#' ? (
+                                  <a href={c.url} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 hover:underline">
+                                    <span className="truncate text-sm">{c.message}</span>
+                                    <ExternalLink className="size-3 shrink-0 opacity-60" />
+                                  </a>
+                                ) : (
+                                  <span className="truncate text-sm">{c.message}</span>
+                                )}
                               </div>
                             </TableCell>
                             <TableCell>
-                              <div className="flex items-center gap-2">
-                                <UserAvatar url={c.avatarUrl} name={c.author ?? '—'} className="size-5" />
-                                <span className="text-xs text-muted-foreground">{c.author ?? '—'}</span>
+                              <div className="flex min-w-0 items-center gap-2">
+                                <UserAvatar url={c.avatarUrl} name={c.author ?? '—'} className="size-5 shrink-0" />
+                                <span className="truncate text-xs text-muted-foreground">{c.author ?? '—'}</span>
                               </div>
                             </TableCell>
                             <TableCell className="text-right"><LineDelta additions={c.additions} deletions={c.deletions} /></TableCell>
@@ -343,7 +461,7 @@ export default function ProjectDetail() {
                     <div key={c.sha} className="px-4 py-3">
                       <div className="flex items-start gap-2">
                         <code className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">{c.sha}</code>
-                        <span className="min-w-0 flex-1 text-sm leading-snug">
+                        <span className="min-w-0 flex-1 break-words text-sm leading-snug line-clamp-2">
                           {c.url && c.url !== '#' ? <a href={c.url} target="_blank" rel="noreferrer" className="hover:underline">{c.message}</a> : c.message}
                         </span>
                       </div>

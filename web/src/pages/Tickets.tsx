@@ -292,7 +292,7 @@ function TicketCardMobile({ t }: { t: Ticket }) {
             <span className="font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
             <Badge variant={stateVariant(t.state)}>{t.stateName}</Badge>
           </div>
-          <div className="mt-1 text-sm leading-snug">{t.title}</div>
+          <div className="mt-1 line-clamp-2 break-words text-sm leading-snug">{t.title}</div>
           <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
             {t.projectName && <span className="truncate">{t.projectName}</span>}
             {t.assignee && (
