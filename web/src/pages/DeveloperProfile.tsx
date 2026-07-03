@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil } from 'lucide-react';
+import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil, GitBranch } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { MetricCard } from '@/components/MetricCard';
@@ -17,11 +17,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperProfile as Profile } from '@/lib/api';
 import { compact, hours, relative } from '@/lib/format';
-import { comparisonRange, defaultPeriod } from '@/lib/period';
+import { comparisonRange } from '@/lib/period';
+import { usePeriod } from '@/lib/usePeriod';
 
 export default function DeveloperProfile() {
   const { id } = useParams();
-  const [period, setPeriod] = useState(defaultPeriod());
+  const [period, setPeriod] = usePeriod();
   const [editOpen, setEditOpen] = useState(false);
   const { user } = useAuth();
   const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
@@ -154,7 +155,15 @@ export default function DeveloperProfile() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm">{a.title}</div>
-                          {a.type === 'commit' && <LineDelta additions={a.additions} deletions={a.deletions} />}
+                          <div className="mt-0.5 flex items-center gap-2">
+                            {a.repo && (
+                              <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground" title={a.repo}>
+                                <GitBranch className="size-3 shrink-0" />
+                                <span className="truncate font-mono">{a.repo.replace('hyperlabs-ai/', '')}</span>
+                              </span>
+                            )}
+                            {a.type === 'commit' && <LineDelta additions={a.additions} deletions={a.deletions} />}
+                          </div>
                         </div>
                         <span className="shrink-0 text-xs text-muted-foreground">{relative(a.ts)}</span>
                       </div>

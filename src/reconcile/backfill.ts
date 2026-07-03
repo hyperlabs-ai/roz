@@ -42,6 +42,10 @@ export interface BackfillRepoInput {
   devMaps?: DevMaps;
   /** Si es false, no toca el estado de sync (roz.project_repo.sync_*). Default true. */
   trackStatus?: boolean;
+  /** Reconstruye la ventana: borra los commits del repo desde sinceISO ANTES de reinsertar los que
+   *  siguen en la rama. Purga huérfanos de reescrituras de historia, merges viejos y basura ya
+   *  filtrada que el upsert no puede tocar (solo sobrescribe shas vigentes). Solo en la página 1. */
+  purge?: boolean;
 }
 
 export interface BackfillRepoResult {
@@ -77,6 +81,13 @@ export async function backfillRepoCommits(input: BackfillRepoInput): Promise<Bac
   let persisted = 0;
   let skippedMerges = 0;
   let attributed = 0;
+
+  // Reconstrucción (solo force, página 1): purga la ventana antes de reinsertar. Deja la tabla con
+  // EXACTAMENTE los commits que hoy están en la rama por defecto — sin huérfanos de force-push, sin
+  // merges viejos mal contados, sin líneas de basura ya filtradas. Idempotente: re-correr es seguro.
+  if (input.purge && page === 1) {
+    await supabase.from('commit').delete().eq('repo', input.repo.toLowerCase()).gte('committed_at', input.sinceISO);
+  }
 
   // Estado: entramos a "syncing"; en la página 1 fijamos el total de páginas (para el % de la barra).
   if (track) {

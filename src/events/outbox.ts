@@ -231,7 +231,8 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
       const sinceISO = String(payload.sinceISO ?? '');
       const page = Number(payload.page ?? 1);
       const runKey = String(payload.runKey ?? '1');
-      const r = await backfillRepoCommits({ repo, projectId, sinceISO, page });
+      // runKey distinto de '1' = re-sync forzado (bajo demanda): reconstruye la ventana en su página 1.
+      const r = await backfillRepoCommits({ repo, projectId, sinceISO, page, purge: runKey !== '1' && page === 1 });
       if (r.hasMore) {
         await emit(
           'repo.backfill',

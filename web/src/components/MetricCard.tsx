@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import { TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { useCountUp } from '@/lib/motion';
 import type { Metric } from '@/lib/api';
 
 export function DeltaBadge({ metric, invert = false }: { metric: Metric; invert?: boolean }) {
@@ -42,16 +43,20 @@ export function MetricCard({
   className?: string;
 }) {
   const hasCompare = metric && metric.compare !== null && metric.direction !== 'none';
+  const shown = useCountUp(value);
   return (
-    <Card className={cn('p-4 sm:p-5', className)}>
+    <Card className={cn('group p-4 sm:p-5', className)}>
       <div className="flex items-center gap-2 sm:gap-2.5">
-        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg sm:size-9" style={{ backgroundColor: `hsl(var(${colorVar}) / 0.12)`, color: `hsl(var(${colorVar}))` }}>
+        <div
+          className="flex size-8 shrink-0 items-center justify-center rounded-lg transition-transform duration-200 ease-spring group-hover:scale-110 sm:size-9"
+          style={{ backgroundColor: `hsl(var(${colorVar}) / 0.12)`, color: `hsl(var(${colorVar}))` }}
+        >
           <Icon className="size-4 sm:size-[18px]" />
         </div>
         <span className="min-w-0 truncate text-xs font-medium text-muted-foreground sm:text-sm">{label}</span>
       </div>
       <div className="mt-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 sm:mt-3">
-        <span className="text-2xl font-bold tracking-tight tabular-nums sm:text-3xl">{format(value)}</span>
+        <span className="text-2xl font-bold tracking-tight tabular-nums sm:text-3xl">{format(Math.round(shown))}</span>
         {metric && <DeltaBadge metric={metric} invert={invert} />}
       </div>
       {hasCompare && (

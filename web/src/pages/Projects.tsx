@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { FolderGit2, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { UserAvatar, EmptyState, LineDelta } from '@/components/bits';
@@ -24,10 +25,19 @@ import {
 import { useApi } from '@/lib/useApi';
 import { apiGet, apiSend, type ProjectListItem, type ProjectKind } from '@/lib/api';
 import { compact } from '@/lib/format';
-import { defaultPeriod } from '@/lib/period';
+import { usePeriod } from '@/lib/usePeriod';
+
+// Orden personalizado de las tarjetas (preferencia local por navegador, no del servidor).
+const ORDER_KEY = 'roz.projectOrder';
+function loadOrder(): string[] {
+  try { const r = localStorage.getItem(ORDER_KEY); return r ? (JSON.parse(r) as string[]) : []; } catch { return []; }
+}
+function saveOrder(o: string[]) {
+  try { localStorage.setItem(ORDER_KEY, JSON.stringify(o)); } catch { /* sin storage: solo en memoria */ }
+}
 
 export default function Projects() {
-  const [period, setPeriod] = useState(defaultPeriod());
+  const [period, setPeriod] = usePeriod();
   const [createOpen, setCreateOpen] = useState(false);
   const { user } = useAuth();
   const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
@@ -36,6 +46,41 @@ export default function Projects() {
     () => apiGet('/projects', period.range),
     [period.range.from, period.range.to],
   );
+
+  // Reordenamiento por arrastre (drag-and-drop). El orden se guarda por navegador y sobrevive
+  // recargas y cambios de período. Los proyectos nuevos (sin posición guardada) van al final.
+  const [order, setOrder] = useState<string[]>([]);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const dragIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const ids = data?.projects.map((p) => p.projectId) ?? [];
+    if (!ids.length) return;
+    const saved = loadOrder();
+    setOrder([...saved.filter((id) => ids.includes(id)), ...ids.filter((id) => !saved.includes(id))]);
+  }, [data?.projects]);
+
+  useEffect(() => { if (order.length) saveOrder(order); }, [order]);
+
+  const ordered = useMemo(() => {
+    const map = new Map((data?.projects ?? []).map((p) => [p.projectId, p]));
+    const list = order.map((id) => map.get(id)).filter(Boolean) as ProjectListItem[];
+    return list.length ? list : (data?.projects ?? []);
+  }, [order, data?.projects]);
+
+  function reorder(overId: string) {
+    const from = dragIdRef.current;
+    if (!from || from === overId) return;
+    setOrder((prev) => {
+      const a = [...prev];
+      const fi = a.indexOf(from);
+      const ti = a.indexOf(overId);
+      if (fi < 0 || ti < 0) return prev;
+      a.splice(fi, 1);
+      a.splice(ti, 0, from);
+      return a;
+    });
+  }
 
   return (
     <Layout
@@ -60,9 +105,24 @@ export default function Projects() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {data.projects.map((p) => (
-            <ProjectCard key={p.projectId} p={p} isAdmin={isAdmin} onChanged={reload} onOpen={() => nav(`/app/projects/${p.projectId}`)} />
+        <div className="stagger-children grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {ordered.map((p) => (
+            <div
+              key={p.projectId}
+              draggable
+              onDragStart={(e) => { dragIdRef.current = p.projectId; setDragging(p.projectId); e.dataTransfer.effectAllowed = 'move'; }}
+              onDragEnter={() => reorder(p.projectId)}
+              onDragOver={(e) => e.preventDefault()}
+              onDragEnd={() => { setDragging(null); dragIdRef.current = null; }}
+              className={cn(
+                'transition-[transform,opacity] duration-200 ease-spring',
+                dragging === p.projectId
+                  ? 'scale-[0.97] opacity-50'
+                  : dragging && 'rounded-xl ring-2 ring-transparent hover:ring-primary/40',
+              )}
+            >
+              <ProjectCard p={p} isAdmin={isAdmin} onChanged={reload} onOpen={() => nav(`/app/projects/${p.projectId}`)} />
+            </div>
           ))}
         </div>
       )}
@@ -105,12 +165,12 @@ function ProjectCard({ p, isAdmin, onChanged, onOpen }: { p: ProjectListItem; is
 
   return (
     <>
-      <Card className="group cursor-pointer transition-shadow hover:shadow-md" onClick={onOpen}>
+      <Card interactive className="group cursor-grab active:cursor-grabbing" onClick={onOpen}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between">
             <div className="flex min-w-0 items-center gap-2.5">
               <div
-                className="flex size-9 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold tracking-tight text-white shadow-sm"
+                className="flex size-9 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold tracking-tight text-white shadow-sm transition-transform duration-200 ease-spring group-hover:scale-110"
                 style={{ background: accent }}
               >
                 {monogram}

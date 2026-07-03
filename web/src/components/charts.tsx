@@ -11,6 +11,10 @@ export interface SeriesDef {
   color: string; // p.ej. 'hsl(var(--chart-1))'
 }
 
+// Movimiento de charts: se dibujan con una entrada suave, salvo que el usuario pida menos movimiento.
+const REDUCED_MOTION = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const ANIMATE = !REDUCED_MOTION;
+
 function shortDate(v: string) {
   // "2026-06-18" -> "18 jun"
   const [, mm, dd] = v.split('-');
@@ -54,7 +58,7 @@ export function AreaTrend({ data, series, height = 240, xKey = 'date' }: { data:
         <YAxis tick={axis} tickLine={false} axisLine={false} width={36} allowDecimals={false} />
         <Tooltip content={<ChartTooltip />} cursor={{ stroke: 'hsl(var(--border))' }} />
         {series.map((s) => (
-          <Area key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2.5} fill={`url(#grad-${s.key})`} activeDot={{ r: 4, strokeWidth: 0 }} dot={false} isAnimationActive={false} />
+          <Area key={s.key} type="monotone" dataKey={s.key} name={s.name} stroke={s.color} strokeWidth={2.5} fill={`url(#grad-${s.key})`} activeDot={{ r: 4, strokeWidth: 0 }} dot={false} isAnimationActive={ANIMATE} animationDuration={800} animationEasing="ease-out" />
         ))}
       </AreaChart>
     </ResponsiveContainer>
@@ -87,7 +91,7 @@ export function RankBars({ data, color = 'hsl(var(--chart-1))', height = 240 }: 
         <XAxis type="number" hide />
         <YAxis type="category" dataKey="label" tick={{ fontSize: 12, fill: 'hsl(var(--foreground))' }} tickLine={false} axisLine={false} width={120} />
         <Tooltip content={<ChartTooltip />} cursor={{ fill: 'hsl(var(--muted))' }} />
-        <Bar dataKey="value" radius={[0, 6, 6, 0]} fill={color} maxBarSize={22} isAnimationActive={false}>
+        <Bar dataKey="value" radius={[0, 6, 6, 0]} fill={color} maxBarSize={22} isAnimationActive={ANIMATE} animationDuration={750} animationEasing="ease-out">
           {data.map((d, i) => (
             <Cell key={i} fill={d.color ?? color} />
           ))}
@@ -128,7 +132,9 @@ export function FocusRadar({ data, height = 260 }: { data: { label: string; valu
           fill="hsl(var(--chart-1))"
           fillOpacity={0.25}
           dot={{ r: 3, fill: 'hsl(var(--chart-1))', strokeWidth: 0 }}
-          isAnimationActive={false}
+          isAnimationActive={ANIMATE}
+          animationDuration={700}
+          animationEasing="ease-out"
         />
         <Tooltip content={<RadarTooltip />} />
       </RadarChart>
@@ -143,7 +149,7 @@ export function Donut({ data, height = 220 }: { data: { label: string; value: nu
   return (
     <ResponsiveContainer width="100%" height={height}>
       <PieChart>
-        <Pie data={data} dataKey="value" nameKey="label" cx="50%" cy="50%" innerRadius="58%" outerRadius="85%" paddingAngle={2} strokeWidth={0} isAnimationActive={false}>
+        <Pie data={data} dataKey="value" nameKey="label" cx="50%" cy="50%" innerRadius="58%" outerRadius="85%" paddingAngle={2} strokeWidth={0} isAnimationActive={ANIMATE} animationDuration={700} animationEasing="ease-out">
           {data.map((d, i) => <Cell key={i} fill={d.color} />)}
         </Pie>
         <Tooltip content={<DonutTooltip total={total} />} />

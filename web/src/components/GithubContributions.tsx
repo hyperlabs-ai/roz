@@ -63,22 +63,25 @@ export function GithubContributions({ devId }: { devId: string }) {
     return { active, best, bestDate, longest, current };
   }, [data]);
 
+  const wideLayout = loading || data?.linked;
   return (
     <div className="mt-4 grid gap-4 lg:grid-cols-4">
-      <Card className={cn('min-w-0', data?.linked ? 'lg:col-span-3' : 'lg:col-span-4')}>
+      <Card className={cn('min-w-0', wideLayout ? 'lg:col-span-3' : 'lg:col-span-4')}>
         <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
           <CardTitle className="flex items-center gap-2">
             <GitCommitHorizontal className="size-4" /> Contribuciones en GitHub
           </CardTitle>
-          {data?.linked && (
+          {loading ? (
+            <Skeleton className="h-4 w-32" />
+          ) : data?.linked ? (
             <span className="text-sm text-muted-foreground">
               <span className="font-semibold text-foreground tabular-nums">{data.totalContributions.toLocaleString('es-MX')}</span> en el último año
             </span>
-          )}
+          ) : null}
         </CardHeader>
         <CardContent>
           {error && <EmptyState>No se pudo cargar la actividad de GitHub</EmptyState>}
-          {loading && <Skeleton className="h-32 w-full" />}
+          {loading && <ContributionsSkeleton />}
           {!loading && data && !data.linked && (
             <EmptyState>{data.login ? `@${data.login} no tiene actividad pública` : 'Sin cuenta de GitHub vinculada'}</EmptyState>
           )}
@@ -142,7 +145,22 @@ export function GithubContributions({ devId }: { devId: string }) {
       </Card>
 
       {/* Card cuadrado a la derecha con stats de GitHub */}
-      {data?.linked && stats && (
+      {loading ? (
+        <Card className="min-w-0">
+          <CardHeader><CardTitle>Resumen</CardTitle></CardHeader>
+          <CardContent className="grid grid-cols-2 gap-4 lg:grid-cols-1">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-2.5">
+                <Skeleton className="size-9 shrink-0 rounded-lg" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Skeleton className="h-4 w-12" />
+                  <Skeleton className="h-3 w-20" />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : data?.linked && stats ? (
         <Card className="min-w-0">
           <CardHeader><CardTitle>Resumen</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 lg:grid-cols-1">
@@ -152,7 +170,42 @@ export function GithubContributions({ devId }: { devId: string }) {
             <Stat icon={CalendarCheck} label="Días activos" value={String(stats.active)} />
           </CardContent>
         </Card>
-      )}
+      ) : null}
+    </div>
+  );
+}
+
+/** Skeleton de la cuadrícula: misma estructura (etiquetas de día + 52 columnas × 7 celdas) con un
+ *  único barrido de luz sobre todo el bloque (una sola animación, no 364). */
+function ContributionsSkeleton() {
+  return (
+    <div className="shimmer w-full rounded-md">
+      <div className="flex w-full gap-1.5">
+        {/* Etiquetas de día (izquierda) */}
+        <div className="flex shrink-0 flex-col gap-1">
+          <div className="h-4" />
+          <div className="flex flex-1 flex-col gap-[2px]">
+            {WEEKDAYS.map((_, i) => (
+              <div key={i} className="flex h-3 flex-1 items-center">
+                {i % 2 === 1 && <div className="h-2.5 w-6 rounded bg-muted" />}
+              </div>
+            ))}
+          </div>
+        </div>
+        {/* Cuadrícula */}
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="h-4" />
+          <div className="flex gap-[2px]">
+            {Array.from({ length: 52 }).map((_, i) => (
+              <div key={i} className="flex min-w-0 flex-1 flex-col gap-[2px]">
+                {Array.from({ length: 7 }).map((_, j) => (
+                  <div key={j} className="aspect-square w-full rounded-[2px] bg-muted" />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

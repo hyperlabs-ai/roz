@@ -20,7 +20,7 @@ import { useApi } from '@/lib/useApi';
 import { useSync } from '@/sync/SyncContext';
 import { apiGet, apiSend, type ProjectDetail as Detail, type RepoSyncStatus } from '@/lib/api';
 import { compact, relative } from '@/lib/format';
-import { defaultPeriod } from '@/lib/period';
+import { usePeriod } from '@/lib/usePeriod';
 import { cn } from '@/lib/utils';
 
 const PRIO_DOT: Record<string, string> = { urgent: 'bg-destructive', high: 'bg-warning', medium: 'bg-chart-1', low: 'bg-muted-foreground' };
@@ -61,7 +61,7 @@ export default function ProjectDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
-  const [period, setPeriod] = useState(defaultPeriod());
+  const [period, setPeriod] = usePeriod();
   const [newRepo, setNewRepo] = useState('');
   const [busy, setBusy] = useState(false);
   const [available, setAvailable] = useState<string[]>([]);

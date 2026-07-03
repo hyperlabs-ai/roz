@@ -107,3 +107,71 @@
     background: transparent;
   }
 }
+
+/* ============================================================================
+   Sistema de movimiento — animaciones sutiles, rápidas y coherentes.
+   Curva base "spring suave" cubic-bezier(.22,1,.36,1). Todo se apaga con
+   prefers-reduced-motion (guard global al final). No provoca layout shift.
+   ============================================================================ */
+@layer utilities {
+  @keyframes roz-fade-in { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes roz-fade-in-up { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
+  @keyframes roz-scale-in { from { opacity: 0; transform: scale(.97) } to { opacity: 1; transform: none } }
+  @keyframes roz-slide-in-up { from { opacity: 0; transform: translateY(16px) scale(.98) } to { opacity: 1; transform: none } }
+  @keyframes roz-shimmer { 100% { transform: translateX(100%) } }
+
+  .animate-fade-in { animation: roz-fade-in .3s ease-out both }
+  .animate-fade-in-up { animation: roz-fade-in-up .45s cubic-bezier(.22,1,.36,1) both }
+  .animate-scale-in { animation: roz-scale-in .35s cubic-bezier(.22,1,.36,1) both }
+  .animate-slide-in-up { animation: roz-slide-in-up .4s cubic-bezier(.22,1,.36,1) both }
+
+  /* Transición al cambiar de página (se re-monta por ruta, así que re-dispara). */
+  .animate-page { animation: roz-fade-in-up .42s cubic-bezier(.22,1,.36,1) both }
+
+  /* Entrada escalonada de hijos directos (grids, listas). Delay incremental por posición. */
+  .stagger-children > * { animation: roz-fade-in-up .5s cubic-bezier(.22,1,.36,1) both }
+  .stagger-children > *:nth-child(1) { animation-delay: 30ms }
+  .stagger-children > *:nth-child(2) { animation-delay: 70ms }
+  .stagger-children > *:nth-child(3) { animation-delay: 110ms }
+  .stagger-children > *:nth-child(4) { animation-delay: 150ms }
+  .stagger-children > *:nth-child(5) { animation-delay: 190ms }
+  .stagger-children > *:nth-child(6) { animation-delay: 230ms }
+  .stagger-children > *:nth-child(7) { animation-delay: 270ms }
+  .stagger-children > *:nth-child(8) { animation-delay: 310ms }
+  .stagger-children > *:nth-child(9) { animation-delay: 350ms }
+  .stagger-children > *:nth-child(10) { animation-delay: 390ms }
+  .stagger-children > *:nth-child(n+11) { animation-delay: 420ms }
+
+  /* Elevación al hover para superficies clicables (cards, filas). */
+  .hover-lift { transition: transform .22s cubic-bezier(.22,1,.36,1), box-shadow .22s ease, border-color .22s ease }
+  .hover-lift:hover { transform: translateY(-2px) }
+
+  /* Feedback de presión para elementos interactivos. */
+  .press { transition: transform .12s cubic-bezier(.22,1,.36,1) }
+  .press:active { transform: scale(.97) }
+
+  /* Deslizamiento suave en filas de lista al hover. */
+  .row-nudge { transition: background-color .18s ease, transform .18s cubic-bezier(.22,1,.36,1) }
+  .row-nudge:hover { transform: translateX(2px) }
+
+  /* Shimmer para skeletons: barrido de luz sobre la superficie. */
+  .shimmer { position: relative; overflow: hidden }
+  .shimmer::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, hsl(var(--foreground) / .07), transparent);
+    animation: roz-shimmer 1.6s ease-in-out infinite;
+  }
+}
+
+/* Respeta a quien pide menos movimiento: apaga animaciones y transiciones. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

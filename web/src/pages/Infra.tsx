@@ -126,7 +126,7 @@ export default function Infra() {
       )}
 
       {loading ? (
-        <div className="space-y-6">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-52" />)}</div>
+        <InfraSkeleton />
       ) : !projects.length ? (
         <Card><CardContent className="py-10"><EmptyState icon={<Server className="size-6" />}>No hay proyectos</EmptyState></CardContent></Card>
       ) : (
@@ -145,6 +145,60 @@ export default function Infra() {
         </div>
       )}
     </Layout>
+  );
+}
+
+// ---- Skeletons de carga (imitan la estructura real: resumen + secciones + tarjetas de servicio) ----
+function ServiceCardSkeleton() {
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Skeleton className="size-8 shrink-0 rounded-lg" />
+            <div className="space-y-1.5">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+          </div>
+          <Skeleton className="h-6 w-20 rounded-full" />
+        </div>
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-3/5" />
+        <div className="flex items-center justify-between border-t pt-2.5">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-3 w-12" />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function InfraSkeleton() {
+  return (
+    <div className="space-y-8">
+      {/* Barra de resumen */}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border bg-card px-5 py-3.5">
+        <Skeleton className="h-6 w-24" />
+        <div className="h-8 w-px bg-border" />
+        <Skeleton className="h-6 w-24" />
+        <div className="h-8 w-px bg-border" />
+        <Skeleton className="h-5 w-48" />
+      </div>
+      {/* Dos secciones de proyecto con su grilla de servicios */}
+      {Array.from({ length: 2 }).map((_, i) => (
+        <section key={i}>
+          <div className="mb-3 flex items-center gap-2.5">
+            <Skeleton className="size-2.5 rounded-full" />
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-5 w-16 rounded-full" />
+          </div>
+          <div className="stagger-children grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, j) => <ServiceCardSkeleton key={j} />)}
+          </div>
+        </section>
+      ))}
+    </div>
   );
 }
 

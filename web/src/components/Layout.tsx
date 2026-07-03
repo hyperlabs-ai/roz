@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Users, FolderGit2, Server, Ticket, Sparkles, Sun, Moon, Monitor, LogOut, Menu } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { useTheme } from '@/components/theme';
@@ -32,13 +32,26 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
           onClick={onNavigate}
           className={({ isActive }) =>
             cn(
-              'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-              isActive ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+              'group/nav relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 ease-spring',
+              isActive
+                ? 'bg-primary/10 text-primary'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground hover:translate-x-0.5',
             )
           }
         >
-          <n.icon className="size-[18px]" />
-          {n.label}
+          {({ isActive }) => (
+            <>
+              {/* Indicador activo que crece verticalmente */}
+              <span
+                className={cn(
+                  'absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary transition-all duration-300 ease-spring',
+                  isActive ? 'opacity-100' : 'scale-y-0 opacity-0',
+                )}
+              />
+              <n.icon className="size-[18px] transition-transform duration-200 ease-spring group-hover/nav:scale-110" />
+              {n.label}
+            </>
+          )}
         </NavLink>
       ))}
     </>
@@ -122,6 +135,7 @@ function MobileNav() {
 }
 
 export function Layout({ title, subtitle, actions, children }: { title: string; subtitle?: string; actions?: ReactNode; children: ReactNode }) {
+  const { pathname } = useLocation();
   return (
     <div className="flex min-h-dvh">
       {/* Sidebar (md+) */}
@@ -168,7 +182,10 @@ export function Layout({ title, subtitle, actions, children }: { title: string; 
           )}
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 overflow-x-hidden px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-7 md:pt-7 md:pb-7">
-          {children}
+          {/* key por ruta → la vista se re-monta y re-dispara la transición de entrada. */}
+          <div key={pathname} className="animate-page">
+            {children}
+          </div>
         </main>
       </div>
     </div>

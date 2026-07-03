@@ -108,10 +108,10 @@ const pctOf = (s: SyncItem): number | null =>
 
 function ProgressBar({ pct, tone }: { pct: number | null; tone: 'primary' | 'success' }) {
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+    <div className={cn('h-1.5 w-full overflow-hidden rounded-full bg-muted', tone === 'primary' && 'shimmer')}>
       <div
         className={cn(
-          'h-full rounded-full transition-[width] duration-500',
+          'h-full rounded-full transition-[width] duration-500 ease-spring',
           tone === 'success' ? 'bg-success' : 'bg-primary',
           pct == null && 'w-1/3 animate-pulse',
         )}
@@ -145,8 +145,8 @@ function SyncWidget({
 }) {
   const running = syncs.filter(isRunning).length;
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border bg-card shadow-lg">
-      <button onClick={onToggle} className="flex w-full items-center gap-2 border-b bg-muted/40 px-3 py-2 text-sm font-medium">
+    <div className="animate-slide-in-up fixed bottom-4 right-4 z-50 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border bg-card shadow-lg">
+      <button onClick={onToggle} className="flex w-full items-center gap-2 border-b bg-muted/40 px-3 py-2 text-sm font-medium transition-colors hover:bg-muted/70">
         {running > 0 ? <Loader2 className="size-4 shrink-0 animate-spin text-primary" /> : <Check className="size-4 shrink-0 text-success" />}
         <span className="flex-1 text-left">
           {running > 0 ? `Sincronizando ${running} repo${running > 1 ? 's' : ''}` : 'Sincronización completa'}

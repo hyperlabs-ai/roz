@@ -1,8 +1,25 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { initials } from '@/lib/format';
+
+/** Barra de progreso que crece suave desde 0 al montar (y anima cambios de valor). `pct` 0–100. */
+export function ProgressBar({ pct, className, barClassName }: { pct: number; className?: string; barClassName?: string }) {
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setW(Math.max(0, Math.min(100, pct))));
+    return () => cancelAnimationFrame(r);
+  }, [pct]);
+  return (
+    <div className={cn('h-2 overflow-hidden rounded-full bg-muted', className)}>
+      <div
+        className={cn('h-full rounded-full bg-primary transition-[width] duration-700 ease-spring', barClassName)}
+        style={{ width: `${w}%` }}
+      />
+    </div>
+  );
+}
 
 export function UserAvatar({ url, name, className, title }: { url: string | null; name: string; className?: string; title?: string }) {
   return (

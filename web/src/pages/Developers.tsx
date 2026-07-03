@@ -13,11 +13,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperListItem } from '@/lib/api';
 import { compact } from '@/lib/format';
-import { defaultPeriod } from '@/lib/period';
+import { usePeriod } from '@/lib/usePeriod';
 import { cn } from '@/lib/utils';
 
 export default function Developers() {
-  const [period, setPeriod] = useState(defaultPeriod());
+  const [period, setPeriod] = usePeriod();
   const [q, setQ] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const { user } = useAuth();

@@ -1,17 +1,18 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GitCommitHorizontal, CircleCheck, Users, Timer, Code2, TriangleAlert, ShieldCheck, Briefcase, Building2, Server, ChevronRight, Triangle, TrainFront, Database, Activity, Rocket } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { MetricCard } from '@/components/MetricCard';
 import { AreaTrend, RankBars, Donut } from '@/components/charts';
-import { UserAvatar, EmptyState } from '@/components/bits';
+import { UserAvatar, EmptyState, ProgressBar } from '@/components/bits';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type Overview as OverviewData, type InfraResponse, type InfraService, type ServiceProvider, type ServiceStatus } from '@/lib/api';
 import { compact, hours, relative } from '@/lib/format';
-import { comparisonRange, defaultPeriod } from '@/lib/period';
+import { comparisonRange } from '@/lib/period';
+import { usePeriod } from '@/lib/usePeriod';
 import { cn } from '@/lib/utils';
 
 const STATE_LABEL: Record<string, string> = {
@@ -20,7 +21,7 @@ const STATE_LABEL: Record<string, string> = {
 };
 
 export default function Overview() {
-  const [period, setPeriod] = useState(defaultPeriod());
+  const [period, setPeriod] = usePeriod();
   const nav = useNavigate();
   const compare = useMemo(() => comparisonRange(period.range, period.compare), [period.range, period.compare]);
   const { data, loading, error } = useApi<OverviewData>(
@@ -39,7 +40,7 @@ export default function Overview() {
       ) : (
         <>
           {/* KPIs */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          <div className="stagger-children grid grid-cols-2 gap-4 lg:grid-cols-5">
             <MetricCard label="Commits" value={data.kpis.commits.value} metric={data.kpis.commits} icon={GitCommitHorizontal} colorVar="--chart-1" />
             <MetricCard label="Líneas cambiadas" value={data.kpis.linesChanged.value} metric={data.kpis.linesChanged} icon={Code2} format={compact} colorVar="--chart-4" className="order-first col-span-2 lg:order-none lg:col-span-1" />
             <MetricCard label="Tickets resueltos" value={data.kpis.ticketsResolved.value} metric={data.kpis.ticketsResolved} icon={CircleCheck} colorVar="--chart-3" />
@@ -112,12 +113,10 @@ export default function Overview() {
                       const max = Math.max(...data.byDeveloper.map((x) => x.commits + x.ticketsResolved));
                       const v = d.commits + d.ticketsResolved;
                       return (
-                        <div key={d.devId} className="flex cursor-pointer items-center gap-3" onClick={() => nav(`/app/developers/${d.devId}`)}>
+                        <div key={d.devId} className="row-nudge -mx-2 flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1 hover:bg-accent/50" onClick={() => nav(`/app/developers/${d.devId}`)}>
                           <UserAvatar url={d.avatarUrl} name={d.name} className="size-7" />
                           <div className="w-20 shrink-0 truncate text-sm">{d.name}</div>
-                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-                            <div className="h-full rounded-full bg-chart-3" style={{ width: `${(v / max) * 100}%` }} />
-                          </div>
+                          <ProgressBar pct={(v / max) * 100} className="flex-1" barClassName="bg-chart-3" />
                           <div className="w-24 shrink-0 text-right text-xs text-muted-foreground">{d.commits}c · {d.ticketsResolved}t</div>
                         </div>
                       );
@@ -214,7 +213,30 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <Skeleton className="h-40" />
+          <>
+            {/* Resumen global */}
+            <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2">
+              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-5 w-24" />)}
+            </div>
+            {/* Tarjetas por proyecto */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <div key={i} className="flex flex-col gap-2.5 rounded-xl border p-3">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="size-2.5 shrink-0 rounded-full" />
+                    <Skeleton className="h-4 flex-1" />
+                    <Skeleton className="h-4 w-20 rounded-md" />
+                  </div>
+                  <div className="flex gap-3">
+                    <Skeleton className="h-4 w-10" />
+                    <Skeleton className="h-4 w-10" />
+                    <Skeleton className="h-4 w-16" />
+                  </div>
+                  <div className="border-t pt-2"><Skeleton className="h-3 w-40" /></div>
+                </div>
+              ))}
+            </div>
+          </>
         ) : (
           <>
             {/* Resumen global */}
@@ -246,7 +268,7 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
             </div>
 
             {/* Tarjeta por proyecto */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="stagger-children grid grid-cols-1 gap-3 sm:grid-cols-2">
               {projects.map((p) => {
                 const worst = worstOf(p.services.map((s) => s.status));
                 const issues = p.services.filter((s) => s.status === 'down' || s.status === 'degraded' || s.status === 'paused').length;
@@ -254,7 +276,7 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                 const req = p.services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
                 const byProv = INFRA_PROVIDERS.map((pr) => ({ pr, n: p.services.filter((s) => s.provider === pr).length })).filter((x) => x.n);
                 return (
-                  <button key={p.projectId} onClick={onOpen} className="flex min-w-0 flex-col gap-2 rounded-xl border p-3 text-left transition-colors hover:bg-accent/50">
+                  <button key={p.projectId} onClick={onOpen} className="hover-lift press flex min-w-0 flex-col gap-2 rounded-xl border p-3 text-left transition-colors hover:border-primary/30 hover:bg-accent/50">
                     <div className="flex items-center gap-2">
                       <span className={cn('size-2.5 shrink-0 rounded-full', INFRA_STATUS[worst].dot)} />
                       <span className="min-w-0 flex-1 truncate text-sm font-semibold">{p.name}</span>
@@ -316,12 +338,10 @@ function Workload({ rows, onPick }: { rows: OverviewData['workload']; onPick: (i
   return (
     <div className="space-y-3">
       {rows.slice(0, 8).map((r) => (
-        <div key={r.devId} className="flex cursor-pointer items-center gap-3" onClick={() => onPick(r.devId)}>
+        <div key={r.devId} className="row-nudge -mx-2 flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1 hover:bg-accent/50" onClick={() => onPick(r.devId)}>
           <UserAvatar url={r.avatarUrl} name={r.name} className="size-7" />
           <div className="w-20 shrink-0 truncate text-sm">{r.name}</div>
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full bg-chart-1" style={{ width: `${(r.weighted / max) * 100}%` }} />
-          </div>
+          <ProgressBar pct={(r.weighted / max) * 100} className="flex-1" barClassName="bg-chart-1" />
           <div className="w-16 shrink-0 text-right text-xs text-muted-foreground">{r.openTickets} abiertos</div>
         </div>
       ))}
@@ -356,12 +376,7 @@ function SkillCoverage({ coverage }: { coverage: OverviewData['skillsCoverage'] 
         {sorted.map((s) => (
           <div key={s.skillId} className="flex items-center gap-3">
             <div className="w-28 shrink-0 truncate text-sm" title={s.tag}>{s.tag}</div>
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-              <div
-                className={cn('h-full rounded-full', s.busFactorRisk ? 'bg-warning' : 'bg-success')}
-                style={{ width: `${Math.max((s.devCount / max) * 100, 6)}%` }}
-              />
-            </div>
+            <ProgressBar pct={Math.max((s.devCount / max) * 100, 6)} className="flex-1" barClassName={s.busFactorRisk ? 'bg-warning' : 'bg-success'} />
             <div className={cn('w-16 shrink-0 text-right text-xs', s.busFactorRisk ? 'font-medium text-warning' : 'text-muted-foreground')}>
               {s.devCount} {s.devCount === 1 ? 'dev' : 'devs'}
             </div>
