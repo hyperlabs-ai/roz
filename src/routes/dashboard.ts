@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { RozContext } from '../types/hono.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
 import { listUsers } from '../adapters/linear.js';
-import { getContributionCalendar, getRepo } from '../adapters/github.js';
+import { getContributionCalendar, getRepo, listOrgRepos } from '../adapters/github.js';
 import { enqueueRepoBackfill } from '../reconcile/backfill.js';
 import {
   type Period,
@@ -26,6 +26,8 @@ import {
   addProjectRepo,
   normalizeRepo,
   removeProjectRepo,
+  listProjectRepos,
+  listActiveSyncs,
   listInfra,
   linkService,
   updateService,
@@ -290,6 +292,41 @@ dashboardRoutes.delete('/projects/:id/repos', requireAdmin, async (c) => {
   try {
     await removeProjectRepo(c.req.param('id'), repo);
     return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Re-sincronizar (admin): fuerza el backfill del historial saltándose la idempotencia once-only
+// (force) y recalculando líneas con el filtro de generados. Con `repo` en el body re-sincroniza
+// solo ese repo; sin él, todos los del proyecto. Recupera repos a medias y re-aplica el filtro.
+const ResyncBody = z.object({ repo: z.string().min(1).optional() });
+dashboardRoutes.post('/projects/:id/resync', requireAdmin, async (c) => {
+  const parsed = ResyncBody.safeParse(await c.req.json().catch(() => ({})));
+  const repoArg = parsed.success ? parsed.data.repo : undefined;
+  try {
+    const projectId = c.req.param('id');
+    const repos = repoArg ? [normalizeRepo(repoArg)] : await listProjectRepos(projectId);
+    await Promise.all(repos.map((repo) => enqueueRepoBackfill(repo, projectId, { force: true }).catch(() => {})));
+    return c.json({ ok: true, repos: repos.length });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Progreso de las sincronizaciones activas (para el widget global). Ligero: se puede pollear.
+dashboardRoutes.get('/sync-status', requireAdmin, async (c) => {
+  try {
+    return c.json({ syncs: await listActiveSyncs() });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Repos de la organización en GitHub, para el autocomplete al vincular (evita typos → 404 silencioso).
+dashboardRoutes.get('/repos/available', requireAdmin, async (c) => {
+  try {
+    return c.json({ repos: await listOrgRepos() });
   } catch (err) {
     return fail(c, err);
   }

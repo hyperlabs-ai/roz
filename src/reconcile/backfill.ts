@@ -40,6 +40,8 @@ export interface BackfillRepoInput {
   page?: number;
   /** Mapas de dev precargados (para loops del script: se cargan una sola vez). */
   devMaps?: DevMaps;
+  /** Si es false, no toca el estado de sync (roz.project_repo.sync_*). Default true. */
+  trackStatus?: boolean;
 }
 
 export interface BackfillRepoResult {
@@ -50,16 +52,40 @@ export interface BackfillRepoResult {
   nextPage: number;
 }
 
+/** Actualiza el estado de sync del repo (best-effort: si las columnas no existen, no rompe). */
+async function updateRepoSync(repo: string, patch: Record<string, unknown>): Promise<void> {
+  await db()
+    .from('project_repo')
+    .update({ ...patch, sync_updated_at: new Date().toISOString() })
+    .eq('repo', repo.toLowerCase())
+    .then(undefined, () => {});
+}
+
+/** Marca el repo en estado de error (lo llama el outbox al agotar los reintentos del backfill). */
+export async function markRepoSyncError(repo: string, message: string): Promise<void> {
+  await updateRepoSync(repo, { sync_status: 'error', sync_error: message.slice(0, 500) });
+}
+
 /** Procesa UNA página del historial de un repo: persiste commits no-merge con su atribución y líneas. */
 export async function backfillRepoCommits(input: BackfillRepoInput): Promise<BackfillRepoResult> {
   const supabase = db();
   const page = input.page ?? 1;
+  const track = input.trackStatus ?? true;
   const maps = input.devMaps ?? (await loadDevMaps());
 
-  const list = await listRepoCommits(input.repo, input.sinceISO, page);
+  const { items: list, lastPage } = await listRepoCommits(input.repo, input.sinceISO, page);
   let persisted = 0;
   let skippedMerges = 0;
   let attributed = 0;
+
+  // Estado: entramos a "syncing"; en la página 1 fijamos el total de páginas (para el % de la barra).
+  if (track) {
+    await updateRepoSync(input.repo, {
+      sync_status: 'syncing',
+      sync_pages: page,
+      ...(page === 1 ? { sync_total_pages: lastPage } : {}),
+    });
+  }
 
   for (const item of list) {
     // Merge commit: su diff combinado recontaría líneas ya atribuidas a los commits que trae. No
@@ -104,19 +130,44 @@ export async function backfillRepoCommits(input: BackfillRepoInput): Promise<Bac
     persisted++;
   }
 
-  return { persisted, skippedMerges, attributed, hasMore: list.length >= 100, nextPage: page + 1 };
+  const hasMore = list.length >= 100;
+  // Acumular commits de esta corrida y cerrar en "done" cuando ya no hay más páginas. Sin concurrencia
+  // por repo (la página N+1 se encola solo tras terminar la N), así que el read-modify-write es seguro.
+  if (track) {
+    const { data: cur } = await supabase.from('project_repo').select('sync_commits').eq('repo', input.repo.toLowerCase()).maybeSingle();
+    const total = ((cur as { sync_commits?: number } | null)?.sync_commits ?? 0) + persisted;
+    await updateRepoSync(input.repo, { sync_commits: total, ...(hasMore ? {} : { sync_status: 'done' }) });
+  }
+
+  return { persisted, skippedMerges, attributed, hasMore, nextPage: page + 1 };
+}
+
+export interface EnqueueBackfillOptions {
+  /** Fuerza reprocesar aunque ya se haya backfilleado: usa un runKey único que evita la idempotencia
+   *  once-only. El upsert por (repo, sha) mantiene los datos sin duplicar (recalcula líneas). */
+  force?: boolean;
 }
 
 /**
- * Encola el backfill del historial (últimos BACKFILL_DAYS días) de un repo recién vinculado. La
- * llave de idempotencia por (repo, página 1) hace que cada repo se backfillee una sola vez aunque
- * se re-vincule; el drain re-encola las páginas siguientes con su propia llave.
+ * Encola el backfill del historial (últimos BACKFILL_DAYS días) de un repo. Por defecto la llave de
+ * idempotencia (runKey '1') hace que cada repo se backfillee una sola vez; con `force` se usa un
+ * runKey único (timestamp) para re-sincronizar bajo demanda. El drain re-encola las páginas
+ * siguientes arrastrando el mismo runKey. Marca el estado en `queued` reseteando los contadores.
  */
-export async function enqueueRepoBackfill(repo: string, projectId: string | null): Promise<void> {
+export async function enqueueRepoBackfill(repo: string, projectId: string | null, opts: EnqueueBackfillOptions = {}): Promise<void> {
   const sinceISO = new Date(Date.now() - BACKFILL_DAYS * 86_400_000).toISOString();
+  const runKey = opts.force ? String(Date.now()) : '1';
+  await updateRepoSync(repo, {
+    sync_status: 'queued',
+    sync_pages: 0,
+    sync_commits: 0,
+    sync_total_pages: null,
+    sync_error: null,
+    sync_started_at: new Date().toISOString(),
+  });
   await emit(
     'repo.backfill',
-    { repo, projectId, sinceISO, page: 1 },
-    { idempotencyKey: `repo-backfill:${repo}:1` },
+    { repo, projectId, sinceISO, page: 1, runKey },
+    { idempotencyKey: `repo-backfill:${repo}:${runKey}:1` },
   );
 }

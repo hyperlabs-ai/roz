@@ -6,7 +6,7 @@ import { db } from '../db/supabase.js';
 import { notifyAssignment, notifyChangesDocumented, notifyRepoDetected } from '../notify/notifications.js';
 import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit, backfillPushCommits } from '../reconcile/commits.js';
-import { backfillRepoCommits } from '../reconcile/backfill.js';
+import { backfillRepoCommits, markRepoSyncError } from '../reconcile/backfill.js';
 import { reconcilePullRequest } from '../reconcile/pull-request.js';
 import { handleRepoDetected, handleRepoRenamed } from '../reconcile/repos.js';
 import type { RepoMeta } from '../adapters/github.js';
@@ -157,6 +157,11 @@ async function processEvent(ev: any): Promise<boolean | null> {
         next_attempt_at: new Date(Date.now() + backoffSec * 1000).toISOString(),
       })
       .eq('id', ev.id);
+    // Backfill agotado: refleja el fallo en el estado de sync del repo (badge rojo + reintento en UI).
+    // Solo al morir, para no parpadear en fallos transitorios que aún se reintentan.
+    if (dead && ev.type === 'repo.backfill' && ev.payload?.repo) {
+      await markRepoSyncError(String(ev.payload.repo), String(err)).catch(() => {});
+    }
     return false;
   }
 }
@@ -225,12 +230,13 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
       const projectId = (payload.projectId as string | null) ?? null;
       const sinceISO = String(payload.sinceISO ?? '');
       const page = Number(payload.page ?? 1);
+      const runKey = String(payload.runKey ?? '1');
       const r = await backfillRepoCommits({ repo, projectId, sinceISO, page });
       if (r.hasMore) {
         await emit(
           'repo.backfill',
-          { repo, projectId, sinceISO, page: r.nextPage },
-          { idempotencyKey: `repo-backfill:${repo}:${r.nextPage}` },
+          { repo, projectId, sinceISO, page: r.nextPage, runKey },
+          { idempotencyKey: `repo-backfill:${repo}:${runKey}:${r.nextPage}` },
         );
       }
       return;

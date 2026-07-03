@@ -108,9 +108,25 @@ export interface CommitHistoryItem {
   committedAt: string | null; additions: number | null; deletions: number | null; repo: string; url: string | null;
 }
 
+export interface RepoSyncStatus {
+  repo: string;
+  status: 'idle' | 'queued' | 'syncing' | 'done' | 'error' | string;
+  pages: number;
+  commits: number;
+  totalPages: number | null;
+  error: string | null;
+  updatedAt: string | null;
+}
+
+/** Progreso de una sincronización (backfill) para el widget global; repo + estado + progreso. */
+export interface SyncItem extends RepoSyncStatus {
+  projectId: string | null;
+}
+
 export interface ProjectDetail {
   project: { id: string; name: string; key: string; kind: ProjectKind; color: string | null };
   repos: string[];
+  repoSync: RepoSyncStatus[];
   totals: { commits: number; additions: number; deletions: number; ticketsResolved: number; contributors: number; openTickets: number };
   contributors: { name: string; avatarUrl: string | null; commits: number; lines: number }[];
   openTickets: { id: string; identifier: string; title: string; state: string; stateName: string; priority: string | null; url: string | null; assignee: { name: string; avatarUrl: string | null } | null }[];

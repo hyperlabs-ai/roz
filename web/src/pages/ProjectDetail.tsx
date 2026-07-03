@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowLeft, GitCommitHorizontal, CircleCheck, Users, Plus, Minus, ExternalLink, X, GitBranch } from 'lucide-react';
+import { ArrowLeft, GitCommitHorizontal, CircleCheck, Users, Plus, Minus, ExternalLink, X, GitBranch, RefreshCw, Loader2, Check, CircleAlert } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { AreaTrend, RankBars } from '@/components/charts';
@@ -17,7 +17,8 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useApi } from '@/lib/useApi';
-import { apiGet, apiSend, type ProjectDetail as Detail } from '@/lib/api';
+import { useSync } from '@/sync/SyncContext';
+import { apiGet, apiSend, type ProjectDetail as Detail, type RepoSyncStatus } from '@/lib/api';
 import { compact, relative } from '@/lib/format';
 import { defaultPeriod } from '@/lib/period';
 import { cn } from '@/lib/utils';
@@ -38,6 +39,24 @@ function MiniStat({ icon, label, value, valueClassName, className }: { icon: Rea
   );
 }
 
+/** Indicador de sincronización (backfill) de un repo: en cola / % o commits / ✓ / error. */
+function RepoSyncBadge({ s }: { s?: RepoSyncStatus }) {
+  if (!s || s.status === 'idle') return null;
+  if (s.status === 'done') return <Check className="size-3.5 shrink-0 text-success" aria-label="Sincronizado" />;
+  if (s.status === 'error') {
+    return <CircleAlert className="size-3.5 shrink-0 text-destructive" aria-label={s.error ?? 'Error al sincronizar'} />;
+  }
+  // queued | syncing
+  const pct = s.totalPages ? Math.min(100, Math.round((s.pages / s.totalPages) * 100)) : null;
+  const label = s.status === 'queued' ? 'en cola' : pct != null ? `${pct}%` : `${s.commits}`;
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground" title={`${s.commits} commits · ${s.pages}${s.totalPages ? `/${s.totalPages}` : ''} páginas`}>
+      <Loader2 className="size-3.5 animate-spin" />
+      {label}
+    </span>
+  );
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -45,7 +64,41 @@ export default function ProjectDetail() {
   const [period, setPeriod] = useState(defaultPeriod());
   const [newRepo, setNewRepo] = useState('');
   const [busy, setBusy] = useState(false);
+  const [available, setAvailable] = useState<string[]>([]);
+  const { syncs, trigger, isActive } = useSync();
   const { data, loading, reload } = useApi<Detail>(() => apiGet(`/projects/${id}`, period.range), [id, period.range.from, period.range.to]);
+
+  // Autocomplete: repos de la org (solo admin; una vez).
+  useEffect(() => {
+    if (!isAdmin) return;
+    apiGet<{ repos: string[] }>('/repos/available').then((r) => setAvailable(r.repos)).catch(() => {});
+  }, [isAdmin]);
+
+  // Estado de sync en vivo desde el widget global (no repolleamos la página aquí); el inicial del
+  // payload sirve de fallback en el primer render.
+  const liveByRepo = new Map(syncs.map((s) => [s.repo, s]));
+  const statusFor = (r: string) => liveByRepo.get(r) ?? (data?.repoSync ?? []).find((x) => x.repo === r);
+
+  // Un ÚNICO reload cuando un repo de este proyecto termina de sincronizar: refresca totales/gráficas
+  // sin el parpadeo del polling anterior (que recargaba todo cada pocos segundos).
+  const doneSeen = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    for (const s of syncs) {
+      const key = `${s.repo}:${s.updatedAt}`;
+      if (s.status === 'done' && (data?.repos ?? []).includes(s.repo) && !doneSeen.current.has(key)) {
+        doneSeen.current.add(key);
+        reload();
+      }
+    }
+  }, [syncs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function resyncRepo(repo: string) {
+    try {
+      await trigger(id!, repo);
+    } catch (e: any) {
+      toast.error('No se pudo re-sincronizar', { description: String(e.message ?? e) });
+    }
+  }
 
   async function addRepo() {
     const repo = newRepo.trim();
@@ -131,10 +184,16 @@ export default function ProjectDetail() {
                   <span key={r} className="inline-flex items-center gap-1.5 rounded-md border bg-muted/40 py-1 pl-2.5 pr-1.5 text-sm">
                     <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
                     <span className="font-mono text-xs">{r.replace('hyperlabs-ai/', '')}</span>
+                    <RepoSyncBadge s={statusFor(r)} />
                     {isAdmin && (
-                      <button onClick={() => removeRepo(r)} className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Desvincular">
-                        <X className="size-3.5" />
-                      </button>
+                      <>
+                        <button onClick={() => resyncRepo(r)} disabled={isActive(r)} className="rounded p-0.5 text-muted-foreground hover:bg-accent disabled:opacity-40" title="Re-sincronizar este repo">
+                          <RefreshCw className={cn('size-3.5', isActive(r) && 'animate-spin')} />
+                        </button>
+                        <button onClick={() => removeRepo(r)} className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Desvincular">
+                          <X className="size-3.5" />
+                        </button>
+                      </>
                     )}
                   </span>
                 ))}
@@ -143,11 +202,15 @@ export default function ProjectDetail() {
               {isAdmin && (
                 <div className="mt-3 flex max-w-sm gap-2">
                   <Input
+                    list="available-repos"
                     value={newRepo}
                     onChange={(e) => setNewRepo(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && addRepo()}
                     placeholder="nombre-del-repo (o owner/repo)"
                   />
+                  <datalist id="available-repos">
+                    {available.filter((r) => !data.repos.includes(r)).map((r) => <option key={r} value={r} />)}
+                  </datalist>
                   <Button onClick={addRepo} disabled={busy || !newRepo.trim()}><Plus /> Vincular</Button>
                 </div>
               )}

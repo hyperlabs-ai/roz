@@ -11,6 +11,11 @@ function encRepo(repo: string): string {
 }
 
 async function gh<T>(path: string): Promise<T> {
+  return (await ghRes<T>(path)).data;
+}
+
+/** Igual que gh() pero devuelve también los headers (para leer el `Link` de paginación). */
+async function ghRes<T>(path: string): Promise<{ data: T; headers: Headers }> {
   const res = await fetch(`${API}${path}`, {
     headers: {
       authorization: `Bearer ${config.github.token}`,
@@ -19,7 +24,37 @@ async function gh<T>(path: string): Promise<T> {
     },
   });
   if (!res.ok) throw new Error(`GitHub API error ${res.status}: ${await res.text()}`);
-  return (await res.json()) as T;
+  return { data: (await res.json()) as T, headers: res.headers };
+}
+
+/** Nº de la última página del header `Link` (rel="last"), o null si no hay más páginas. */
+function parseLastPage(link: string | null): number | null {
+  if (!link) return null;
+  const m = link.match(/[?&]page=(\d+)[^>]*>;\s*rel="last"/);
+  return m ? Number(m[1]) : null;
+}
+
+// Rutas de "trabajo no-real": dependencias, artefactos generados y lockfiles. Sus líneas NO cuentan
+// como contribución (un commit que versiona node_modules metía cientos de miles de líneas basura).
+// Se filtran por commit recalculando additions/deletions solo sobre los archivos que SÍ son código.
+const GENERATED_DIRS = [
+  'node_modules/', 'vendor/', 'dist/', 'build/', '.next/', 'out/', 'coverage/', '.venv/',
+  'venv/', '__pycache__/', 'bin/', 'obj/', '.turbo/', 'target/',
+];
+const GENERATED_FILES = new Set([
+  'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'composer.lock', 'gemfile.lock',
+  'poetry.lock', 'cargo.lock', 'go.sum', 'podfile.lock', 'flake.lock',
+]);
+const GENERATED_SUFFIXES = ['.lock', '.min.js', '.min.css', '.map', '.snap'];
+
+/** ¿La ruta es de trabajo generado/dependencias (no cuenta como líneas)? Case-insensitive. */
+export function isGeneratedPath(filename: string): boolean {
+  const f = filename.toLowerCase();
+  const base = f.split('/').pop() ?? f;
+  if (GENERATED_FILES.has(base)) return true;
+  if (GENERATED_SUFFIXES.some((s) => base.endsWith(s))) return true;
+  // Directorio generado en cualquier nivel del path (p.ej. "apps/web/node_modules/...").
+  return GENERATED_DIRS.some((d) => f.startsWith(d) || f.includes(`/${d}`));
 }
 
 /** Llama a la GraphQL API v4 (la REST v3 no expone el calendario de contribuciones). */
@@ -119,14 +154,46 @@ export interface CommitMeta {
 }
 
 export async function getCommit(repo: string, sha: string): Promise<CommitMeta> {
-  const data = await gh<{
+  type FileEntry = { filename: string; additions?: number; deletions?: number };
+  type CommitResp = {
     sha: string;
     html_url: string;
     commit: { message: string; author?: { email?: string; date?: string } };
     author: { login: string } | null;
     stats?: { additions?: number; deletions?: number };
     parents?: unknown[];
-  }>(`/repos/${encRepo(repo)}/commits/${sha}`);
+    files?: FileEntry[];
+  };
+
+  // El endpoint devuelve el desglose por archivo (`files`), paginado a 100. Un commit que versiona
+  // node_modules trae miles de archivos: paginamos hasta un tope defensivo para poder filtrarlos.
+  const enc = `/repos/${encRepo(repo)}/commits/${encodeURIComponent(sha)}`;
+  const data = await gh<CommitResp>(`${enc}?per_page=100&page=1`);
+  const files: FileEntry[] = [...(data.files ?? [])];
+  const MAX_FILE_PAGES = 30; // 30×100 = 3000 archivos: de sobra para código real; acota los dumps.
+  let batchLen = data.files?.length ?? 0;
+  for (let page = 2; batchLen === 100 && page <= MAX_FILE_PAGES; page++) {
+    const next = await gh<CommitResp>(`${enc}?per_page=100&page=${page}`);
+    const batch = next.files ?? [];
+    files.push(...batch);
+    batchLen = batch.length;
+  }
+
+  // Recalcular líneas contando SOLO archivos que no son generados/dependencias. Si el desglose no
+  // vino (caso raro), se cae a los stats totales del commit para no quedarnos sin dato.
+  let additions = 0;
+  let deletions = 0;
+  if (data.files != null) {
+    for (const f of files) {
+      if (isGeneratedPath(f.filename)) continue;
+      additions += f.additions ?? 0;
+      deletions += f.deletions ?? 0;
+    }
+  } else {
+    additions = data.stats?.additions ?? 0;
+    deletions = data.stats?.deletions ?? 0;
+  }
+
   return {
     sha: data.sha,
     message: data.commit.message,
@@ -134,8 +201,8 @@ export async function getCommit(repo: string, sha: string): Promise<CommitMeta> 
     author: data.author?.login ?? null,
     authorEmail: data.commit.author?.email ?? null,
     committedAt: data.commit.author?.date ?? null,
-    additions: data.stats?.additions ?? null,
-    deletions: data.stats?.deletions ?? null,
+    additions,
+    deletions,
     isMerge: (data.parents?.length ?? 0) >= 2,
   };
 }
@@ -156,20 +223,29 @@ export interface RepoCommitListItem {
  * sí trae `parents` para descartar merges sin una llamada extra. La lista omite ramas no mergeadas
  * (default branch), igual que el conteo en vivo. Devuelve [] en 404 (repo sin acceso).
  */
-export async function listRepoCommits(repo: string, sinceISO: string, page = 1): Promise<RepoCommitListItem[]> {
-  const data = await gh<
-    {
-      sha: string;
-      html_url: string;
-      commit: { message: string; author?: { email?: string; date?: string } };
-      author: { login?: string } | null;
-      parents?: unknown[];
-    }[]
-  >(`/repos/${encRepo(repo)}/commits?since=${encodeURIComponent(sinceISO)}&per_page=100&page=${page}`).catch((e) => {
-    if (String(e).includes('404')) return [] as never[];
+export interface RepoCommitsPage {
+  items: RepoCommitListItem[];
+  lastPage: number; // total de páginas (del header Link); = page actual si es la única/última.
+}
+
+export async function listRepoCommits(repo: string, sinceISO: string, page = 1): Promise<RepoCommitsPage> {
+  type Row = {
+    sha: string;
+    html_url: string;
+    commit: { message: string; author?: { email?: string; date?: string } };
+    author: { login?: string } | null;
+    parents?: unknown[];
+  };
+  let res: { data: Row[]; headers: Headers };
+  try {
+    res = await ghRes<Row[]>(
+      `/repos/${encRepo(repo)}/commits?since=${encodeURIComponent(sinceISO)}&per_page=100&page=${page}`,
+    );
+  } catch (e) {
+    if (String(e).includes('404')) return { items: [], lastPage: page }; // repo sin acceso
     throw e;
-  });
-  return data.map((d) => ({
+  }
+  const items = res.data.map((d) => ({
     sha: d.sha,
     message: d.commit.message,
     url: d.html_url,
@@ -178,6 +254,23 @@ export async function listRepoCommits(repo: string, sinceISO: string, page = 1):
     committedAt: d.commit.author?.date ?? null,
     isMerge: (d.parents?.length ?? 0) >= 2,
   }));
+  return { items, lastPage: parseLastPage(res.headers.get('link')) ?? page };
+}
+
+/**
+ * Todos los repos de la organización (full_name en minúsculas), para el autocomplete al vincular.
+ * Ordenados por push reciente. Best-effort: si una página falla, corta y devuelve lo acumulado.
+ */
+export async function listOrgRepos(org = 'hyperlabs-ai'): Promise<string[]> {
+  const out: string[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const batch = await gh<{ full_name: string }[]>(
+      `/orgs/${encodeURIComponent(org)}/repos?per_page=100&sort=pushed&page=${page}`,
+    ).catch(() => [] as { full_name: string }[]);
+    for (const r of batch) out.push(r.full_name.toLowerCase());
+    if (batch.length < 100) break;
+  }
+  return out;
 }
 
 export interface RepoMeta {

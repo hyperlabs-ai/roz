@@ -176,6 +176,71 @@ export async function removeProjectRepo(projectId: string, repo: string) {
   if (error) throw error;
 }
 
+/** Repos (full_name) vinculados a un proyecto. Para el re-sync (backfill forzado de cada uno). */
+export async function listProjectRepos(projectId: string): Promise<string[]> {
+  const { data } = await db().from('project_repo').select('repo').eq('project_id', projectId);
+  return ((data ?? []) as unknown as { repo: string }[]).map((r) => r.repo);
+}
+
+export interface RepoSync {
+  repo: string;
+  status: string; // idle | queued | syncing | done | error
+  pages: number;
+  commits: number;
+  totalPages: number | null;
+  error: string | null;
+  updatedAt: string | null;
+}
+
+export interface ActiveSync extends RepoSync {
+  projectId: string | null;
+}
+
+/**
+ * Sincronizaciones (backfill) activas en TODA la org, para el widget global de progreso: las que
+ * están en cola/corriendo, más las recién terminadas (2 min) para alcanzar a mostrar el ✓/error.
+ * Ligero (una fila por repo). Tolerante: si la migración 0014 falta, devuelve [].
+ */
+export async function listActiveSyncs(): Promise<ActiveSync[]> {
+  const since = new Date(Date.now() - 2 * 60_000).toISOString();
+  const { data, error } = await db()
+    .from('project_repo')
+    .select('repo, project_id, sync_status, sync_pages, sync_commits, sync_total_pages, sync_error, sync_updated_at')
+    .or(`sync_status.in.(queued,syncing),and(sync_status.in.(done,error),sync_updated_at.gte.${since})`);
+  if (error) return [];
+  return ((data ?? []) as any[]).map((r) => ({
+    repo: r.repo,
+    projectId: r.project_id ?? null,
+    status: r.sync_status ?? 'idle',
+    pages: r.sync_pages ?? 0,
+    commits: r.sync_commits ?? 0,
+    totalPages: r.sync_total_pages ?? null,
+    error: r.sync_error ?? null,
+    updatedAt: r.sync_updated_at ?? null,
+  }));
+}
+
+/**
+ * Estado de sincronización (backfill) de los repos de un proyecto. Tolerante: si la migración 0014
+ * aún no se aplicó (columnas sync_* inexistentes), devuelve [] y el front no muestra badges.
+ */
+async function projectRepoSync(projectId: string): Promise<RepoSync[]> {
+  const { data, error } = await db()
+    .from('project_repo')
+    .select('repo, sync_status, sync_pages, sync_commits, sync_total_pages, sync_error, sync_updated_at')
+    .eq('project_id', projectId);
+  if (error) return [];
+  return ((data ?? []) as any[]).map((r) => ({
+    repo: r.repo,
+    status: r.sync_status ?? 'idle',
+    pages: r.sync_pages ?? 0,
+    commits: r.sync_commits ?? 0,
+    totalPages: r.sync_total_pages ?? null,
+    error: r.sync_error ?? null,
+    updatedAt: r.sync_updated_at ?? null,
+  }));
+}
+
 export interface ProjectRow {
   id: string;
   name: string;
@@ -816,7 +881,7 @@ export async function getProject(projectId: string, period: Period) {
   if (!p) return null;
   const color = (await projectColors()).get(projectId) ?? null;
 
-  const [commits, devs, resolved, repoRows, openRows, allItemRows] = await Promise.all([
+  const [commits, devs, resolved, repoRows, openRows, allItemRows, repoSync] = await Promise.all([
     commitsInRange(period.from, period.to, { projectId }),
     allDevs(),
     resolvedInRange(period.from, period.to, { projectId }),
@@ -828,6 +893,7 @@ export async function getProject(projectId: string, period: Period) {
       .in('state', OPEN_STATES),
     // Todos los work_items del proyecto (para el desglose por estado, incluidos cerrados).
     db().from('work_item').select('state, state_name').eq('project_id', projectId),
+    projectRepoSync(projectId),
   ]);
   const repos = ((repoRows.data ?? []) as unknown as { repo: string }[]).map((r) => r.repo).sort();
   const devName = new Map(devs.map((d) => [d.id, d.name]));
@@ -908,6 +974,7 @@ export async function getProject(projectId: string, period: Period) {
   return {
     project: { id: p.id, name: p.name, key: p.key, kind: p.kind, color },
     repos,
+    repoSync,
     period,
     totals: { commits: commits.length, additions: lines.additions, deletions: lines.deletions, ticketsResolved: resolved.length, contributors: contribMap.size, openTickets: openTickets.length },
     contributors: [...contribMap.values()].sort((a, b) => b.commits - a.commits),
