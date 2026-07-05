@@ -23,7 +23,7 @@ const STATE_LABEL: Record<string, string> = {
 export default function Overview() {
   const [period, setPeriod] = usePeriod();
   const nav = useNavigate();
-  const compare = useMemo(() => comparisonRange(period.range, period.compare), [period.range, period.compare]);
+  const compare = useMemo(() => comparisonRange(period.range, period.compare, period.preset), [period.range, period.compare, period.preset]);
   const { data, loading, error } = useApi<OverviewData>(
     () => apiGet('/overview', period.range, compare),
     [period.range.from, period.range.to, compare?.from, compare?.to],

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ChevronRight, GitCommitHorizontal, Code2, CircleCheck, CircleDot, FolderGit2, Plus, Trophy, Crown, Sparkles } from 'lucide-react';
+import { Search, ChevronRight, GitCommitHorizontal, Code2, CircleCheck, CircleDot, FolderGit2, Plus, Trophy, Crown, Sparkles, Zap } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { UserAvatar, EmptyState, SkillChip } from '@/components/bits';
@@ -10,11 +10,23 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip';
+import { HyperTooltip } from '@/components/HyperTooltip';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperListItem } from '@/lib/api';
 import { compact } from '@/lib/format';
 import { usePeriod } from '@/lib/usePeriod';
 import { cn } from '@/lib/utils';
+
+type RankMetric = 'hyper' | 'commits' | 'lines';
+
+const METRICS: Record<RankMetric, { label: string; icon: typeof Zap; value: (d: DeveloperListItem) => number }> = {
+  hyper: { label: 'hyper points', icon: Zap, value: (d) => d.hyperPoints },
+  commits: { label: 'commits', icon: GitCommitHorizontal, value: (d) => d.commits },
+  lines: { label: 'líneas', icon: Code2, value: (d) => d.linesChanged },
+};
+
 
 export default function Developers() {
   const [period, setPeriod] = usePeriod();
@@ -28,12 +40,15 @@ export default function Developers() {
     [period.range.from, period.range.to],
   );
 
+  const [metric, setMetric] = useState<RankMetric>('hyper');
+  const m = METRICS[metric];
+
   const sorted = useMemo(
-    () => [...(data?.developers ?? [])].sort((a, b) => b.commits - a.commits),
-    [data],
+    () => [...(data?.developers ?? [])].sort((a, b) => m.value(b) - m.value(a)),
+    [data, m],
   );
 
-  const top3 = useMemo(() => sorted.filter((d) => d.commits > 0).slice(0, 3), [sorted]);
+  const top3 = useMemo(() => sorted.filter((d) => m.value(d) > 0).slice(0, 3), [sorted, m]);
 
   const rows = useMemo(
     () => sorted.filter((d) => d.name.toLowerCase().includes(q.toLowerCase()) || (d.githubLogin ?? '').toLowerCase().includes(q.toLowerCase())),
@@ -65,17 +80,37 @@ export default function Developers() {
 
       {error && <Card className="p-4 text-sm text-destructive">{error}</Card>}
 
-      {!loading && !q && top3.length > 0 && (
+      {!loading && !q && sorted.length > 0 && (
         <div className="mb-8">
-          <div className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
-            <Trophy className="size-4 text-amber-500" /> Top 3 por commits
+          <div className="mb-3 flex flex-col items-center gap-2 sm:flex-row sm:justify-between">
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
+              <Trophy className="size-4 text-amber-500" /> Top 3 por {m.label}
+            </div>
+            <Tabs value={metric} onValueChange={(v) => setMetric(v as RankMetric)}>
+              <TabsList className="h-8">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {/* El data-state del tooltip (open/closed) pisa el de la tab (active), así que
+                        el estilo de activo va por aria-selected, que el tooltip no toca. */}
+                    <TabsTrigger value="hyper" className="text-xs aria-selected:bg-background aria-selected:text-foreground aria-selected:shadow-sm">
+                      <Zap /> Hyper points
+                    </TabsTrigger>
+                  </TooltipTrigger>
+                  <HyperTooltip side="bottom" />
+                </Tooltip>
+                <TabsTrigger value="commits" className="text-xs"><GitCommitHorizontal /> Commits</TabsTrigger>
+                <TabsTrigger value="lines" className="text-xs"><Code2 /> Líneas</TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
           {/* Podio: #1 centrado, grande y elevado; #2 izquierda, #3 derecha */}
-          <div className="mx-auto flex max-w-2xl items-end justify-center gap-1.5 pt-7 sm:gap-3 sm:pt-8">
-            {[top3[1], top3[0], top3[2]].map((d) =>
-              d ? <TopCard key={d.id} d={d} rank={top3.indexOf(d) + 1} onClick={() => nav(`/app/developers/${d.id}`)} /> : null,
-            )}
-          </div>
+          {top3.length > 0 && (
+            <div className="mx-auto flex max-w-2xl items-end justify-center gap-1.5 pt-7 sm:gap-3 sm:pt-8">
+              {[top3[1], top3[0], top3[2]].map((d) =>
+                d ? <TopCard key={d.id} d={d} rank={top3.indexOf(d) + 1} metric={metric} onClick={() => nav(`/app/developers/${d.id}`)} /> : null,
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -134,9 +169,11 @@ const RANK_STYLES: Record<number, {
   },
 };
 
-function TopCard({ d, rank, onClick }: { d: DeveloperListItem; rank: number; onClick: () => void }) {
+function TopCard({ d, rank, metric, onClick }: { d: DeveloperListItem; rank: number; metric: RankMetric; onClick: () => void }) {
   const s = RANK_STYLES[rank];
   const isFirst = rank === 1;
+  const m = METRICS[metric];
+  const MetricIcon = m.icon;
   return (
     <button
       type="button"
@@ -179,10 +216,10 @@ function TopCard({ d, rank, onClick }: { d: DeveloperListItem; rank: number; onC
               isFirst ? 'bg-gradient-to-b from-amber-500 to-amber-600' : 'bg-gradient-to-b from-primary to-primary/70',
             )}
           >
-            {compact(d.commits)}
+            {compact(m.value(d))}
           </span>
           <span className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-            <GitCommitHorizontal className="size-3" /> commits
+            <MetricIcon className="size-3" /> {m.label}
           </span>
         </div>
       </Card>
@@ -212,8 +249,14 @@ function DevRow({ d, onClick }: { d: DeveloperListItem; onClick: () => void }) {
       </div>
 
       {/* Contribuciones destacadas (centro) */}
-      <div className="grid grid-cols-3 gap-2 lg:w-80 lg:shrink-0 xl:gap-3">
-        <BigStat icon={<GitCommitHorizontal className="size-3.5" />} label="Commits" value={String(d.commits)} accent />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:w-[27rem] lg:shrink-0 xl:gap-3">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div><BigStat icon={<Zap className="size-3.5" />} label="Hyper points" value={compact(d.hyperPoints)} accent /></div>
+          </TooltipTrigger>
+          <HyperTooltip />
+        </Tooltip>
+        <BigStat icon={<GitCommitHorizontal className="size-3.5" />} label="Commits" value={String(d.commits)} />
         <BigStat icon={<Code2 className="size-3.5" />} label="Líneas" value={compact(d.linesChanged)} />
         <BigStat icon={<CircleCheck className="size-3.5" />} label="Resueltos" value={String(d.ticketsResolved)} />
       </div>

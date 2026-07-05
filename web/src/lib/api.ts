@@ -62,7 +62,8 @@ export interface Overview {
 export interface DeveloperListItem {
   id: string; name: string; githubLogin: string | null; avatarUrl: string | null;
   active: boolean; availability: number; commits: number; ticketsResolved: number;
-  openTickets: number; linesChanged: number; projects: number; topSkills: { tag: string; level: number }[];
+  openTickets: number; linesChanged: number; hyperPoints: number; projects: number;
+  topSkills: { tag: string; level: number }[];
 }
 
 export interface Ticket { id: string; identifier: string; title: string; state: string; priority: string | null; url: string | null; }
@@ -79,7 +80,7 @@ export interface DeveloperCredentials {
 
 export interface DeveloperProfile {
   dev: { id: string; name: string; email: string | null; githubLogin: string | null; avatarUrl: string | null; active: boolean; availability: number };
-  kpis: { commits: Metric; ticketsResolved: Metric; avgCycleTimeHours: Metric; linesChanged: Metric };
+  kpis: { commits: Metric; hyperPoints: Metric; ticketsResolved: Metric; avgCycleTimeHours: Metric; linesChanged: Metric };
   commitTrend: { date: string; commits: number }[];
   projects: { projectId: string | null; name: string; commits: number }[];
   repos: { repo: string; commits: number }[];

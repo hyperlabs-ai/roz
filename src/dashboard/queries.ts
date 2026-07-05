@@ -588,6 +588,15 @@ function sumLines(commits: CommitRow[]): { additions: number; deletions: number 
   );
 }
 
+/** Hyper points de un commit: log2(2 + líneas cambiadas)^1.5 / 10. Cada commit vale según su
+ *  tamaño pero con rendimientos decrecientes: ni muchos micro-commits ni un mega-commit
+ *  (lockfiles, código generado) pueden inflar el puntaje. El exponente 1.5 le da más peso
+ *  a las líneas sin volver lineal el crecimiento; el /10 mantiene las cifras acumuladas
+ *  en rangos manejables. 1 línea ≈ 0.2 pts, 100 ≈ 1.7, 10k ≈ 4.8. */
+function commitHyperPoints(c: CommitRow): number {
+  return Math.log2(2 + (c.additions ?? 0) + (c.deletions ?? 0)) ** 1.5 / 10;
+}
+
 // ---- Overview (landing del CEO) ----
 
 export async function getOverview(period: Period, cmp: Period | null) {
@@ -723,6 +732,8 @@ export async function listDevelopers(period: Period) {
   const openByDev = countBy(open, (w) => w.assignee_dev_id);
   const linesByDev = new Map<string, number>();
   commits.forEach((c) => c.dev_id && linesByDev.set(c.dev_id, (linesByDev.get(c.dev_id) ?? 0) + (c.additions ?? 0) + (c.deletions ?? 0)));
+  const hyperByDev = new Map<string, number>();
+  commits.forEach((c) => c.dev_id && hyperByDev.set(c.dev_id, (hyperByDev.get(c.dev_id) ?? 0) + commitHyperPoints(c)));
   const projectsByDev = new Map<string, Set<string>>();
   commits.forEach((c) => {
     if (!c.dev_id || !c.project_id) return;
@@ -743,10 +754,11 @@ export async function listDevelopers(period: Period) {
       ticketsResolved: resolvedByDev.get(d.id) ?? 0,
       openTickets: openByDev.get(d.id) ?? 0,
       linesChanged: linesByDev.get(d.id) ?? 0,
+      hyperPoints: Math.round(hyperByDev.get(d.id) ?? 0),
       projects: projectsByDev.get(d.id)?.size ?? 0,
       topSkills: (skills.get(d.id) ?? []).slice(0, 5).map((s) => ({ tag: s.tag, level: s.level })),
     }))
-    .sort((a, b) => b.commits + b.ticketsResolved - (a.commits + a.ticketsResolved));
+    .sort((a, b) => b.hyperPoints - a.hyperPoints);
 }
 
 // ---- Perfil de un developer ----
@@ -770,8 +782,10 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
   const projectsTouched = new Set(curCommits.map((c) => c.project_id).filter(Boolean));
   const lines = sumLines(curCommits);
 
+  const sumHyper = (cs: CommitRow[]) => Math.round(cs.reduce((s, c) => s + commitHyperPoints(c), 0));
   const kpis = {
     commits: metric(curCommits.length, cmpCommits ? cmpCommits.length : null),
+    hyperPoints: metric(sumHyper(curCommits), cmpCommits ? sumHyper(cmpCommits) : null),
     ticketsResolved: metric(curResolved.length, cmpResolved ? cmpResolved.length : null),
     avgCycleTimeHours: metric(cycleTime(curResolved), cmpResolved ? cycleTime(cmpResolved) : null),
     linesChanged: metric(lines.additions + lines.deletions, cmpCommits ? sumLines(cmpCommits).additions + sumLines(cmpCommits).deletions : null),

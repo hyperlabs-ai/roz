@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil, GitBranch } from 'lucide-react';
+import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil, GitBranch, Zap } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
-import { MetricCard } from '@/components/MetricCard';
+import { DeltaBadge, MetricCard } from '@/components/MetricCard';
 import { AreaTrend, FocusRadar } from '@/components/charts';
 import { UserAvatar, EmptyState, StateBadge, LineDelta, SkillMeters } from '@/components/bits';
 import { AvailabilityControl } from '@/components/AvailabilityControl';
@@ -14,6 +14,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Separator } from '@/components/ui/separator';
+import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip';
+import { HyperTooltip } from '@/components/HyperTooltip';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperProfile as Profile } from '@/lib/api';
 import { compact, hours, relative } from '@/lib/format';
@@ -26,7 +29,7 @@ export default function DeveloperProfile() {
   const [editOpen, setEditOpen] = useState(false);
   const { user } = useAuth();
   const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
-  const compare = useMemo(() => comparisonRange(period.range, period.compare), [period.range, period.compare]);
+  const compare = useMemo(() => comparisonRange(period.range, period.compare, period.preset), [period.range, period.compare, period.preset]);
   const { data, loading, error, reload } = useApi<Profile>(
     () => apiGet(`/developers/${id}`, period.range, compare),
     [id, period.range.from, period.range.to, compare?.from, compare?.to],
@@ -60,15 +63,37 @@ export default function DeveloperProfile() {
       ) : (
         <>
           <Card>
-            <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center">
-              <div className="flex min-w-0 items-center gap-4">
-                <UserAvatar url={data.dev.avatarUrl} name={data.dev.name} className="size-14 shrink-0" />
+            <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:gap-6">
+              {/* Identidad */}
+              <div className="flex min-w-0 items-center gap-4 sm:flex-1">
+                <UserAvatar url={data.dev.avatarUrl} name={data.dev.name} className="size-14 shrink-0 ring-2 ring-border" />
                 <div className="min-w-0">
                   <div className="truncate text-lg font-semibold">{data.dev.name}</div>
                   <div className="truncate text-sm text-muted-foreground">{data.dev.email ?? '—'}</div>
                 </div>
               </div>
-              <div className="sm:ml-auto sm:shrink-0">
+
+              {/* Hyper points: panel destacado */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex w-full items-center justify-center gap-3 rounded-xl border border-amber-500/25 bg-gradient-to-b from-amber-500/10 to-amber-500/[0.03] px-5 py-3 sm:w-auto sm:shrink-0">
+                    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-500">
+                      <Zap className="size-5 fill-amber-400" />
+                    </div>
+                    <div>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-2xl font-extrabold leading-none tracking-tight tabular-nums">{data.kpis.hyperPoints.value}</span>
+                        <DeltaBadge metric={data.kpis.hyperPoints} />
+                      </div>
+                      <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-amber-600/80 dark:text-amber-400/80">Hyper points</div>
+                    </div>
+                  </div>
+                </TooltipTrigger>
+                <HyperTooltip />
+              </Tooltip>
+
+              <Separator orientation="vertical" className="hidden h-12 self-center sm:block" />
+              <div className="w-full sm:w-auto sm:shrink-0">
                 <AvailabilityControl devId={data.dev.id} value={data.dev.availability} />
               </div>
             </CardContent>
@@ -133,7 +158,7 @@ export default function DeveloperProfile() {
               </CardHeader>
               <CardContent className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
                 <Tabs defaultValue="active" className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
-                  <TabsList className="lg:mx-auto lg:flex lg:w-fit lg:shrink-0">
+                  <TabsList className="mx-auto flex w-fit lg:shrink-0">
                     <TabsTrigger value="active">Activos</TabsTrigger>
                     <TabsTrigger value="resolved">Resueltos</TabsTrigger>
                   </TabsList>

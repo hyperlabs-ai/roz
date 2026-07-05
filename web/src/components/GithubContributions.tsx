@@ -67,14 +67,15 @@ export function GithubContributions({ devId }: { devId: string }) {
   return (
     <div className="mt-4 grid gap-4 lg:grid-cols-4">
       <Card className={cn('min-w-0', wideLayout ? 'lg:col-span-3' : 'lg:col-span-4')}>
-        <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
+        {/* En móvil el contador baja a su propia línea; lado a lado no cabe y se desborda. */}
+        <CardHeader className="flex-col gap-1 space-y-0 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
           <CardTitle className="flex items-center gap-2">
             <GitCommitHorizontal className="size-4" /> Contribuciones en GitHub
           </CardTitle>
           {loading ? (
             <Skeleton className="h-4 w-32" />
           ) : data?.linked ? (
-            <span className="text-sm text-muted-foreground">
+            <span className="whitespace-nowrap text-sm text-muted-foreground">
               <span className="font-semibold text-foreground tabular-nums">{data.totalContributions.toLocaleString('es-MX')}</span> en el último año
             </span>
           ) : null}
@@ -88,8 +89,9 @@ export function GithubContributions({ devId }: { devId: string }) {
           {!loading && data?.linked && (
             <div className="w-full">
               <div className="flex w-full gap-1.5">
-                {/* Etiquetas de día (izquierda) — se estiran para alinear con las 7 filas */}
-                <div className="flex shrink-0 flex-col gap-1">
+                {/* Etiquetas de día (izquierda) — se estiran para alinear con las 7 filas.
+                    En móvil se ocultan para darle todo el ancho a la cuadrícula. */}
+                <div className="hidden shrink-0 flex-col gap-1 sm:flex">
                   <div className="h-4" />
                   <div className="flex flex-1 flex-col gap-[2px]">
                     {WEEKDAYS.map((d, i) => (
@@ -100,8 +102,8 @@ export function GithubContributions({ devId }: { devId: string }) {
 
                 {/* Columna principal (meses + cuadrícula) ocupa todo el ancho */}
                 <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  {/* Etiquetas de mes con altura reservada (no se enciman con la cuadrícula) */}
-                  <div className="flex h-4 gap-[2px]">
+                  {/* Etiquetas de mes con altura reservada (no se enciman con la cuadrícula); ocultas en móvil */}
+                  <div className="hidden h-4 gap-[2px] sm:flex">
                     {monthLabels.map((label, i) => (
                       <div key={i} className="relative min-w-0 flex-1">
                         {label && <span className="absolute left-0 top-0 whitespace-nowrap text-[10px] leading-none text-muted-foreground">{label}</span>}
@@ -181,8 +183,8 @@ function ContributionsSkeleton() {
   return (
     <div className="shimmer w-full rounded-md">
       <div className="flex w-full gap-1.5">
-        {/* Etiquetas de día (izquierda) */}
-        <div className="flex shrink-0 flex-col gap-1">
+        {/* Etiquetas de día (izquierda); ocultas en móvil como en la cuadrícula real */}
+        <div className="hidden shrink-0 flex-col gap-1 sm:flex">
           <div className="h-4" />
           <div className="flex flex-1 flex-col gap-[2px]">
             {WEEKDAYS.map((_, i) => (
@@ -194,7 +196,7 @@ function ContributionsSkeleton() {
         </div>
         {/* Cuadrícula */}
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="h-4" />
+          <div className="hidden h-4 sm:block" />
           <div className="flex gap-[2px]">
             {Array.from({ length: 52 }).map((_, i) => (
               <div key={i} className="flex min-w-0 flex-1 flex-col gap-[2px]">

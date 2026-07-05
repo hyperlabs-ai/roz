@@ -64,12 +64,23 @@ export function presetRange(preset: Exclude<PresetId, 'custom'>): Range {
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
+const shiftMonths = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth() + n, d.getDate());
+
 /** Rango de comparación según el modo. null = sin comparación. */
-export function comparisonRange(range: Range, compare: CompareId): Range | null {
+export function comparisonRange(range: Range, compare: CompareId, preset: PresetId = 'custom'): Range | null {
   if (compare === 'none') return null;
   const from = new Date(range.from);
   const to = new Date(range.to);
   if (compare === 'previous') {
+    // Presets de calendario: el "anterior" es la unidad de calendario previa con el mismo tramo
+    // transcurrido ("este mes" a día 4 → días 1-4 del mes pasado). Desplazar por duración en
+    // días compararía contra la cola del período anterior y corta los meses de 31 días.
+    const months = preset === 'this_month' || preset === 'last_month' ? 1 : preset === 'this_quarter' ? 3 : preset === 'this_year' ? 12 : 0;
+    if (months > 0) {
+      const prevTo = Math.min(shiftMonths(to, -months).getTime(), from.getTime());
+      return { from: shiftMonths(from, -months).toISOString(), to: new Date(prevTo).toISOString() };
+    }
+    // Ventanas rodantes (últimos N días, custom): el rango inmediatamente anterior del mismo largo.
     const span = to.getTime() - from.getTime();
     return { from: new Date(from.getTime() - span).toISOString(), to: range.from };
   }
