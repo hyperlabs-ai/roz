@@ -588,13 +588,14 @@ function sumLines(commits: CommitRow[]): { additions: number; deletions: number 
   );
 }
 
-/** Hyper points de un commit: log2(2 + líneas cambiadas)^1.5 / 10. Cada commit vale según su
+/** Hyper points de un commit: log2(2 + líneas cambiadas)^4 / 1500. Cada commit vale según su
  *  tamaño pero con rendimientos decrecientes: ni muchos micro-commits ni un mega-commit
- *  (lockfiles, código generado) pueden inflar el puntaje. El exponente 1.5 le da más peso
- *  a las líneas sin volver lineal el crecimiento; el /10 mantiene las cifras acumuladas
- *  en rangos manejables. 1 línea ≈ 0.2 pts, 100 ≈ 1.7, 10k ≈ 4.8. */
+ *  (lockfiles, código generado) pueden inflar el puntaje. El exponente 4 le da más peso
+ *  a las líneas que el 1.5 original (con el que el conteo de commits dominaba al volumen
+ *  de trabajo); el /1500 mantiene las cifras acumuladas en los mismos rangos de antes.
+ *  1 línea ≈ 0.004 pts, 100 ≈ 1.3, 1000 ≈ 6.6, 10k ≈ 20.8. */
 function commitHyperPoints(c: CommitRow): number {
-  return Math.log2(2 + (c.additions ?? 0) + (c.deletions ?? 0)) ** 1.5 / 10;
+  return Math.log2(2 + (c.additions ?? 0) + (c.deletions ?? 0)) ** 4 / 1500;
 }
 
 // ---- Overview (landing del CEO) ----
