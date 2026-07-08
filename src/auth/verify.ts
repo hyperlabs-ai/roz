@@ -47,8 +47,8 @@ export const requireDashboardAuth: MiddlewareHandler<RozContext> = async (c, nex
   }
 
   // Rol y nombre desde public.user_profiles (role, full_name). Best-effort y defensivo: si la tabla
-  // no existe (self-host sin ese esquema) o el schema `public` no está expuesto, el rol queda null
-  // (dashboard de solo lectura) sin romper la sesión. Crea esa tabla para habilitar admins.
+  // no existe (self-host sin ese esquema) o el schema `public` no está expuesto, rol/nombre quedan
+  // null sin romper la sesión. El rol ya solo es informativo (se muestra en el layout); no restringe.
   let p: { role?: string | null; full_name?: string | null } | null = null;
   try {
     const { data: profile } = await dbPublic()
@@ -70,11 +70,11 @@ export const requireDashboardAuth: MiddlewareHandler<RozContext> = async (c, nex
   await next();
 };
 
-/** Exige rol admin/superadmin (mutaciones: CRUD de skills, asignaciones). */
+/** Mutaciones (CRUD de skills, asignaciones): cualquier usuario autenticado tiene control
+ *  total — los roles admin/superadmin ya no restringen nada en el dashboard. */
 export const requireAdmin: MiddlewareHandler<RozContext> = async (c, next) => {
-  const user = c.get('user');
-  if (!user || !['admin', 'superadmin'].includes(user.role ?? '')) {
-    return c.json({ error: { code: 'FORBIDDEN', message: 'requiere rol admin' } }, 403);
+  if (!c.get('user')) {
+    return c.json({ error: { code: 'FORBIDDEN', message: 'requiere sesión' } }, 403);
   }
   await next();
 };

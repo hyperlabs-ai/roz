@@ -40,7 +40,7 @@ export default function Projects() {
   const [period, setPeriod] = usePeriod();
   const [createOpen, setCreateOpen] = useState(false);
   const { user } = useAuth();
-  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
+  const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const nav = useNavigate();
   const { data, loading, error, reload } = useApi<{ projects: ProjectListItem[] }>(
     () => apiGet('/projects', period.range),

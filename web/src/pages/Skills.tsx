@@ -24,7 +24,7 @@ import { apiGet, apiSend, type SkillCatalogItem, type SkillMatrix } from '@/lib/
 
 export default function Skills() {
   const { user } = useAuth();
-  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
+  const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const catalog = useApi<{ skills: SkillCatalogItem[] }>(() => apiGet('/skills'), []);
   const matrix = useApi<SkillMatrix>(() => apiGet('/skills/matrix'), []);
   const reload = () => {

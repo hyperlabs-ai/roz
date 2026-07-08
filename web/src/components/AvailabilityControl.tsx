@@ -18,11 +18,11 @@ function barTone(v: number): string {
 
 /**
  * Disponibilidad editable de un dev (0 saturado .. 1 libre). Afecta al router de roz.
- * Solo admin puede editar; el resto ve el % como lectura. Guarda al soltar el slider.
+ * Cualquier usuario autenticado puede editar. Guarda al soltar el slider.
  */
 export function AvailabilityControl({ devId, value, onSaved }: { devId: string; value: number; onSaved?: (v: number) => void }) {
   const { user } = useAuth();
-  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
+  const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const [val, setVal] = useState(Math.round(value * 100)); // 0–100 mientras se arrastra
   const [busy, setBusy] = useState(false);
 

@@ -33,7 +33,7 @@ export default function Developers() {
   const [q, setQ] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const { user } = useAuth();
-  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
+  const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const nav = useNavigate();
   const { data, loading, error, reload } = useApi<{ developers: DeveloperListItem[] }>(
     () => apiGet('/developers', period.range),

@@ -87,7 +87,7 @@ function aggregate(services: InfraService[]): ServiceStatus {
 
 export default function Infra() {
   const { user } = useAuth();
-  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
+  const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const { data, loading, error, reload } = useApi<InfraResponse>(() => apiGet('/infra'), []);
 
   const projects = data?.projects ?? [];

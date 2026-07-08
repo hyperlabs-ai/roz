@@ -186,7 +186,7 @@ function RepoCombobox({ available, linked, busy, onAdd }: {
 export default function ProjectDetail() {
   const { id } = useParams();
   const { user } = useAuth();
-  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
+  const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const [period, setPeriod] = usePeriod();
   const [busy, setBusy] = useState(false);
   const [available, setAvailable] = useState<string[]>([]);

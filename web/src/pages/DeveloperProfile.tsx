@@ -28,7 +28,7 @@ export default function DeveloperProfile() {
   const [period, setPeriod] = usePeriod();
   const [editOpen, setEditOpen] = useState(false);
   const { user } = useAuth();
-  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
+  const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const compare = useMemo(() => comparisonRange(period.range, period.compare, period.preset), [period.range, period.compare, period.preset]);
   const { data, loading, error, reload } = useApi<Profile>(
     () => apiGet(`/developers/${id}`, period.range, compare),

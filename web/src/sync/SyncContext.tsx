@@ -24,7 +24,7 @@ const isRunning = (s: SyncItem) => s.status === 'queued' || s.status === 'syncin
  */
 export function SyncProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const isAdmin = ['admin', 'superadmin'].includes(user?.role ?? '');
+  const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const [syncs, setSyncs] = useState<SyncItem[]>([]);
   const [enabled, setEnabled] = useState(false);
   const [minimized, setMinimized] = useState(false);
