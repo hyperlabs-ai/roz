@@ -59,10 +59,15 @@ export interface Overview {
   trend: { date: string; commits: number; ticketsResolved: number }[];
 }
 
+/** Franja de tamaño de commit (conteo y líneas): describe el estilo de trabajo de un dev.
+ *  Los hyper points salen de los totales del período, no del empaquetado. */
+export interface SizeBucket { key: 'micro' | 'chico' | 'mediano' | 'grande'; commits: number; lines: number }
+
 export interface DeveloperListItem {
   id: string; name: string; githubLogin: string | null; avatarUrl: string | null;
   active: boolean; availability: number; commits: number; ticketsResolved: number;
   openTickets: number; linesChanged: number; hyperPoints: number; projects: number;
+  sizeDist: SizeBucket[];
   topSkills: { tag: string; level: number }[];
 }
 
@@ -84,6 +89,7 @@ export interface DeveloperProfile {
   commitTrend: { date: string; commits: number }[];
   projects: { projectId: string | null; name: string; commits: number }[];
   repos: { repo: string; commits: number }[];
+  sizeDist: SizeBucket[];
   tickets: { open: Ticket[]; inProgress: Ticket[]; resolved: Ticket[] };
   skills: { skillId: string; tag: string; level: number }[];
   activity: { type: 'commit' | 'ticket_resolved'; ts: string; title: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];

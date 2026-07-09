@@ -4,11 +4,12 @@ import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, 
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { DeltaBadge, MetricCard } from '@/components/MetricCard';
-import { AreaTrend, FocusRadar } from '@/components/charts';
+import { FocusRadar, MiniArea } from '@/components/charts';
 import { UserAvatar, EmptyState, StateBadge, LineDelta, SkillMeters } from '@/components/bits';
 import { AvailabilityControl } from '@/components/AvailabilityControl';
 import { DeveloperDialog } from '@/components/DeveloperDialog';
 import { GithubContributions } from '@/components/GithubContributions';
+import { SizeDistPanel } from '@/components/CommitSizeDist';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -65,12 +66,18 @@ export default function DeveloperProfile() {
           <Card>
             <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:gap-6">
               {/* Identidad */}
-              <div className="flex min-w-0 items-center gap-4 sm:flex-1">
+              <div className="flex min-w-0 items-center gap-4 sm:w-56 sm:shrink-0">
                 <UserAvatar url={data.dev.avatarUrl} name={data.dev.name} className="size-14 shrink-0 ring-2 ring-border" />
                 <div className="min-w-0">
                   <div className="truncate text-lg font-semibold">{data.dev.name}</div>
                   <div className="truncate text-sm text-muted-foreground">{data.dev.email ?? '—'}</div>
                 </div>
+              </div>
+
+              {/* Commits por día, compacto: contexto rápido sin robar espacio */}
+              <div className="min-w-0 sm:flex-1">
+                <MiniArea data={data.commitTrend} height={52} />
+                <div className="mt-0.5 text-center text-[10px] text-muted-foreground">commits por día</div>
               </div>
 
               {/* Hyper points: panel destacado */}
@@ -110,10 +117,14 @@ export default function DeveloperProfile() {
 
           <Card className="mt-4">
             <CardHeader>
-              <CardTitle>Commits por día</CardTitle>
+              <CardTitle>Distribución de commits</CardTitle>
+              <CardDescription>
+                Estilo de trabajo: en qué tamaños de commit se reparte la actividad. Los hyper
+                points se calculan sobre los totales del período, no sobre commits individuales.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <AreaTrend data={data.commitTrend} series={[{ key: 'commits', name: 'Commits', color: 'hsl(var(--chart-1))' }]} height={200} />
+              {data.sizeDist.some((b) => b.commits > 0) ? <SizeDistPanel dist={data.sizeDist} /> : <EmptyState>Sin actividad en este período</EmptyState>}
             </CardContent>
           </Card>
 

@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip';
 import { HyperTooltip } from '@/components/HyperTooltip';
+import { SizeDistBar } from '@/components/CommitSizeDist';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperListItem } from '@/lib/api';
 import { compact } from '@/lib/format';
@@ -249,16 +250,19 @@ function DevRow({ d, onClick }: { d: DeveloperListItem; onClick: () => void }) {
       </div>
 
       {/* Contribuciones destacadas (centro) */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:w-[27rem] lg:shrink-0 xl:gap-3">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div><BigStat icon={<Zap className="size-3.5" />} label="Hyper points" value={compact(d.hyperPoints)} accent /></div>
-          </TooltipTrigger>
-          <HyperTooltip />
-        </Tooltip>
-        <BigStat icon={<GitCommitHorizontal className="size-3.5" />} label="Commits" value={String(d.commits)} />
-        <BigStat icon={<Code2 className="size-3.5" />} label="Líneas" value={compact(d.linesChanged)} />
-        <BigStat icon={<CircleCheck className="size-3.5" />} label="Resueltos" value={String(d.ticketsResolved)} />
+      <div className="lg:w-[27rem] lg:shrink-0">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:gap-3">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div><BigStat icon={<Zap className="size-3.5" />} label="Hyper points" value={compact(d.hyperPoints)} accent /></div>
+            </TooltipTrigger>
+            <HyperTooltip />
+          </Tooltip>
+          <BigStat icon={<GitCommitHorizontal className="size-3.5" />} label="Commits" value={String(d.commits)} />
+          <BigStat icon={<Code2 className="size-3.5" />} label="Líneas" value={compact(d.linesChanged)} />
+          <BigStat icon={<CircleCheck className="size-3.5" />} label="Resueltos" value={String(d.ticketsResolved)} />
+        </div>
+        <SizeDistBar dist={d.sizeDist} />
       </div>
 
       {/* Skills + secundarios (derecha, ocupa el resto) */}

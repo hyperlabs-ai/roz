@@ -588,15 +588,35 @@ function sumLines(commits: CommitRow[]): { additions: number; deletions: number 
   );
 }
 
-/** Hyper points de un commit: log2(2 + líneas cambiadas)^6 / 160000. Cada commit vale según
- *  su tamaño con rendimientos decrecientes. El exponente 6 se calibró para que la proporción
- *  de puntos entre dos devs caiga en el punto medio entre su proporción de commits y su
- *  proporción de líneas (criterio de Cris, ajustado con datos reales): ni el conteo de
- *  commits ni el volumen bruto de líneas dominan solos. El /160000 mantiene las cifras
- *  acumuladas en los mismos rangos de antes.
- *  1 línea ≈ 0.0001 pts, 100 ≈ 0.6, 1000 ≈ 6.1, 10k ≈ 34. */
-function commitHyperPoints(c: CommitRow): number {
-  return Math.log2(2 + (c.additions ?? 0) + (c.deletions ?? 0)) ** 6 / 160000;
+/** Hyper points de un dev en un período: √(commits × líneas cambiadas) / 10 — la media
+ *  geométrica entre actividad y volumen. La proporción de puntos entre dos devs cae justo a
+ *  medio camino (multiplicativo) entre su proporción de commits y su proporción de líneas,
+ *  para cualquier par (criterio de Cris; con la curva por commit anterior cada par pedía un
+ *  exponente distinto). Al usar solo totales del período es inmune al empaquetado — partir un
+ *  scaffold en 6 commits no cambia nada — y anti-spam en ambas direcciones: micro-commits sin
+ *  líneas no escalan, y un mega-dump sin actividad tampoco. */
+function hyperPoints(commits: CommitRow[]): number {
+  const lines = commits.reduce((s, c) => s + (c.additions ?? 0) + (c.deletions ?? 0), 0);
+  return Math.sqrt(commits.length * lines) / 10;
+}
+
+/** Distribución de commits por tamaño (conteo y líneas por franja). Es descriptiva del estilo
+ *  de trabajo: con la fórmula agregada de hyper points, el empaquetado no afecta el puntaje. */
+export interface SizeBucket { key: 'micro' | 'chico' | 'mediano' | 'grande'; commits: number; lines: number }
+function commitSizeDist(commits: CommitRow[]): SizeBucket[] {
+  const buckets: SizeBucket[] = [
+    { key: 'micro', commits: 0, lines: 0 },
+    { key: 'chico', commits: 0, lines: 0 },
+    { key: 'mediano', commits: 0, lines: 0 },
+    { key: 'grande', commits: 0, lines: 0 },
+  ];
+  for (const c of commits) {
+    const lines = (c.additions ?? 0) + (c.deletions ?? 0);
+    const b = buckets[lines < 30 ? 0 : lines <= 300 ? 1 : lines <= 2000 ? 2 : 3]!;
+    b.commits += 1;
+    b.lines += lines;
+  }
+  return buckets;
 }
 
 // ---- Overview (landing del CEO) ----
@@ -734,13 +754,17 @@ export async function listDevelopers(period: Period) {
   const openByDev = countBy(open, (w) => w.assignee_dev_id);
   const linesByDev = new Map<string, number>();
   commits.forEach((c) => c.dev_id && linesByDev.set(c.dev_id, (linesByDev.get(c.dev_id) ?? 0) + (c.additions ?? 0) + (c.deletions ?? 0)));
-  const hyperByDev = new Map<string, number>();
-  commits.forEach((c) => c.dev_id && hyperByDev.set(c.dev_id, (hyperByDev.get(c.dev_id) ?? 0) + commitHyperPoints(c)));
   const projectsByDev = new Map<string, Set<string>>();
   commits.forEach((c) => {
     if (!c.dev_id || !c.project_id) return;
     if (!projectsByDev.has(c.dev_id)) projectsByDev.set(c.dev_id, new Set());
     projectsByDev.get(c.dev_id)!.add(c.project_id);
+  });
+  const commitsListByDev = new Map<string, CommitRow[]>();
+  commits.forEach((c) => {
+    if (!c.dev_id) return;
+    if (!commitsListByDev.has(c.dev_id)) commitsListByDev.set(c.dev_id, []);
+    commitsListByDev.get(c.dev_id)!.push(c);
   });
 
   return devs
@@ -756,7 +780,8 @@ export async function listDevelopers(period: Period) {
       ticketsResolved: resolvedByDev.get(d.id) ?? 0,
       openTickets: openByDev.get(d.id) ?? 0,
       linesChanged: linesByDev.get(d.id) ?? 0,
-      hyperPoints: Math.round(hyperByDev.get(d.id) ?? 0),
+      hyperPoints: Math.round(hyperPoints(commitsListByDev.get(d.id) ?? [])),
+      sizeDist: commitSizeDist(commitsListByDev.get(d.id) ?? []),
       projects: projectsByDev.get(d.id)?.size ?? 0,
       topSkills: (skills.get(d.id) ?? []).slice(0, 5).map((s) => ({ tag: s.tag, level: s.level })),
     }))
@@ -784,7 +809,7 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
   const projectsTouched = new Set(curCommits.map((c) => c.project_id).filter(Boolean));
   const lines = sumLines(curCommits);
 
-  const sumHyper = (cs: CommitRow[]) => Math.round(cs.reduce((s, c) => s + commitHyperPoints(c), 0));
+  const sumHyper = (cs: CommitRow[]) => Math.round(hyperPoints(cs));
   const kpis = {
     commits: metric(curCommits.length, cmpCommits ? cmpCommits.length : null),
     hyperPoints: metric(sumHyper(curCommits), cmpCommits ? sumHyper(cmpCommits) : null),
@@ -826,6 +851,7 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
     commitTrend,
     projects: [...projAgg.values()].sort((a, b) => b.commits - a.commits),
     repos: [...repoAgg.entries()].map(([repo, commits]) => ({ repo, commits })).sort((a, b) => b.commits - a.commits),
+    sizeDist: commitSizeDist(curCommits),
     tickets: { open: openOnly.map(slimTicket), inProgress: inProgress.map(slimTicket), resolved: curResolved.map(slimTicket).slice(0, 20) },
     skills: skills.map((s) => ({ skillId: s.skill_id, tag: s.tag, level: s.level })),
     activity,
