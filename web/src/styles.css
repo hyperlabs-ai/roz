@@ -81,12 +81,28 @@
     @apply bg-background text-foreground;
     font-feature-settings: 'rlig' 1, 'calt' 1;
     -webkit-font-smoothing: antialiased;
+    /* Como app instalada (PWA): sin rebote de scroll ni pull-to-refresh, sin resaltado azul
+       al tocar, y sin re-escalado de fuente al girar el teléfono. Hace que se sienta nativa. */
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    overflow-x: hidden;
+  }
+  html {
+    overscroll-behavior-y: none;
   }
   html,
   body,
   #root {
     height: 100%;
     margin: 0;
+  }
+  /* Notch / Dynamic Island: respeta los bordes seguros en horizontal (retrato ya lo cubren
+     el header y el main). En dispositivos sin notch, env() = 0, así que no afecta. */
+  #root {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
   }
 }
 

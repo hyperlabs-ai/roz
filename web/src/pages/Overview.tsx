@@ -187,18 +187,39 @@ function latestDeploy(services: InfraService[]): InfraService | null {
     .sort((a, b) => (b.deploy!.createdAt! > a.deploy!.createdAt! ? 1 : -1))[0] ?? null;
 }
 
-// Estado de infraestructura para el Resumen: salud agregada por proyecto, con desglose por
-// proveedor, último deploy y peticiones. Lee /infra (estado actual, no depende del período).
+// Elige columnas (3 o 4) y cuántas tarjetas mostrar para que la grilla quede siempre "cuadrada"
+// (sin celdas vacías). Se recorta al mayor múltiplo de columnas que quepa, mostrando el máximo.
+const GRID_COLS: Record<number, string> = {
+  1: '',
+  2: 'sm:grid-cols-2',
+  3: 'sm:grid-cols-2 lg:grid-cols-3',
+  4: 'sm:grid-cols-2 lg:grid-cols-4',
+};
+function squareLayout(total: number): { cols: number; count: number } {
+  if (total <= 2) return { cols: Math.max(total, 1), count: total };
+  const opt4 = total - (total % 4); // mayor múltiplo de 4 ≤ total
+  const opt3 = total - (total % 3); // mayor múltiplo de 3 ≤ total
+  return opt4 >= opt3 ? { cols: 4, count: opt4 } : { cols: 3, count: opt3 };
+}
+
+// Estado de infraestructura para el Resumen: salud agregada + una tarjeta por proyecto.
+// La grilla se mantiene "cuadrada" (3–4 por línea, sin celdas vacías): si el total de proyectos
+// no llena filas completas, se muestran solo los primeros que sí las completan. Lee /infra.
 function InfraHealth({ onOpen }: { onOpen: () => void }) {
   const { data, loading } = useApi<InfraResponse>(() => apiGet('/infra'), []);
-  const projects = (data?.projects ?? []).filter((p) => p.services.length);
-  const services = projects.flatMap((p) => p.services);
+  const allProjects = (data?.projects ?? []).filter((p) => p.services.length);
+  const services = allProjects.flatMap((p) => p.services);
   if (!loading && !services.length) return null; // sin servicios vinculados → no mostrar
 
   const counts = services.reduce((a, s) => ((a[s.status] = (a[s.status] ?? 0) + 1), a), {} as Record<ServiceStatus, number>);
   const worstOf = (statuses: ServiceStatus[]) => INFRA_ORDER.find((st) => statuses.includes(st)) ?? 'unknown';
   const totalReq = services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
   const lastDeploy = latestDeploy(services);
+
+  // Recorta a una cantidad que llene filas completas de 3 o 4 columnas.
+  const { cols, count } = squareLayout(allProjects.length);
+  const projects = allProjects.slice(0, count);
+  const hidden = allProjects.length - projects.length;
 
   return (
     <Card className="mt-4">
@@ -215,60 +236,88 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
         {loading ? (
           <>
             {/* Resumen global */}
-            <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2">
-              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-5 w-24" />)}
+            <div className="mb-4 flex flex-col gap-4 rounded-xl border bg-muted/30 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 flex-1 space-y-2">
+                <Skeleton className="h-5 w-44" />
+                <Skeleton className="h-2 w-full rounded-full" />
+                <div className="flex gap-3">
+                  {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-4 w-20" />)}
+                </div>
+              </div>
+              <div className="flex gap-6 sm:shrink-0 sm:border-l sm:border-border sm:pl-6">
+                {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-10 w-24" />)}
+              </div>
             </div>
             {/* Tarjetas por proyecto */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {Array.from({ length: 2 }).map((_, i) => (
-                <div key={i} className="flex flex-col gap-2.5 rounded-xl border p-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="flex flex-col gap-2.5 rounded-xl border p-3.5">
                   <div className="flex items-center gap-2">
                     <Skeleton className="size-2.5 shrink-0 rounded-full" />
                     <Skeleton className="h-4 flex-1" />
-                    <Skeleton className="h-4 w-20 rounded-md" />
                   </div>
-                  <div className="flex gap-3">
-                    <Skeleton className="h-4 w-10" />
-                    <Skeleton className="h-4 w-10" />
-                    <Skeleton className="h-4 w-16" />
-                  </div>
-                  <div className="border-t pt-2"><Skeleton className="h-3 w-40" /></div>
+                  <div className="flex gap-2"><Skeleton className="h-5 w-10 rounded-md" /><Skeleton className="h-5 w-10 rounded-md" /></div>
+                  <div className="border-t pt-2.5"><Skeleton className="h-3 w-32" /></div>
                 </div>
               ))}
             </div>
           </>
         ) : (
           <>
-            {/* Resumen global */}
-            <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-xl font-bold tabular-nums">{services.length}</span>
-                <span className="text-xs text-muted-foreground">servicios</span>
+            {/* Resumen global: barra de salud (izq., crece) + métricas clave (der.) */}
+            <div className="mb-4 flex flex-col gap-4 rounded-xl border bg-muted/30 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+              {/* Salud agregada */}
+              <div className="min-w-0 flex-1">
+                <div className="mb-2 flex items-baseline gap-1.5">
+                  <span className="text-xl font-bold tabular-nums">{services.length}</span>
+                  <span className="text-xs text-muted-foreground">servicios monitoreados</span>
+                </div>
+                <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
+                  {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
+                    <div
+                      key={st}
+                      className={cn('h-full first:rounded-l-full last:rounded-r-full', INFRA_STATUS[st].dot)}
+                      style={{ width: `${(counts[st] / services.length) * 100}%` }}
+                      title={`${counts[st]} ${INFRA_STATUS[st].label}`}
+                    />
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
+                    <span key={st} className="inline-flex items-center gap-1.5 text-xs">
+                      <span className={cn('size-2 rounded-full', INFRA_STATUS[st].dot)} />
+                      <span className="font-semibold tabular-nums">{counts[st]}</span>
+                      <span className="text-muted-foreground">{INFRA_STATUS[st].label}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
-              {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
-                <div key={st} className="flex items-center gap-1.5">
-                  <span className={cn('size-2.5 rounded-full', INFRA_STATUS[st].dot)} />
-                  <span className="text-sm font-semibold tabular-nums">{counts[st]}</span>
-                  <span className="text-xs text-muted-foreground">{INFRA_STATUS[st].label}</span>
-                </div>
-              ))}
-              {totalReq > 0 && (
-                <div className="flex items-center gap-1.5 text-muted-foreground">
-                  <Activity className="size-3.5" />
-                  <span className="text-sm font-semibold tabular-nums text-foreground">{compact(totalReq)}</span>
-                  <span className="text-xs">peticiones/24h</span>
-                </div>
-              )}
-              {lastDeploy?.deploy?.createdAt && (
-                <div className="flex items-center gap-1.5 text-muted-foreground">
-                  <Rocket className="size-3.5" />
-                  <span className="text-xs">último deploy <span className="text-foreground">{relative(lastDeploy.deploy.createdAt)}</span></span>
+
+              {/* Métricas secundarias, ancladas a la derecha */}
+              {(totalReq > 0 || lastDeploy?.deploy?.createdAt) && (
+                <div className="flex items-center gap-6 sm:shrink-0 sm:border-l sm:border-border sm:pl-6">
+                  {totalReq > 0 && (
+                    <div>
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Activity className="size-3.5" /><span className="text-xs">peticiones/24h</span>
+                      </div>
+                      <div className="mt-0.5 text-lg font-bold tabular-nums">{compact(totalReq)}</div>
+                    </div>
+                  )}
+                  {lastDeploy?.deploy?.createdAt && (
+                    <div>
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Rocket className="size-3.5" /><span className="text-xs">último deploy</span>
+                      </div>
+                      <div className="mt-0.5 text-sm font-semibold">{relative(lastDeploy.deploy.createdAt)}</div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Tarjeta por proyecto */}
-            <div className="stagger-children grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {/* Tarjeta por proyecto (grilla cuadrada, 3–4 por línea) */}
+            <div className={cn('stagger-children grid grid-cols-1 gap-3', GRID_COLS[cols])}>
               {projects.map((p) => {
                 const worst = worstOf(p.services.map((s) => s.status));
                 const issues = p.services.filter((s) => s.status === 'down' || s.status === 'degraded' || s.status === 'paused').length;
@@ -276,46 +325,54 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                 const req = p.services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
                 const byProv = INFRA_PROVIDERS.map((pr) => ({ pr, n: p.services.filter((s) => s.provider === pr).length })).filter((x) => x.n);
                 return (
-                  <button key={p.projectId} onClick={onOpen} className="hover-lift press flex min-w-0 flex-col gap-2 rounded-xl border p-3 text-left transition-colors hover:border-primary/30 hover:bg-accent/50">
+                  <button key={p.projectId} onClick={onOpen} className="hover-lift press flex min-w-0 flex-col gap-2.5 rounded-xl border p-3.5 text-left transition-colors hover:border-primary/30 hover:bg-accent/50">
                     <div className="flex items-center gap-2">
                       <span className={cn('size-2.5 shrink-0 rounded-full', INFRA_STATUS[worst].dot)} />
                       <span className="min-w-0 flex-1 truncate text-sm font-semibold">{p.name}</span>
                       {issues > 0
-                        ? <span className="shrink-0 rounded-md bg-warning/12 px-1.5 py-0.5 text-[11px] font-medium text-warning">{issues} con alerta</span>
-                        : <span className="shrink-0 text-[11px] font-medium text-success">Todo operativo</span>}
+                        ? <span className="shrink-0 rounded-md bg-warning/12 px-1.5 py-0.5 text-[11px] font-medium text-warning">{issues} alerta{issues !== 1 ? 's' : ''}</span>
+                        : <CircleCheck className="size-4 shrink-0 text-success" />}
                     </div>
 
-                    {/* Desglose por proveedor */}
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      {byProv.map(({ pr, n }) => {
-                        const { Icon, accent } = PROV[pr];
-                        return (
-                          <span key={pr} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                            <Icon className={cn('size-3.5', accent)} /><span className="font-medium text-foreground">{n}</span>
-                          </span>
-                        );
-                      })}
+                    {/* Desglose por proveedor (izq.) + peticiones (der.) */}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        {byProv.map(({ pr, n }) => {
+                          const { Icon, accent } = PROV[pr];
+                          return (
+                            <span key={pr} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                              <Icon className={cn('size-3.5', accent)} /><span className="font-semibold tabular-nums text-foreground">{n}</span>
+                            </span>
+                          );
+                        })}
+                      </div>
                       {req > 0 && (
-                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                          <Activity className="size-3" />{compact(req)}/24h
+                        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                          <Activity className="size-3.5" /><span className="font-semibold tabular-nums text-foreground">{compact(req)}</span>/24h
                         </span>
                       )}
                     </div>
 
                     {/* Último deploy */}
                     {dep?.deploy?.commitMessage ? (
-                      <div className="flex items-center gap-1.5 border-t pt-2 text-[11px] text-muted-foreground">
+                      <div className="flex items-center gap-1.5 border-t pt-2.5 text-[11px] text-muted-foreground">
                         <GitCommitHorizontal className="size-3.5 shrink-0" />
                         <span className="min-w-0 flex-1 truncate">{dep.deploy.commitMessage}</span>
                         {dep.deploy.createdAt && <span className="shrink-0">{relative(dep.deploy.createdAt)}</span>}
                       </div>
                     ) : (
-                      <div className="border-t pt-2 text-[11px] text-muted-foreground">{p.services.length} servicios monitoreados</div>
+                      <div className="border-t pt-2.5 text-[11px] text-muted-foreground">{p.services.length} servicios monitoreados</div>
                     )}
                   </button>
                 );
               })}
             </div>
+
+            {hidden > 0 && (
+              <button onClick={onOpen} className="mt-3 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
+                Ver {hidden} proyecto{hidden !== 1 ? 's' : ''} más <ChevronRight className="size-4" />
+              </button>
+            )}
           </>
         )}
       </CardContent>

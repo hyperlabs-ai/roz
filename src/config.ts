@@ -71,6 +71,14 @@ const raw = z
     // Destinatarios del digest semanal (coma-separados). Vacío por defecto: sin destinatarios,
     // el digest de equipo no se envía.
     DIGEST_RECIPIENTS: z.string().default(''),
+
+    // Web Push (notificaciones a la PWA). Opcional: sin llaves VAPID, el push degrada en silencio
+    // (igual que Resend). El public key también se expone al front (VITE_VAPID_PUBLIC_KEY) pero el
+    // SPA lo obtiene por API (/api/dashboard/push/public-key) para no acoplarlo al build.
+    VAPID_PUBLIC_KEY: z.string().default(''),
+    VAPID_PRIVATE_KEY: z.string().default(''),
+    // Contacto del emisor (mailto: o https URL) que exige el estándar Web Push.
+    VAPID_SUBJECT: z.string().default('mailto:roz@hyperdigital.mx'),
   })
   // Fail-fast en producción: los secretos críticos de seguridad NO pueden quedar vacíos, o el
   // server arrancaría con auth/firmas rotas (webhooks rechazando todo, crons abiertos, etc.).
@@ -109,6 +117,11 @@ export const config = {
   },
   digest: {
     recipients: raw.DIGEST_RECIPIENTS.split(',').map((e) => e.trim()).filter(Boolean),
+  },
+  webPush: {
+    publicKey: raw.VAPID_PUBLIC_KEY,
+    privateKey: raw.VAPID_PRIVATE_KEY,
+    subject: raw.VAPID_SUBJECT,
   },
   anthropic: { apiKey: raw.ANTHROPIC_API_KEY, model: raw.ROZ_CLAUDE_MODEL },
   openai: {

@@ -5,7 +5,10 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { RozContext } from '../types/hono.js';
+import { config } from '../config.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
+import { pushEnabled } from '../adapters/web-push.js';
+import { savePushSubscription, deletePushSubscription } from '../notify/push.js';
 import { listUsers } from '../adapters/linear.js';
 import { getContributionCalendar, getRepo, listOrgRepos } from '../adapters/github.js';
 import { enqueueRepoBackfill } from '../reconcile/backfill.js';
@@ -410,6 +413,51 @@ dashboardRoutes.patch('/projects/:id/services/:serviceId', requireAdmin, async (
 dashboardRoutes.delete('/projects/:id/services/:serviceId', requireAdmin, async (c) => {
   try {
     await unlinkService(c.req.param('serviceId'));
+    return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// ---- Web Push (notificaciones a la PWA) ----
+// El SPA pide la public key VAPID, se suscribe con el service worker y registra la suscripción
+// aquí. Las alertas de infraestructura (mismas que el correo) se envían a estas suscripciones.
+dashboardRoutes.get('/push/public-key', (c) =>
+  c.json({ publicKey: config.webPush.publicKey, enabled: pushEnabled() }),
+);
+
+const PushSubBody = z.object({
+  subscription: z.object({
+    endpoint: z.string().url(),
+    keys: z.object({ p256dh: z.string().min(1), auth: z.string().min(1) }),
+  }),
+  userAgent: z.string().nullish(),
+});
+
+dashboardRoutes.post('/push/subscribe', async (c) => {
+  const parsed = PushSubBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  const user = c.get('user')!;
+  try {
+    await savePushSubscription({
+      authUserId: user.id,
+      email: user.email ?? null,
+      subscription: parsed.data.subscription!, // requerido garantizado por el schema
+      userAgent: parsed.data.userAgent ?? c.req.header('user-agent') ?? null,
+    });
+    return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const PushUnsubBody = z.object({ endpoint: z.string().url() });
+
+dashboardRoutes.post('/push/unsubscribe', async (c) => {
+  const parsed = PushUnsubBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    await deletePushSubscription(parsed.data.endpoint!); // requerido garantizado por el schema
     return c.json({ ok: true });
   } catch (err) {
     return fail(c, err);

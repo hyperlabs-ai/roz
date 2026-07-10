@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, FolderGit2, Server, Ticket, Sparkles, Sun, Moon, Monitor, LogOut, Menu } from 'lucide-react';
+import { LayoutDashboard, Users, FolderGit2, Server, Ticket, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
+import { usePush } from '@/lib/usePush';
 import { useTheme } from '@/components/theme';
 import { UserAvatar } from '@/components/bits';
 import { RozLogo } from '@/components/RozLogo';
@@ -91,6 +92,7 @@ function Brand() {
 
 function UserMenu() {
   const { user, signOut } = useAuth();
+  const push = usePush();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -105,6 +107,12 @@ function UserMenu() {
       <DropdownMenuContent align="start" className="w-56">
         <DropdownMenuLabel>{user?.email}</DropdownMenuLabel>
         <DropdownMenuSeparator />
+        {push.supported && (
+          <DropdownMenuItem onSelect={(e) => { e.preventDefault(); push.toggle(); }} disabled={push.busy}>
+            {push.enabled ? <BellOff /> : <Bell />}
+            {push.enabled ? 'Desactivar notificaciones' : 'Activar notificaciones'}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onClick={signOut} className="text-destructive focus:text-destructive">
           <LogOut /> Cerrar sesión
         </DropdownMenuItem>

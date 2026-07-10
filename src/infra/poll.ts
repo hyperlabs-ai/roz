@@ -10,6 +10,7 @@ import { probeRailway } from '../adapters/railway.js';
 import { probeSupabase } from '../adapters/supabase-admin.js';
 import { degraded, type ServiceProbe } from './types.js';
 import { notifyServiceTransitions, type ServiceTransition } from './alerts.js';
+import { notifyServiceTransitionsPush } from '../notify/push.js';
 
 interface ProjectServiceRow {
   id: string;
@@ -124,8 +125,9 @@ export async function pollInfra(): Promise<{ services: number; okCount: number; 
   const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
   await db().from('service_snapshot').delete().lt('captured_at', cutoff);
 
-  // Alertas por correo (degrada en silencio si Resend no está configurado).
+  // Alertas por correo + push a la PWA (ambos degradan en silencio si no están configurados).
   const { sent } = await notifyServiceTransitions(transitions);
+  await notifyServiceTransitionsPush(transitions);
 
   const okCount = probes.filter((p) => p.ok).length;
   return { services: services.length, okCount, failed: services.length - okCount, alerts: sent };

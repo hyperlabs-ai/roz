@@ -50,7 +50,12 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.ico': 'image/x-icon', '.json': 'application/json', '.woff': 'font/woff', '.woff2': 'font/woff2',
   '.map': 'application/json', '.webp': 'image/webp', '.gif': 'image/gif', '.txt': 'text/plain',
+  '.webmanifest': 'application/manifest+json',
 };
+
+// El service worker y el manifest NO deben cachearse de forma agresiva: el navegador debe poder
+// detectar una versión nueva del SW en cada visita para actualizar la PWA.
+const NO_CACHE = new Set(['sw.js', 'manifest.webmanifest']);
 
 // Estáticos hasheados (inmutables) desde /assets.
 app.get('/assets/*', async (c) => {
@@ -76,7 +81,9 @@ app.get('*', async (c) => {
       const buf = await readFile(join(SPA_DIST, rel));
       return c.body(buf, 200, {
         'content-type': MIME[extname(rel)] ?? 'application/octet-stream',
-        'cache-control': 'public, max-age=3600',
+        'cache-control': NO_CACHE.has(rel) ? 'no-cache' : 'public, max-age=3600',
+        // El SW debe poder controlar todo el origen, no solo /assets.
+        ...(rel === 'sw.js' ? { 'service-worker-allowed': '/' } : {}),
       });
     } catch {
       /* no es un archivo del build: cae al SPA */

@@ -10,6 +10,14 @@ import { ErrorBoundary, ErrorScreen } from '@/components/ErrorScreen';
 import App from '@/App';
 import './styles.css';
 
+// Registra el service worker de la PWA (shell offline + web push). Solo en build de producción:
+// en dev interferiría con el HMR de Vite. Se prueba desde el deploy o con `vite preview`.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
 const root = createRoot(document.getElementById('root')!);
 
 const url = import.meta.env.VITE_SUPABASE_URL;

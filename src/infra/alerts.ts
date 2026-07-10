@@ -128,6 +128,20 @@ function render(t: ServiceTransition, dashboardUrl: string): { subject: string; 
   return { subject, html, text };
 }
 
+/** Contenido compacto (título + cuerpo) para una notificación push de una transición. Reusa la
+ *  misma lógica de verbo/proveedor que el correo, para que ambos canales digan lo mismo. */
+export function renderServicePush(t: ServiceTransition): { title: string; body: string } {
+  const provider = PROVIDER_NAME[t.provider] ?? t.provider;
+  const verb = eventVerb(t);
+  const icon = t.kind === 'down' ? '🔴' : '✅';
+  const title = `${icon} ${t.projectName}: ${t.serviceLabel} ${verb}`;
+  const body =
+    t.kind === 'down'
+      ? `${t.serviceLabel} (${provider}) ${verb}.${t.error ? ` ${t.error}` : ''}`
+      : `${t.serviceLabel} (${provider}) volvió a estar operativo tras ${fmtDuration(t.downtimeMs)}.`;
+  return { title, body };
+}
+
 /**
  * Notifica una lista de transiciones de servicio a TODOS los devs activos con email. Un correo por
  * evento por dev. Degrada en silencio si Resend no está configurado o no hay devs. Registra cada
