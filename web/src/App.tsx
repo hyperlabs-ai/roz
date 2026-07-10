@@ -11,6 +11,7 @@ import ProjectDetail from '@/pages/ProjectDetail';
 import Infra from '@/pages/Infra';
 import Tickets from '@/pages/Tickets';
 import Skills from '@/pages/Skills';
+import Settings from '@/pages/Settings';
 
 // Al cambiar de ruta, vuelve al inicio (el navegador conserva el scroll del SPA entre páginas;
 // se nota sobre todo en móvil, donde una página larga deja la siguiente a media altura).
@@ -59,6 +60,7 @@ export default function App() {
           <Route path="infra" element={<Infra />} />
           <Route path="tickets" element={<Tickets />} />
           <Route path="skills" element={<Skills />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />
