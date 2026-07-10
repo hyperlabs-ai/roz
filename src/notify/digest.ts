@@ -6,6 +6,7 @@
 import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { sendEmail } from '../adapters/email.js';
+import { pushToDev, pushToEmail } from './push.js';
 import { getOverview, getDeveloper, listInfra, previousPeriod, type Metric, type Period } from '../dashboard/queries.js';
 
 export interface DigestResult {
@@ -270,6 +271,12 @@ export async function sendDevWeeklyDigests(): Promise<DigestResult> {
     try {
       const res = await sendEmail({ to: dev.email, subject, html, text });
       await supabase.from('notification').insert({ channel: 'email', to_dev_id: dev.id, to_address: dev.email, template: 'dev_weekly_digest', body: text, status: 'sent', provider_id: res.id });
+      await pushToDev(dev.id, dev.email, {
+        title: `Tu semana (${rangeLabel})`,
+        body: `${profile.kpis.commits.value} commits · ${profile.kpis.ticketsResolved.value} tickets · ${profile.kpis.linesChanged.value} líneas`,
+        url: `${config.dashboard.url}/app/developers/${dev.id}`,
+        tag: 'dev-weekly-digest',
+      }, 'dev_weekly_digest');
       sent++;
     } catch (err) {
       await supabase.from('notification').insert({ channel: 'email', to_dev_id: dev.id, to_address: dev.email, template: 'dev_weekly_digest', body: text, status: 'failed', error: String(err) });
@@ -289,6 +296,8 @@ export async function sendWeeklyDigest(): Promise<DigestResult> {
   const { html, text } = renderDigest({ overview, infra, url: config.dashboard.url, rangeLabel: label(period) });
   const subject = `ROZ · Resumen semanal (${label(period)})`;
 
+  const pushBody = `${overview.kpis.commits.value} commits · ${overview.kpis.ticketsResolved.value} tickets resueltos · ${overview.kpis.activeContributors.value} contribuidores`;
+
   const supabase = db();
   let sent = 0;
   let failed = 0;
@@ -296,6 +305,12 @@ export async function sendWeeklyDigest(): Promise<DigestResult> {
     try {
       const res = await sendEmail({ to, subject, html, text });
       await supabase.from('notification').insert({ channel: 'email', to_address: to, template: 'weekly_digest', body: text, status: 'sent', provider_id: res.id });
+      await pushToEmail(to, {
+        title: `Resumen semanal (${label(period)})`,
+        body: pushBody,
+        url: `${config.dashboard.url}/app`,
+        tag: 'weekly-digest',
+      }, 'weekly_digest');
       sent++;
     } catch (err) {
       await supabase.from('notification').insert({ channel: 'email', to_address: to, template: 'weekly_digest', body: text, status: 'failed', error: String(err) });

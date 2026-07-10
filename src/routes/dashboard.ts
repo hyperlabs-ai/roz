@@ -438,11 +438,14 @@ dashboardRoutes.post('/push/subscribe', async (c) => {
   const parsed = PushSubBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   const user = c.get('user')!;
+  // z.infer marca los campos requeridos como opcionales en el build de prod → reconstruimos el
+  // objeto con `!` (garantizados por el schema) o el deploy no compila.
+  const sub = parsed.data.subscription!;
   try {
     await savePushSubscription({
       authUserId: user.id,
       email: user.email ?? null,
-      subscription: parsed.data.subscription!, // requerido garantizado por el schema
+      subscription: { endpoint: sub.endpoint!, keys: { p256dh: sub.keys!.p256dh!, auth: sub.keys!.auth! } },
       userAgent: parsed.data.userAgent ?? c.req.header('user-agent') ?? null,
     });
     return c.json({ ok: true });

@@ -133,8 +133,7 @@ function render(t: ServiceTransition, dashboardUrl: string): { subject: string; 
 export function renderServicePush(t: ServiceTransition): { title: string; body: string } {
   const provider = PROVIDER_NAME[t.provider] ?? t.provider;
   const verb = eventVerb(t);
-  const icon = t.kind === 'down' ? '🔴' : '✅';
-  const title = `${icon} ${t.projectName}: ${t.serviceLabel} ${verb}`;
+  const title = `${t.projectName}: ${t.serviceLabel} ${verb}`;
   const body =
     t.kind === 'down'
       ? `${t.serviceLabel} (${provider}) ${verb}.${t.error ? ` ${t.error}` : ''}`

@@ -3,7 +3,9 @@
 // idempotencia la da el outbox: el evento solo se marca `done` si el efecto no lanzó; si el
 // envío falla, se lanza para que el drain reintente (backoff).
 import { db } from '../db/supabase.js';
+import { config } from '../config.js';
 import { sendEmail } from '../adapters/email.js';
+import { pushToDev, pushToEmail } from './push.js';
 import { claimOnce, releaseOnce } from '../events/outbox.js';
 
 interface AssignedPayload {
@@ -127,6 +129,12 @@ export async function notifyProposerDone(opts: {
       status: 'sent',
       provider_id: res.id,
     });
+    await pushToEmail(opts.to, {
+      title: `${opts.identifier} completado`,
+      body: opts.title ? `Cerrado y documentado — ${opts.title}` : 'Tu solicitud quedó cerrada y documentada',
+      url: `${config.dashboard.url}/app/tickets`,
+      tag: `done:${opts.identifier}`,
+    }, 'work_done');
   } catch (err) {
     await supabase.from('notification').insert({
       channel: 'email',
@@ -202,6 +210,12 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
       status: 'sent',
       provider_id: res.id,
     });
+    await pushToDev(devId, dev.email, {
+      title: `Te asignaron ${identifier}`,
+      body: title || 'Nueva tarea asignada',
+      url: `${config.dashboard.url}/app/tickets`,
+      tag: `assign:${identifier}`,
+    }, 'assigned');
   } catch (err) {
     await supabase.from('notification').insert({
       channel: 'email',
@@ -309,6 +323,12 @@ export async function notifyChangesDocumented(devId: string): Promise<void> {
   // Marca como notificados SOLO tras enviar OK, para que un fallo reintente sin perder el aviso.
   await supabase.from('work_item').update({ change_notified: true }).in('id', ids);
   await supabase.from('notification').insert({ channel: 'email', to_dev_id: devId, to_address: dev.email, template: 'change_documented', body: text, status: 'sent', provider_id: res.id });
+  await pushToDev(devId, dev.email, {
+    title: list.length === 1 ? 'Cambio documentado' : `${list.length} cambios documentados`,
+    body: list.length === 1 ? `${list[0]!.identifier} — ${list[0]!.title}` : 'roz registró tu trabajo en Linear',
+    url: `${config.dashboard.url}/app/tickets`,
+    tag: `documented:${devId}`,
+  }, 'change_documented');
 }
 
 /** Plantilla: se detectó un repo nuevo (vinculado a un proyecto, o pendiente de vincular). */
@@ -413,6 +433,12 @@ export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<vo
         status: 'sent',
         provider_id: res.id,
       });
+      await pushToDev(dev.id, dev.email, {
+        title: payload.linked ? `Repo vinculado — ${repo}` : `Repo nuevo — ${repo}`,
+        body: payload.linked ? `Vinculado al proyecto ${payload.projectName ?? ''}`.trim() : 'Sin proyecto — vincúlenlo manualmente',
+        url: `${config.dashboard.url}/app/projects`,
+        tag: `repo:${repo}`,
+      }, 'repo_detected');
     } catch (err) {
       await supabase.from('notification').insert({
         channel: 'email',
