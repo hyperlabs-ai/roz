@@ -833,9 +833,9 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
   const inProgress = open.filter((w) => w.state === 'started' || w.state === 'in_progress');
   const openOnly = open.filter((w) => !(w.state === 'started' || w.state === 'in_progress'));
 
-  // Actividad reciente = últimos 7 días del período (relativo a period.to para que los
-  // períodos históricos sigan mostrando su propia "última semana").
-  const activityCutoff = new Date(new Date(period.to).getTime() - 7 * 24 * 3600_000).toISOString();
+  // Actividad reciente = últimos 30 días del período (relativo a period.to para que los
+  // períodos históricos sigan mostrando su propio "último mes").
+  const activityCutoff = new Date(new Date(period.to).getTime() - 30 * 24 * 3600_000).toISOString();
   const activity = [
     ...curCommits.filter((c) => c.committed_at).map((c) => ({ type: 'commit' as const, ts: c.committed_at!, title: (c.message ?? '').split('\n')[0], url: c.url, repo: c.repo, additions: c.additions, deletions: c.deletions })),
     ...curResolved.filter((w) => w.completed_at).map((w) => ({ type: 'ticket_resolved' as const, ts: w.completed_at!, title: `${w.identifier}: ${w.title}`, url: w.url, repo: null, additions: null, deletions: null })),
