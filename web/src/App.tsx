@@ -9,6 +9,7 @@ import DeveloperProfile from '@/pages/DeveloperProfile';
 import Projects from '@/pages/Projects';
 import ProjectDetail from '@/pages/ProjectDetail';
 import Infra from '@/pages/Infra';
+import Tasks from '@/pages/Tasks';
 import Tickets from '@/pages/Tickets';
 import Skills from '@/pages/Skills';
 import Settings from '@/pages/Settings';
@@ -58,6 +59,7 @@ export default function App() {
           <Route path="projects" element={<Projects />} />
           <Route path="projects/:id" element={<ProjectDetail />} />
           <Route path="infra" element={<Infra />} />
+          <Route path="tasks" element={<Tasks />} />
           <Route path="tickets" element={<Tickets />} />
           <Route path="skills" element={<Skills />} />
           <Route path="settings" element={<Settings />} />

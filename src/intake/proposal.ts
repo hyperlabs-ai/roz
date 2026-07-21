@@ -1,13 +1,13 @@
-// Intake [fase 1]: propuesta -> evaluación de optimalidad -> (al confirmar) issue en Linear.
-// evaluateProposal NO crea nada en Linear: valida estrictamente, compone una spec bien
-// documentada (según el tipo), guarda el borrador, recupera contexto, pide el veredicto de
-// Claude y rankea candidatos. confirmProposal materializa el issue (asignado + con prioridad).
+// Intake [fase 1]: propuesta -> evaluación de optimalidad -> (al confirmar) tarea NATIVA en roz.
+// evaluateProposal NO crea nada: valida estrictamente, compone una spec bien documentada (según el
+// tipo), guarda el borrador, recupera contexto, pide el veredicto de Claude y rankea candidatos.
+// confirmProposal materializa la tarea nativa (asignada + con prioridad) — ya NO round-trip a Linear.
 import { db } from '../db/supabase.js';
+import { config } from '../config.js';
 import { complete } from '../adapters/anthropic.js';
 import { getProjectContext } from '../brain/retrieval.js';
 import { rankAssignees, type AssigneeSuggestion } from '../router/assign.js';
-import { createIssue, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
-import { emit } from '../events/outbox.js';
+import { createTask } from '../dashboard/queries.js';
 import { ValidationError } from '../utils/errors.js';
 
 export type ProposalKind = 'feature' | 'bug' | 'chore' | 'ticket' | 'refactor';
@@ -214,73 +214,42 @@ export async function confirmProposal(
 
   const { data: proposal } = await supabase
     .from('proposal')
-    .select('*, project:project_id(id, key, name, linear_team_id, linear_project_id)')
+    .select('*, project:project_id(id, key, name)')
     .eq('id', proposalId)
     .single();
   if (!proposal) throw new ValidationError(`Propuesta no encontrada: ${proposalId}`);
 
   if (proposal.status === 'promoted') {
     throw new ValidationError(
-      `La propuesta ${proposalId} ya fue promovida a Linear; no se crea un issue duplicado.`,
+      `La propuesta ${proposalId} ya fue promovida; no se crea una tarea duplicada.`,
     );
   }
-  if (!proposal.project?.linear_team_id) {
-    throw new ValidationError(
-      `El proyecto ${proposal.project?.key} no tiene linear_team_id configurado.`,
-    );
+  if (!proposal.project?.id) {
+    throw new ValidationError(`La propuesta ${proposalId} no tiene proyecto asociado.`);
   }
 
   const { data: dev } = await supabase
     .from('dev')
-    .select('id, linear_user_id, active')
+    .select('id, active')
     .eq('id', assigneeDevId)
     .single();
   if (!dev) throw new ValidationError(`Dev no encontrado: ${assigneeDevId}`);
   if (dev.active === false) throw new ValidationError(`El dev ${assigneeDevId} está inactivo.`);
 
-  // Crear el issue en Linear: en su team + Linear Project + asignado + prioridad + estado "Todo".
-  const stateId = await resolveInitialStateId(proposal.project.linear_team_id);
-  const issue = await createIssue({
-    teamId: proposal.project.linear_team_id,
-    projectId: proposal.project.linear_project_id ?? undefined,
+  // Materializa la tarea NATIVA (sin Linear): asignada, con prioridad, estado inicial "Por hacer".
+  // createTask genera el identificador local (KEY-N), fija source='native' y emite el aviso de
+  // asignación (misma clave de idempotencia que el espejo → sin doble notificación).
+  const task = await createTask({
+    projectId: proposal.project.id,
     title: proposal.title,
-    description: proposal.spec,
-    assigneeId: dev.linear_user_id ?? undefined,
-    priority: priorityToLinear(proposal.priority),
-    stateId: stateId ?? undefined,
+    spec: proposal.spec,
+    state: 'unstarted',
+    priority: proposal.priority ?? null,
+    assigneeDevId: dev.id,
   });
-
-  // Upsert por linear_id: si el webhook de "create" de Linear llegó primero (carrera), no
-  // duplica ni falla — actualiza el espejo que el webhook ya creó.
-  const { data: workItem, error } = await supabase
-    .from('work_item')
-    .upsert(
-      {
-        linear_id: issue.id,
-        identifier: issue.identifier,
-        project_id: proposal.project.id,
-        title: proposal.title,
-        spec: proposal.spec,
-        state: 'unstarted',
-        priority: proposal.priority,
-        requester: proposal.requester,
-        assignee_dev_id: dev.id,
-        url: issue.url,
-      },
-      { onConflict: 'linear_id' },
-    )
-    .select('id')
-    .single();
-  if (error) throw error;
 
   await supabase.from('proposal').update({ status: 'promoted' }).eq('id', proposalId);
 
-  // Misma clave que el espejo (sync) → quien gane la carrera notifica; el otro se deduplica.
-  await emit(
-    'work_item.assigned',
-    { workItemId: workItem.id, devId: dev.id, identifier: issue.identifier },
-    { idempotencyKey: `assigned:${issue.id}:${dev.id}` },
-  );
-
-  return { workItemId: workItem.id, identifier: issue.identifier, url: issue.url };
+  const url = config.dashboard.url ? `${config.dashboard.url}/app/tasks` : '';
+  return { workItemId: task.id, identifier: task.identifier, url };
 }

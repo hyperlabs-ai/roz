@@ -167,7 +167,6 @@ export interface EnqueueBackfillOptions {
  */
 export async function enqueueRepoBackfill(repo: string, projectId: string | null, opts: EnqueueBackfillOptions = {}): Promise<void> {
   const sinceISO = new Date(Date.now() - BACKFILL_DAYS * 86_400_000).toISOString();
-  const runKey = opts.force ? String(Date.now()) : '1';
   await updateRepoSync(repo, {
     sync_status: 'queued',
     sync_pages: 0,
@@ -176,9 +175,14 @@ export async function enqueueRepoBackfill(repo: string, projectId: string | null
     sync_error: null,
     sync_started_at: new Date().toISOString(),
   });
-  await emit(
-    'repo.backfill',
-    { repo, projectId, sinceISO, page: 1, runKey },
-    { idempotencyKey: `repo-backfill:${repo}:${runKey}:1` },
-  );
+  const emitPage1 = (runKey: string) =>
+    emit('repo.backfill', { repo, projectId, sinceISO, page: 1, runKey }, { idempotencyKey: `repo-backfill:${repo}:${runKey}:1` });
+
+  // Sin force: runKey '1' (once-only). PERO si ese repo ya se backfilleó, la llave ya existe y el
+  // emit es no-op → el estado quedaría en 'queued' SIN evento que lo drene (UI cargando infinito).
+  // Por eso, si el emit devuelve null (duplicado), se re-encola con un runKey único que garantiza un
+  // evento nuevo. El upsert por (repo, sha) mantiene la idempotencia de datos. Con force ya es único.
+  const runKey = opts.force ? String(Date.now()) : '1';
+  const id = await emitPage1(runKey);
+  if (!id && !opts.force) await emitPage1(String(Date.now()));
 }

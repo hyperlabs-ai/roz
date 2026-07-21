@@ -8,6 +8,7 @@ import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit, backfillPushCommits } from '../reconcile/commits.js';
 import { backfillRepoCommits, markRepoSyncError } from '../reconcile/backfill.js';
 import { reconcilePullRequest } from '../reconcile/pull-request.js';
+import { handleBranchCreated, handlePrOpened, handlePrReviewed } from '../reconcile/task-events.js';
 import { handleRepoDetected, handleRepoRenamed } from '../reconcile/repos.js';
 import type { RepoMeta } from '../adapters/github.js';
 import { upsertLinearProject } from '../projects/resolve.js';
@@ -23,6 +24,9 @@ export type OutboxEventType =
   | 'commit.received'
   | 'commits.backfill'
   | 'repo.backfill'
+  | 'branch.created'
+  | 'pr.opened'
+  | 'pr.reviewed'
   | 'pr.merged'
   | 'change.documented'
   | 'repo.detected'
@@ -242,6 +246,30 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
       }
       return;
     }
+    // Rama creada que referencia una tarea → la tarea pasa a "En curso" (señal en vivo).
+    case 'branch.created':
+      await handleBranchCreated({
+        repo: String(payload.repo ?? ''),
+        ref: String(payload.ref ?? ''),
+        githubId: (payload.githubId as number | null) ?? null,
+      });
+      return;
+    // PR abierta que referencia una tarea → la tarea pasa a "En revisión" + PR/atribución en vivo.
+    case 'pr.opened':
+      await handlePrOpened({
+        repo: String(payload.repo ?? ''),
+        number: Number(payload.number ?? 0),
+        githubId: (payload.githubId as number | null) ?? null,
+      });
+      return;
+    // Revisión de PR: refresca los revisores de la tarea ligada, en vivo (sin esperar al merge).
+    case 'pr.reviewed':
+      await handlePrReviewed({
+        repo: String(payload.repo ?? ''),
+        number: Number(payload.number ?? 0),
+        githubId: (payload.githubId as number | null) ?? null,
+      });
+      return;
     // PR mergeada: documentar el trabajo en UN ticket con atribución (autor/revisor/merger).
     case 'pr.merged':
       await reconcilePullRequest({

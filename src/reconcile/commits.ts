@@ -10,9 +10,9 @@
 import { db } from '../db/supabase.js';
 import { complete } from '../adapters/anthropic.js';
 import { getCommit, commitPullRequests, pushCommitShas, referencesLinearIssue, type CommitMeta } from '../adapters/github.js';
-import { createIssue, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
 import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
+import { createDocumentedTask } from '../dashboard/queries.js';
 
 export interface ReconcileInput {
   repo: string; // "owner/name"
@@ -113,26 +113,33 @@ async function reconcileBody(
   const project = await resolveProjectByRepo(input.repo, input.githubId);
   const dev = await resolveDevByCommit(supabase, commit);
 
+  // ¿El mensaje referencia una tarea (ROZ-123)? Se resuelve su work_item para LIGAR el commit
+  // (work_item_id) → así la tarea suma su esfuerzo real (commits/líneas/hyperpoints). El vínculo se
+  // hace aunque el commit pertenezca a una PR (el esfuerzo cuenta igual).
+  const referenced = referencesLinearIssue(commit.message);
+  const linkedWorkItemId = referenced
+    ? ((await supabase.from('work_item').select('id').eq('identifier', referenced).maybeSingle()).data as { id: string } | null)?.id ?? null
+    : null;
+
   // Persistir el commit SIEMPRE (el dashboard cuenta TODO el trabajo, incluso el de ramas y PRs):
   // las métricas de commits no dependen de la documentación. Upsert por (repo, sha) → idempotente.
-  await persistCommit(supabase, input, commit, project?.id ?? null, dev?.id ?? null);
+  await persistCommit(supabase, input, commit, project?.id ?? null, dev?.id ?? null, linkedWorkItemId);
 
   // Dedup con el flujo de PR: si el commit pertenece a una PR (abierta o mergeada), NO se documenta
   // aquí — lo hace reconcilePullRequest en un solo ticket con atribución. Cubre cualquier estrategia
-  // de merge (squash/merge/rebase). El commit ya quedó persistido arriba para las métricas.
+  // de merge (squash/merge/rebase). El commit ya quedó persistido (y ligado) arriba para las métricas.
   const prs = await commitPullRequests(input.repo, commit.sha).catch(() => []);
   if (prs.length) {
     return { action: 'skipped:in-pr', detail: `commit en PR #${prs[0]!.number}; lo documenta el flujo de PR` };
   }
 
-  // 1. ¿Referencia un issue de Linear? La integración nativa lo enlaza; roz documenta.
-  const linked = referencesLinearIssue(commit.message);
-  if (linked) {
+  // 1. ¿Referencia una tarea existente? Marca documentada (el commit ya quedó ligado arriba).
+  if (referenced) {
     await supabase
       .from('work_item')
       .update({ documented: true })
-      .eq('identifier', linked); // best-effort; columna opcional
-    return { action: 'linked', identifier: linked, detail: 'enlazado por la integración nativa' };
+      .eq('identifier', referenced); // best-effort
+    return { action: 'linked', identifier: referenced, detail: 'commit ligado a la tarea referenciada' };
   }
 
   // Issues ABIERTOS del proyecto (candidatos a que el commit los resuelva).
@@ -179,13 +186,17 @@ async function reconcileBody(
     return { action: 'trivial', detail: 'commit trivial, no se documenta' };
   }
 
-  // 4a. Sustantivo que resuelve un issue abierto → enlazar (sin duplicar).
+  // 4a. Sustantivo que resuelve un issue abierto → enlazar (sin duplicar) y ligar el commit.
   const matched = a.matchedIdentifier && openItems.find((i: any) => i.identifier === a.matchedIdentifier);
   if (matched) {
-    await supabase
+    const { data: wi } = await supabase
       .from('work_item')
       .update({ documented: true })
-      .eq('identifier', a.matchedIdentifier!);
+      .eq('identifier', a.matchedIdentifier!)
+      .select('id')
+      .maybeSingle();
+    // Liga el commit a la tarea resuelta → suma a su esfuerzo real.
+    if (wi?.id) await supabase.from('commit').update({ work_item_id: wi.id }).eq('repo', input.repo.toLowerCase()).eq('sha', commit.sha);
     return {
       action: 'matched',
       identifier: a.matchedIdentifier!,
@@ -193,52 +204,43 @@ async function reconcileBody(
     };
   }
 
-  // 4b. Sustantivo huérfano sin match → documentar creando un issue en Linear.
-  if (!project?.linear_team_id) {
+  // 4b. Sustantivo huérfano sin match → documentar creando una TAREA NATIVA (completada).
+  if (!project?.id) {
     return {
       action: 'orphan:no-project',
-      detail: `repo ${input.repo} sin proyecto/team mapeado; no se puede crear issue`,
+      detail: `repo ${input.repo} sin proyecto mapeado; no se puede documentar`,
     };
   }
 
   const title = (a.title || commit.message.split('\n')[0] || 'Trabajo desde commit').slice(0, 120);
   const description =
-    `> 🔗 **Auto-documentado desde un commit** (sin issue previo)\n` +
+    `> 🔗 **Auto-documentado desde un commit** (sin tarea previa)\n` +
     `> Repo \`${input.repo}\` · commit [\`${commit.sha.slice(0, 8)}\`](${commit.url})` +
     (commit.author ? ` · autor: ${commit.author}` : '') +
     `\n\n${a.summary || commit.message}`;
 
-  // Autor del commit → dev (resuelto arriba) → su linear_user_id para asignar el issue.
-  const assigneeId = dev?.linear_user_id ?? undefined;
-
-  // El trabajo YA existe en el código (el commit está hecho), así que el issue se crea
-  // COMPLETADO, no como tarea pendiente. Se asigna al autor para dar crédito, pero NO se le
-  // notifica como "te asignaron una tarea" (ver el pre-claim de la llave de notificación abajo).
-  const stateId = await resolveInitialStateId(project.linear_team_id, 'completed');
   // Valida la prioridad de salida del modelo contra una lista blanca (defensa anti prompt-injection).
-  const priority = a.priority && ['urgent', 'high', 'medium', 'low'].includes(a.priority) ? a.priority : undefined;
-  const issue = await createIssue({
-    teamId: project.linear_team_id,
-    projectId: project.linear_project_id ?? undefined,
+  const priority = a.priority && ['urgent', 'high', 'medium', 'low'].includes(a.priority) ? a.priority : null;
+
+  // El trabajo YA existe en el código, así que la tarea nace COMPLETADA, asignada al autor (crédito).
+  // Crear la tarea es un efecto NO idempotente → a partir de aquí no se libera la llave del claim.
+  const task = await createDocumentedTask({
+    projectId: project.id,
     title,
-    description,
-    assigneeId,
-    priority: priorityToLinear(priority),
-    stateId: stateId ?? undefined,
+    spec: description,
+    priority,
+    assigneeDevId: dev?.id ?? null,
+    source: 'commit',
+    repo: input.repo.toLowerCase(),
   });
-  // A partir de aquí el issue YA existe en Linear: no liberar la llave (evita duplicados).
   state.issueCreated = true;
 
-  // Suprime el correo de asignación: el espejo del webhook detectaría un assignee nuevo y
-  // dispararía notifyAssignment. Pre-reclamamos su llave de idempotencia (misma que usa
-  // notifyAssignment) para que el eco del webhook se salte el envío — no tiene sentido avisar
-  // "te asignaron" por trabajo ya commiteado.
-  // En su lugar emitimos un evento "cambio documentado" (llave por sha, único por commit). El
-  // efecto agrupa por PENDIENTES de notificar del dev (change_notified=false), no por ventana de
-  // tiempo: así cada PR siempre notifica y dentro de una PR sale un solo correo. El delay da
-  // tiempo a que se inserten todos los work_items del push antes de armar el correo.
+  // Liga el commit que originó la tarea a ella (esfuerzo real).
+  await supabase.from('commit').update({ work_item_id: task.id }).eq('repo', input.repo.toLowerCase()).eq('sha', commit.sha);
+
+  // Correo agrupado de "cambio documentado" (por dev, dedup por sha). El delay da tiempo a que
+  // se inserten todos los work_items del push antes de armar el correo.
   if (dev?.id) {
-    await claimOnce(`notify-assign:${issue.identifier}:${dev.id}`, 'notify-assign').catch(() => {});
     await emit(
       'change.documented',
       { devId: dev.id },
@@ -246,28 +248,7 @@ async function reconcileBody(
     ).catch(() => {});
   }
 
-  // Espejo (upsert por linear_id; idempotente con el webhook eventual). Best-effort: si falla,
-  // el webhook de Linear creará/actualizará el espejo igualmente — no re-crear el issue.
-  // change_notified=false: pendiente del correo agrupado de "cambio documentado".
-  await supabase.from('work_item').upsert(
-    {
-      linear_id: issue.id,
-      identifier: issue.identifier,
-      project_id: project.id,
-      title,
-      spec: description,
-      state: 'completed',
-      completed_at: new Date().toISOString(),
-      assignee_dev_id: dev?.id ?? null,
-      priority: a.priority ?? null,
-      documented: true,
-      change_notified: false,
-      url: issue.url,
-    },
-    { onConflict: 'linear_id' },
-  ); // se ignora el error: el issue ya existe; el webhook reconciliará el espejo.
-
-  return { action: 'documented', identifier: issue.identifier, detail: 'issue completado creado desde commit huérfano' };
+  return { action: 'documented', identifier: task.identifier, detail: 'tarea nativa completada creada desde commit huérfano' };
 }
 
 /** Resuelve el dev autor de un commit: por email de git (preferente) y luego por login. */
@@ -306,6 +287,7 @@ async function persistCommit(
   commit: CommitMeta,
   projectId: string | null,
   devId: string | null,
+  workItemId: string | null = null,
 ): Promise<void> {
   // Los merge commits ya se descartaron en reconcileBody, así que aquí solo llegan commits reales.
   await supabase.from('commit').upsert(
@@ -316,6 +298,7 @@ async function persistCommit(
       repo: input.repo.toLowerCase(),
       project_id: projectId,
       dev_id: devId,
+      work_item_id: workItemId, // tarea referenciada (ROZ-123) → esfuerzo real por tarea
       author_login: commit.author,
       author_email: commit.authorEmail,
       message: commit.message,

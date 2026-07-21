@@ -30,6 +30,32 @@ export function UserAvatar({ url, name, className, title }: { url: string | null
   );
 }
 
+/** Avatares apilados de responsables (máx `max` visibles + "+N"). Vacío → no renderiza nada. */
+export function AvatarStack({
+  people, max = 3, size = 'size-5', className,
+}: {
+  people: { name: string; avatarUrl: string | null }[];
+  max?: number;
+  size?: string;
+  className?: string;
+}) {
+  if (!people.length) return null;
+  const shown = people.slice(0, max);
+  const extra = people.length - shown.length;
+  return (
+    <div className={cn('flex -space-x-1.5', className)}>
+      {shown.map((p, i) => (
+        <UserAvatar key={i} url={p.avatarUrl} name={p.name} className={cn(size, 'ring-2 ring-background')} title={p.name} />
+      ))}
+      {extra > 0 && (
+        <span className={cn('grid place-items-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground ring-2 ring-background', size)} title={`+${extra} más`}>
+          +{extra}
+        </span>
+      )}
+    </div>
+  );
+}
+
 const STATE_LABEL: Record<string, string> = {
   backlog: 'Backlog', unstarted: 'Sin empezar', triage: 'Triage', started: 'En curso', in_progress: 'En curso',
   completed: 'Completado', done: 'Hecho', canceled: 'Cancelado',

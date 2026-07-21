@@ -39,6 +39,18 @@ export async function apiSend<T>(method: string, path: string, body?: unknown): 
   return handle<T>(res);
 }
 
+/** Subida de archivo (multipart). No fijamos content-type: el navegador pone el boundary. */
+export async function apiUpload<T>(path: string, file: File, field = 'file'): Promise<T> {
+  const form = new FormData();
+  form.append(field, file);
+  const res = await fetch(`/api/dashboard${path}`, {
+    method: 'POST',
+    headers: { ...(await authHeader()) },
+    body: form,
+  });
+  return handle<T>(res);
+}
+
 // ---- Tipos compartidos con el backend (src/dashboard/queries.ts) ----
 export interface Metric {
   value: number;
@@ -150,15 +162,24 @@ export interface TicketPerson {
 }
 export interface Ticket {
   id: string; identifier: string; number: number | null; title: string;
+  spec: string | null;
   state: string; stateName: string; priority: string | null;
   projectId: string | null; projectName: string | null;
-  assignee: { name: string; avatarUrl: string | null } | null;
+  assignee: { id: string; name: string; avatarUrl: string | null } | null; // primary (compat) = primer assignee
+  assignees: { id: string; name: string; avatarUrl: string | null }[]; // lista completa de responsables
+  createdBy: { name: string; avatarUrl: string | null } | null; // quién creó/asignó (usuario del dashboard)
   estimate: number | null; dueDate: string | null; overdue: boolean;
   labels: string[]; creatorName: string | null; url: string | null;
   updatedAt: string | null; ageDays: number | null;
-  // Conexión con código (migración 0011)
-  source: 'pr' | 'commit' | null;
+  parentId: string | null;
+  // Agendado (calendario)
+  scheduledStart: string | null; scheduledEnd: string | null;
+  // Conexión con código (migraciones 0011 + 0016)
+  source: 'pr' | 'commit' | 'native' | null;
+  headRef: string | null;
+  prState: 'open' | 'merged' | 'closed' | null;
   pr: { repo: string; number: number; url: string } | null;
+  effort: { commits: number; lines: number; points: number };
   authors: TicketPerson[]; reviewers: TicketPerson[]; merger: TicketPerson | null;
 }
 export interface TicketsResponse {
@@ -174,10 +195,22 @@ export interface TicketsResponse {
   withoutPr: number;           // tickets cerrados sin PR vinculado
   tickets: Ticket[];
 }
+/** Adjunto (imagen) de una tarea en Supabase Storage. Nombre calza con el backend. */
+export interface Attachment {
+  id: string;
+  url: string;
+  name: string;
+  contentType: string | null;
+  size: number | null;
+  createdAt: string;
+}
 export interface TicketFilterOptions {
   projects: { id: string; name: string }[];
-  devs: { id: string; name: string }[];
+  allProjects: { id: string; name: string }[];
+  devs: { id: string; name: string; avatarUrl: string | null }[];
   states: { value: string; label: string }[];
+  allStates: { value: string; label: string }[];
+  priorities: { value: string; label: string }[];
 }
 
 export type ServiceProvider = 'vercel' | 'railway' | 'supabase';

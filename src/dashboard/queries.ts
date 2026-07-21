@@ -4,9 +4,12 @@
 // de mantener y sin migraciones extra. Todo es time-series filtrable por período; la comparación
 // es EXPLÍCITA (el front manda el rango a comparar, o ninguno) → soporta vs período anterior,
 // vs año pasado, o sin comparación, sin lógica especial en el backend.
-import { db } from '../db/supabase.js';
+import { randomUUID } from 'node:crypto';
+import { db, dbPublic } from '../db/supabase.js';
 import { embed } from '../adapters/embeddings.js';
 import { slugKey } from '../projects/resolve.js';
+import { emit } from '../events/outbox.js';
+import { OPEN_STATES, CLOSED_STATES, STATE_LABEL, STATE_OPTIONS, transitionTimestamps, type TaskState } from '../tasks/states.js';
 
 export interface Period {
   from: string; // ISO
@@ -43,7 +46,6 @@ function metric(value: number, compare: number | null): Metric {
 }
 
 const PRIORITY_WEIGHT: Record<string, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
-const CLOSED_STATES = ['completed', 'done', 'canceled'];
 
 function avatarFor(login: string | null): string | null {
   return login ? `https://github.com/${login}.png?size=96` : null;
@@ -104,8 +106,18 @@ interface WorkItemRow {
 const WORK_ITEM_COLS =
   'id, identifier, title, state, priority, project_id, assignee_dev_id, url, started_at, completed_at, updated_at';
 
+// "Resueltos" cuenta solo trabajo de la ERA ROZ: tareas nativas + auto-documentadas desde PR/commit.
+// Excluye el histórico de Linear (source is null), que no representa gestión de tareas en roz — su
+// trabajo de código ya está contado en commits/líneas/hyperpoints aparte (sin doble conteo).
+const RESOLVED_SOURCES = ['native', 'pr', 'commit'];
+
 async function resolvedInRange(from: string, to: string, opts?: { devId?: string; projectId?: string }): Promise<WorkItemRow[]> {
-  let q = db().from('work_item').select(WORK_ITEM_COLS).gte('completed_at', from).lt('completed_at', to);
+  let q = db()
+    .from('work_item')
+    .select(WORK_ITEM_COLS)
+    .gte('completed_at', from)
+    .lt('completed_at', to)
+    .in('source', RESOLVED_SOURCES);
   if (opts?.devId) q = q.eq('assignee_dev_id', opts.devId);
   if (opts?.projectId) q = q.eq('project_id', opts.projectId);
   const { data } = await q;
@@ -134,9 +146,9 @@ async function allDevs(): Promise<DevRow[]> {
   return (data ?? []) as unknown as DevRow[];
 }
 
-async function allProjects(): Promise<{ id: string; name: string; key: string; kind: string }[]> {
-  const { data } = await db().from('project').select('id, name, key, kind');
-  return (data ?? []) as unknown as { id: string; name: string; key: string; kind: string }[];
+async function allProjects(): Promise<{ id: string; name: string; key: string; kind: string; active?: boolean }[]> {
+  const { data } = await db().from('project').select('id, name, key, kind, active');
+  return (data ?? []) as unknown as { id: string; name: string; key: string; kind: string; active?: boolean }[];
 }
 
 /**
@@ -1031,9 +1043,7 @@ export async function getProject(projectId: string, period: Period) {
   };
 }
 
-// ---- Tickets (espejo de Linear) ----
-
-const OPEN_STATES = ['backlog', 'unstarted', 'triage', 'started'];
+// ---- Tickets / Tareas (nativas + espejo histórico de Linear) ----
 
 export interface TicketFilters {
   projectId?: string;
@@ -1041,6 +1051,8 @@ export interface TicketFilters {
   assigneeDevId?: string;
   priority?: string;
   scope?: 'open' | 'all'; // open = no cerrados (default)
+  from?: string; // ISO — filtra por scheduled_start >= from (vista calendario)
+  to?: string; // ISO — filtra por scheduled_start < to
 }
 
 interface TicketActor { name: string; avatarUrl: string | null; login: string | null; devId: string | null; reviewState: string | null }
@@ -1074,6 +1086,23 @@ async function loadTicketActors(
   return map;
 }
 
+/** Carga los responsables (multi) de cada tarea desde la junction work_item_assignee. */
+async function loadTicketAssignees(
+  ids: string[],
+  devName: Map<string, string>,
+  devAvatar: Map<string, string | null>,
+): Promise<Map<string, { id: string; name: string; avatarUrl: string | null }[]>> {
+  const map = new Map<string, { id: string; name: string; avatarUrl: string | null }[]>();
+  if (!ids.length) return map;
+  const { data } = await db().from('work_item_assignee').select('work_item_id, dev_id').in('work_item_id', ids);
+  for (const r of (data ?? []) as any[]) {
+    const list = map.get(r.work_item_id) ?? [];
+    list.push({ id: r.dev_id, name: devName.get(r.dev_id) ?? '—', avatarUrl: devAvatar.get(r.dev_id) ?? null });
+    map.set(r.work_item_id, list);
+  }
+  return map;
+}
+
 /** ¿Es la misma persona? Prefiere dev_id; cae a github_login. */
 function samePerson(a: TicketActor, b: TicketActor): boolean {
   if (a.devId && b.devId) return a.devId === b.devId;
@@ -1090,14 +1119,16 @@ export async function getTickets(f: TicketFilters) {
   let q = db()
     .from('work_item')
     .select(
-      'id, identifier, number, title, state, state_name, priority, project_id, assignee_dev_id, estimate, due_date, labels, creator_name, url, started_at, completed_at, linear_created_at, linear_updated_at, pr_number, repo, source, merger_dev_id',
+      'id, identifier, number, title, spec, state, state_name, priority, project_id, assignee_dev_id, created_by, estimate, due_date, labels, creator_name, url, source, parent_id, scheduled_start, scheduled_end, head_ref, pr_state, started_at, completed_at, created_at, linear_created_at, linear_updated_at, updated_at, pr_number, repo, merger_dev_id',
     );
   if (f.projectId) q = q.eq('project_id', f.projectId);
   if (f.assigneeDevId) q = q.eq('assignee_dev_id', f.assigneeDevId);
   if (f.priority) q = q.eq('priority', f.priority);
+  if (f.from) q = q.gte('scheduled_start', f.from);
+  if (f.to) q = q.lt('scheduled_start', f.to);
   if (f.state) q = q.eq('state', f.state);
   else if (f.scope !== 'all') q = q.in('state', OPEN_STATES);
-  const { data } = await q.order('linear_updated_at', { ascending: false }).limit(500);
+  const { data } = await q.order('updated_at', { ascending: false }).limit(500);
   const rows = (data ?? []) as any[];
 
   const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
@@ -1105,6 +1136,15 @@ export async function getTickets(f: TicketFilters) {
 
   // Atribución por PR (autor/revisor/merger) para los tickets visibles.
   const actorsByItem = await loadTicketActors(rows.map((w) => w.id), devName, devAvatar);
+  // Esfuerzo real: commits/líneas/hyperpoints ligados a cada tarea (lo que Ops/Linear no tienen).
+  const effortByItem = await loadTicketEffort(rows.map((w) => w.id));
+  // Responsables (multi): lista completa por tarea desde la junction work_item_assignee.
+  const assigneesByItem = await loadTicketAssignees(rows.map((w) => w.id), devName, devAvatar);
+  // Quién creó/asignó la tarea (created_by = usuario del dashboard). Resuelve nombre por
+  // user_profiles y avatar mapeando su email a un roz.dev. Solo aplica a tareas nativas manuales.
+  const devByEmail = new Map<string, { name: string; avatarUrl: string | null }>();
+  for (const d of devs) if (d.email) devByEmail.set(d.email.toLowerCase(), { name: d.name, avatarUrl: avatarFor(d.github_login) });
+  const creatorsById = await loadCreators(rows.map((w) => w.created_by).filter(Boolean), devByEmail);
 
   const tickets = rows
     .map((w) => {
@@ -1118,23 +1158,33 @@ export async function getTickets(f: TicketFilters) {
         identifier: w.identifier,
         number: w.number,
         title: w.title,
+        spec: w.spec ?? null,
         state: w.state,
-        stateName: w.state_name ?? w.state,
+        stateName: w.state_name ?? STATE_LABEL[w.state as TaskState] ?? w.state,
         priority: w.priority,
         projectId: w.project_id,
         projectName: w.project_id ? projName.get(w.project_id) ?? null : null,
-        assignee: w.assignee_dev_id ? { name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
+        assignee: w.assignee_dev_id ? { id: w.assignee_dev_id, name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
+        assignees: assigneesByItem.get(w.id) ?? [],
+        createdBy: w.created_by ? creatorsById.get(w.created_by) ?? null : null,
         estimate: w.estimate,
         dueDate: w.due_date,
-        overdue: w.due_date ? !['completed', 'done', 'canceled'].includes(w.state) && new Date(w.due_date).getTime() < now : false,
+        overdue: w.due_date ? !CLOSED_STATES.includes(w.state) && new Date(w.due_date).getTime() < now : false,
         labels: w.labels ?? [],
         creatorName: w.creator_name,
         url: w.url,
-        updatedAt: w.linear_updated_at,
-        ageDays: w.linear_created_at ? Math.floor((now - new Date(w.linear_created_at).getTime()) / 86_400_000) : null,
+        updatedAt: w.linear_updated_at ?? w.updated_at,
+        ageDays: (w.linear_created_at ?? w.created_at) ? Math.floor((now - new Date(w.linear_created_at ?? w.created_at).getTime()) / 86_400_000) : null,
+        parentId: w.parent_id ?? null,
+        // Agendado (calendario)
+        scheduledStart: w.scheduled_start ?? null,
+        scheduledEnd: w.scheduled_end ?? null,
         // Conexión con código
-        source: (w.source as 'pr' | 'commit' | null) ?? null,
+        source: (w.source as 'pr' | 'commit' | 'native' | null) ?? null,
+        headRef: w.head_ref ?? null,
+        prState: (w.pr_state as 'open' | 'merged' | 'closed' | null) ?? null,
         pr: w.pr_number && w.repo ? { repo: w.repo, number: w.pr_number, url: `https://github.com/${w.repo}/pull/${w.pr_number}` } : null,
+        effort: effortByItem.get(w.id) ?? { commits: 0, lines: 0, points: 0 },
         authors: act?.authors ?? [],
         reviewers: act?.reviewers ?? [],
         merger,
@@ -1222,10 +1272,21 @@ export async function getTicketFilters() {
   const rows = (wi ?? []) as any[];
   const projWithTickets = new Set(rows.map((r) => r.project_id).filter(Boolean));
   const states = [...new Map(rows.filter((r) => r.state).map((r) => [r.state, r.state_name ?? r.state])).entries()].map(([value, label]) => ({ value, label }));
+  const activeProjects = projects.filter((p) => p.active !== false).map((p) => ({ id: p.id, name: p.name }));
   return {
+    // Proyectos con tickets (para el filtro) y todos los activos (para crear tarea en cualquiera).
     projects: projects.filter((p) => projWithTickets.has(p.id)).map((p) => ({ id: p.id, name: p.name })),
-    devs: devs.filter((d) => d.active).map((d) => ({ id: d.id, name: d.name })),
+    allProjects: activeProjects,
+    devs: devs.filter((d) => d.active).map((d) => ({ id: d.id, name: d.name, avatarUrl: avatarFor(d.github_login) })),
     states,
+    // Fuente única de estados/prioridades para los selects del diálogo de creación/edición.
+    allStates: STATE_OPTIONS,
+    priorities: [
+      { value: 'urgent', label: 'Urgente' },
+      { value: 'high', label: 'Alta' },
+      { value: 'medium', label: 'Media' },
+      { value: 'low', label: 'Baja' },
+    ],
   };
 }
 
@@ -1236,6 +1297,380 @@ function countMap<T>(items: T[], key: (t: T) => string): { label: string; value:
     m.set(k, (m.get(k) ?? 0) + 1);
   });
   return [...m.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+}
+
+/** Resuelve los creadores (created_by = auth.users) a nombre+avatar. Nombre vía public.user_profiles;
+ *  avatar mapeando su email a un roz.dev (GitHub). Best-effort: si user_profiles no existe (self-host)
+ *  o el schema public no está expuesto, devuelve vacío sin romper. */
+async function loadCreators(
+  ids: string[],
+  devByEmail: Map<string, { name: string; avatarUrl: string | null }>,
+): Promise<Map<string, { name: string; avatarUrl: string | null }>> {
+  const map = new Map<string, { name: string; avatarUrl: string | null }>();
+  const unique = [...new Set(ids)];
+  if (!unique.length) return map;
+  try {
+    const { data } = await dbPublic().from('user_profiles').select('user_id, full_name, email').in('user_id', unique);
+    for (const p of (data ?? []) as any[]) {
+      const email = (p.email ?? '').toLowerCase();
+      const dev = email ? devByEmail.get(email) : undefined;
+      map.set(p.user_id, { name: p.full_name ?? p.email ?? '—', avatarUrl: dev?.avatarUrl ?? null });
+    }
+  } catch {
+    /* user_profiles ausente / schema public no expuesto: sin creador resuelto */
+  }
+  return map;
+}
+
+/** Esfuerzo real por tarea: commits, líneas y hyperpoints (√(commits×líneas)/10) del código
+ *  ligado vía roz.commit.work_item_id. Es el diferenciador vs Ops/Linear: métrica de código real. */
+async function loadTicketEffort(ids: string[]): Promise<Map<string, { commits: number; lines: number; points: number }>> {
+  const map = new Map<string, { commits: number; lines: number; points: number }>();
+  if (!ids.length) return map;
+  const { data } = await db().from('commit').select('work_item_id, additions, deletions').in('work_item_id', ids);
+  const agg = new Map<string, { commits: number; lines: number }>();
+  for (const c of (data ?? []) as any[]) {
+    if (!c.work_item_id) continue;
+    const e = agg.get(c.work_item_id) ?? { commits: 0, lines: 0 };
+    e.commits += 1;
+    e.lines += (c.additions ?? 0) + (c.deletions ?? 0);
+    agg.set(c.work_item_id, e);
+  }
+  for (const [id, e] of agg) {
+    map.set(id, { commits: e.commits, lines: e.lines, points: Math.round((Math.sqrt(e.commits * e.lines) / 10) * 10) / 10 });
+  }
+  return map;
+}
+
+// ---- CRUD de tareas nativas ----
+
+export interface CreateTaskInput {
+  projectId: string;
+  title: string;
+  spec?: string | null;
+  state?: TaskState;
+  priority?: string | null;
+  /** Responsable único (compat: callers internos como confirmProposal). */
+  assigneeDevId?: string | null;
+  /** Varios responsables (dashboard). El primero queda como primario en assignee_dev_id. */
+  assigneeDevIds?: string[];
+  scheduledStart?: string | null;
+  scheduledEnd?: string | null;
+  dueDate?: string | null;
+  labels?: string[];
+  parentId?: string | null;
+  createdBy?: string | null;
+}
+
+/** Sincroniza la junction de responsables (reemplaza el set) y devuelve la lista aplicada. */
+async function syncAssignees(supabase: ReturnType<typeof db>, workItemId: string, devIds: string[]): Promise<void> {
+  const ids = [...new Set(devIds.filter(Boolean))];
+  await supabase.from('work_item_assignee').delete().eq('work_item_id', workItemId);
+  if (ids.length) {
+    await supabase.from('work_item_assignee').insert(ids.map((dev_id) => ({ work_item_id: workItemId, dev_id })));
+  }
+}
+
+/**
+ * Crea una tarea NATIVA (source='native', sin linear_id). El identificador local `KEY-N` se genera
+ * con el contador atómico por proyecto (RPC next_work_item_number), sembrado para continuar la
+ * numeración tras los HYP-N históricos y evitar colisiones. Nace `documented=true`: no requiere el
+ * pipeline de Claude que sí necesitaba el trabajo detectado desde código.
+ */
+export async function createTask(input: CreateTaskInput): Promise<{ id: string; identifier: string }> {
+  const supabase = db();
+  const { data: proj, error: perr } = await supabase.from('project').select('id, key').eq('id', input.projectId).maybeSingle();
+  if (perr) throw perr;
+  if (!proj) throw new Error('proyecto no existe');
+  const key = (proj as { key: string }).key;
+
+  const { data: num, error: nerr } = await supabase.rpc('next_work_item_number', { p_project_id: input.projectId });
+  if (nerr) throw nerr;
+  const number = Number(num);
+  const identifier = `${key}-${number}`;
+
+  // Normaliza a lista de responsables; el primero es el primario (assignee_dev_id, compat).
+  const assigneeIds = [...new Set((input.assigneeDevIds ?? (input.assigneeDevId ? [input.assigneeDevId] : [])).filter(Boolean))];
+  const primary = assigneeIds[0] ?? null;
+
+  const state = (input.state ?? 'backlog') as TaskState;
+  const now = new Date().toISOString();
+  const row = {
+    linear_id: null,
+    identifier,
+    number,
+    project_id: input.projectId,
+    title: input.title.trim(),
+    spec: input.spec?.trim() || null,
+    state,
+    state_name: STATE_LABEL[state] ?? state,
+    priority: input.priority ?? null,
+    assignee_dev_id: primary,
+    scheduled_start: input.scheduledStart ?? null,
+    scheduled_end: input.scheduledEnd ?? null,
+    due_date: input.dueDate ?? null,
+    labels: input.labels ?? [],
+    parent_id: input.parentId ?? null,
+    created_by: input.createdBy ?? null,
+    source: 'native',
+    documented: true,
+    ...transitionTimestamps(state, now),
+  };
+  const { data, error } = await supabase.from('work_item').insert(row).select('id, identifier').single();
+  if (error) throw error;
+  const created = data as unknown as { id: string; identifier: string };
+
+  if (assigneeIds.length) await syncAssignees(supabase, created.id, assigneeIds);
+  // Aviso de asignación a cada responsable (idempotente por dev).
+  for (const devId of assigneeIds) {
+    await emit(
+      'work_item.assigned',
+      { workItemId: created.id, devId, identifier },
+      { idempotencyKey: `assigned:${created.id}:${devId}` },
+    );
+  }
+  return created;
+}
+
+/**
+ * Crea una tarea NATIVA ya DOCUMENTADA (estado 'completed') desde código huérfano detectado en la
+ * reconciliación (commit/PR sin tarea previa). Reemplaza el antiguo createIssue de Linear: con el
+ * corte total, el trabajo auto-documentado también es nativo. Nace completada, atribuida y con
+ * change_notified=false (pendiente del correo agrupado). Devuelve id + identificador local.
+ */
+export async function createDocumentedTask(input: {
+  projectId: string;
+  title: string;
+  spec: string;
+  priority?: string | null;
+  assigneeDevId?: string | null;
+  mergerDevId?: string | null;
+  source: 'pr' | 'commit';
+  repo?: string | null;
+  prNumber?: number | null;
+  prState?: 'merged' | 'open' | 'closed' | null;
+  headRef?: string | null;
+}): Promise<{ id: string; identifier: string }> {
+  const supabase = db();
+  const { data: proj } = await supabase.from('project').select('key').eq('id', input.projectId).maybeSingle();
+  const key = (proj as { key?: string } | null)?.key;
+  if (!key) throw new Error('proyecto no existe');
+
+  const { data: num, error: nerr } = await supabase.rpc('next_work_item_number', { p_project_id: input.projectId });
+  if (nerr) throw nerr;
+  const number = Number(num);
+  const identifier = `${key}-${number}`;
+  const now = new Date().toISOString();
+
+  const { data, error } = await supabase
+    .from('work_item')
+    .insert({
+      linear_id: null,
+      identifier,
+      number,
+      project_id: input.projectId,
+      title: input.title.slice(0, 120),
+      spec: input.spec,
+      state: 'completed',
+      state_name: STATE_LABEL.completed,
+      completed_at: now,
+      priority: input.priority ?? null,
+      assignee_dev_id: input.assigneeDevId ?? null,
+      merger_dev_id: input.mergerDevId ?? null,
+      source: input.source,
+      repo: input.repo ?? null,
+      pr_number: input.prNumber ?? null,
+      pr_state: input.prState ?? null,
+      head_ref: input.headRef ?? null,
+      documented: true,
+      change_notified: false,
+    })
+    .select('id, identifier')
+    .single();
+  if (error) throw error;
+  const created = data as unknown as { id: string; identifier: string };
+  if (input.assigneeDevId) await syncAssignees(supabase, created.id, [input.assigneeDevId]);
+  return created;
+}
+
+export interface TaskPatch {
+  title?: string;
+  spec?: string | null;
+  state?: TaskState;
+  priority?: string | null;
+  assigneeDevId?: string | null;
+  assigneeDevIds?: string[];
+  scheduledStart?: string | null;
+  scheduledEnd?: string | null;
+  dueDate?: string | null;
+  labels?: string[];
+  parentId?: string | null;
+}
+
+/** Edita una tarea. Solo aplica los campos presentes (whitelist). Setea los timestamps de
+ *  transición (started/completed/canceled) según el nuevo estado y bumpea updated_at. */
+export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: string }> {
+  const supabase = db();
+  const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (patch.title !== undefined) upd.title = patch.title.trim();
+  if (patch.spec !== undefined) upd.spec = patch.spec?.trim() || null;
+  if (patch.priority !== undefined) upd.priority = patch.priority;
+  if (patch.scheduledStart !== undefined) upd.scheduled_start = patch.scheduledStart;
+  if (patch.scheduledEnd !== undefined) upd.scheduled_end = patch.scheduledEnd;
+  if (patch.dueDate !== undefined) upd.due_date = patch.dueDate;
+  if (patch.labels !== undefined) upd.labels = patch.labels;
+  if (patch.parentId !== undefined) upd.parent_id = patch.parentId;
+  if (patch.state !== undefined) {
+    upd.state = patch.state;
+    upd.state_name = STATE_LABEL[patch.state] ?? patch.state;
+    Object.assign(upd, transitionTimestamps(patch.state));
+  }
+  // Responsables: `assigneeDevIds` (dashboard, multi) tiene prioridad; `assigneeDevId` (single) es compat.
+  const newAssignees =
+    patch.assigneeDevIds !== undefined
+      ? [...new Set(patch.assigneeDevIds.filter(Boolean))]
+      : patch.assigneeDevId !== undefined
+        ? patch.assigneeDevId ? [patch.assigneeDevId] : []
+        : null; // null = no se tocan los responsables
+  if (newAssignees !== null) upd.assignee_dev_id = newAssignees[0] ?? null; // primario (compat)
+
+  const { data, error } = await supabase.from('work_item').update(upd).eq('id', id).select('id, identifier').single();
+  if (error) throw error;
+  const w = data as unknown as { id: string; identifier: string };
+
+  if (newAssignees !== null) {
+    await syncAssignees(supabase, w.id, newAssignees);
+    // Aviso a cada responsable (idempotente por dev → los ya avisados no se re-notifican).
+    for (const devId of newAssignees) {
+      await emit(
+        'work_item.assigned',
+        { workItemId: w.id, devId, identifier: w.identifier },
+        { idempotencyKey: `assigned:${w.id}:${devId}` },
+      );
+    }
+  }
+  return { id: w.id };
+}
+
+export async function deleteTask(id: string): Promise<void> {
+  const { error } = await db().from('work_item').delete().eq('id', id);
+  if (error) throw error;
+}
+
+export interface TaskComment {
+  id: string;
+  authorId: string | null;
+  authorName: string | null;
+  body: string;
+  mentions: string[];
+  createdAt: string;
+}
+
+export async function listTaskComments(workItemId: string): Promise<TaskComment[]> {
+  const { data } = await db()
+    .from('work_item_comment')
+    .select('id, author_id, author_name, body, mentions, created_at')
+    .eq('work_item_id', workItemId)
+    .order('created_at', { ascending: true });
+  return ((data ?? []) as any[]).map((c) => ({
+    id: c.id,
+    authorId: c.author_id ?? null,
+    authorName: c.author_name ?? null,
+    body: c.body,
+    mentions: c.mentions ?? [],
+    createdAt: c.created_at,
+  }));
+}
+
+export async function addTaskComment(
+  workItemId: string,
+  input: { authorId?: string | null; authorName?: string | null; body: string; mentions?: string[] },
+): Promise<TaskComment> {
+  const { data, error } = await db()
+    .from('work_item_comment')
+    .insert({
+      work_item_id: workItemId,
+      author_id: input.authorId ?? null,
+      author_name: input.authorName ?? null,
+      body: input.body.trim(),
+      mentions: input.mentions ?? [],
+    })
+    .select('id, author_id, author_name, body, mentions, created_at')
+    .single();
+  if (error) throw error;
+  const c = data as any;
+  return {
+    id: c.id,
+    authorId: c.author_id ?? null,
+    authorName: c.author_name ?? null,
+    body: c.body,
+    mentions: c.mentions ?? [],
+    createdAt: c.created_at,
+  };
+}
+
+// ---- Adjuntos (imágenes) de tareas ----
+
+const ATTACH_BUCKET = 'task-attachments';
+
+export interface Attachment {
+  id: string;
+  url: string;
+  name: string;
+  contentType: string | null;
+  size: number | null;
+  createdAt: string;
+}
+
+function mapAttachment(a: any): Attachment {
+  return { id: a.id, url: a.url, name: a.name, contentType: a.content_type ?? null, size: a.size ?? null, createdAt: a.created_at };
+}
+
+export async function listAttachments(workItemId: string): Promise<Attachment[]> {
+  const { data } = await db()
+    .from('work_item_attachment')
+    .select('id, url, name, content_type, size, created_at')
+    .eq('work_item_id', workItemId)
+    .order('created_at', { ascending: true });
+  return ((data ?? []) as any[]).map(mapAttachment);
+}
+
+/** Sube un archivo al bucket (service_role) y registra la fila. La ruta lleva un uuid → no colisiona
+ *  ni es adivinable; el bucket es público, así que la URL sirve directo para render. */
+export async function addAttachment(
+  workItemId: string,
+  file: { body: Buffer; name: string; contentType: string; size: number; uploadedBy?: string | null },
+): Promise<Attachment> {
+  const supabase = db();
+  const safe = (file.name.replace(/[^\w.\-]+/g, '_') || 'imagen').slice(-80);
+  const path = `${workItemId}/${randomUUID()}-${safe}`;
+  const up = await supabase.storage.from(ATTACH_BUCKET).upload(path, file.body, { contentType: file.contentType, upsert: false });
+  if (up.error) throw up.error;
+  const { data: pub } = supabase.storage.from(ATTACH_BUCKET).getPublicUrl(path);
+  const { data, error } = await supabase
+    .from('work_item_attachment')
+    .insert({
+      work_item_id: workItemId,
+      storage_path: path,
+      url: pub.publicUrl,
+      name: file.name.slice(0, 200),
+      content_type: file.contentType,
+      size: file.size,
+      uploaded_by: file.uploadedBy ?? null,
+    })
+    .select('id, url, name, content_type, size, created_at')
+    .single();
+  if (error) throw error;
+  return mapAttachment(data);
+}
+
+export async function deleteAttachment(attachmentId: string): Promise<void> {
+  const supabase = db();
+  const { data } = await supabase.from('work_item_attachment').select('storage_path').eq('id', attachmentId).maybeSingle();
+  const path = (data as { storage_path?: string } | null)?.storage_path;
+  if (path) await supabase.storage.from(ATTACH_BUCKET).remove([path]).then(() => {}, () => {}); // best-effort: la fila manda
+  const { error } = await supabase.from('work_item_attachment').delete().eq('id', attachmentId);
+  if (error) throw error;
 }
 
 // ---- Skills (catálogo, matriz, CRUD) ----

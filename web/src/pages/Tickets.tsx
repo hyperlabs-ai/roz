@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Ticket as TicketIcon, CircleAlert, UserX, ExternalLink, CircleDot, CircleCheck, GitPullRequest, GitCommit, GitMerge } from 'lucide-react';
+import { Ticket as TicketIcon, CircleAlert, UserX, CircleDot, CircleCheck, GitPullRequest, GitMerge } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { MetricCard } from '@/components/MetricCard';
 import { RankBars, Donut } from '@/components/charts';
@@ -7,21 +7,11 @@ import { UserAvatar, EmptyState } from '@/components/bits';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useApi } from '@/lib/useApi';
-import { apiGet, type TicketsResponse, type TicketFilterOptions, type Ticket, type TicketPerson } from '@/lib/api';
-import { shortDate } from '@/lib/format';
-import { cn } from '@/lib/utils';
+import { apiGet, type TicketsResponse, type TicketFilterOptions } from '@/lib/api';
 
 const ALL = '__all__';
-
-const PRIO: Record<string, { label: string; cls: string }> = {
-  urgent: { label: 'Urgente', cls: 'bg-destructive' },
-  high: { label: 'Alta', cls: 'bg-warning' },
-  medium: { label: 'Media', cls: 'bg-chart-1' },
-  low: { label: 'Baja', cls: 'bg-muted-foreground' },
-};
 
 // Colores de la dona de prioridad (semánticos) + etiqueta en español.
 const PRIO_COLOR: Record<string, string> = {
@@ -37,69 +27,17 @@ function STATE_COLOR(label: string): string {
   return 'hsl(var(--muted-foreground))';
 }
 
-function stateVariant(state: string): 'success' | 'default' | 'secondary' {
-  if (['completed', 'done'].includes(state)) return 'success';
-  if (['started', 'in_progress'].includes(state)) return 'default';
-  return 'secondary';
-}
-
 // Origen del ticket: cómo nació el trabajo (migración 0011).
 const SOURCE_LABEL: Record<string, string> = { pr: 'Pull Request', commit: 'Commit', linear: 'Linear' };
 const SOURCE_COLOR: Record<string, string> = {
   pr: 'hsl(var(--chart-1))', commit: 'hsl(var(--chart-4))', linear: 'hsl(var(--muted-foreground))',
 };
 
-// Anillo del avatar según el veredicto de review.
-function reviewRing(state: string | null | undefined): string {
-  if (state === 'approved') return 'ring-success';
-  if (state === 'changes_requested') return 'ring-warning';
-  return 'ring-border';
-}
-
-/** Avatares apilados de revisores, con tooltip de nombre + veredicto. */
-function ReviewerStack({ reviewers }: { reviewers: TicketPerson[] }) {
-  if (!reviewers.length) return null;
-  return (
-    <div className="flex -space-x-1.5">
-      {reviewers.slice(0, 4).map((r, i) => (
-        <UserAvatar
-          key={r.login ?? r.name ?? i}
-          url={r.avatarUrl}
-          name={r.name}
-          className={cn('size-5 ring-2', reviewRing(r.reviewState))}
-          title={`${r.name}${r.reviewState ? ` · ${r.reviewState}` : ''}`}
-        />
-      ))}
-      {reviewers.length > 4 && <span className="pl-2.5 text-xs text-muted-foreground">+{reviewers.length - 4}</span>}
-    </div>
-  );
-}
-
-/** Celda "Código": link al PR (o commit/Linear) + revisores. El diferenciador vs. Linear. */
-function CodeCell({ t }: { t: Ticket }) {
-  return (
-    <div className="flex items-center gap-2">
-      {t.pr ? (
-        <a
-          href={t.pr.url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="inline-flex items-center gap-1 font-mono text-xs text-chart-1 hover:underline"
-          title={`${t.pr.repo} · PR #${t.pr.number}`}
-        >
-          <GitPullRequest className="size-3.5" /> #{t.pr.number}
-        </a>
-      ) : t.source === 'commit' ? (
-        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><GitCommit className="size-3.5" /> commit</span>
-      ) : (
-        <span className="text-xs text-muted-foreground">—</span>
-      )}
-      <ReviewerStack reviewers={t.reviewers} />
-    </div>
-  );
-}
-
+/**
+ * Reportes: capa de análisis sobre el trabajo del equipo (mismo `work_item` que Tareas).
+ * La gestión (lista/edición) vive en Tareas; aquí solo métricas, distribución y atribución.
+ * Los filtros acotan el reporte (afectan KPIs y gráficas vía el querystring del fetch).
+ */
 export default function Tickets() {
   const [projectId, setProjectId] = useState(ALL);
   const [state, setState] = useState(ALL);
@@ -122,8 +60,8 @@ export default function Tickets() {
 
   return (
     <Layout
-      title="Tickets"
-      subtitle="El trabajo del equipo en Linear"
+      title="Reportes"
+      subtitle="Análisis y atribución del trabajo del equipo"
       actions={
         <Select value={scope} onValueChange={(v) => setScope(v as 'open' | 'all')}>
           <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
@@ -135,6 +73,16 @@ export default function Tickets() {
       }
     >
       {error && <Card><CardContent className="py-4 text-sm text-destructive">{error}</CardContent></Card>}
+
+      {/* Filtros: acotan el reporte */}
+      <div className="mb-4 flex flex-wrap gap-2">
+        <FilterSelect value={projectId} onChange={setProjectId} placeholder="Proyecto" options={(filters.data?.projects ?? []).map((p) => ({ value: p.id, label: p.name }))} />
+        <FilterSelect value={state} onChange={setState} placeholder="Estado" options={(filters.data?.states ?? []).map((s) => ({ value: s.value, label: s.label }))} />
+        <FilterSelect value={assignee} onChange={setAssignee} placeholder="Responsable" options={(filters.data?.devs ?? []).map((d) => ({ value: d.id, label: d.name }))} />
+        <FilterSelect value={priority} onChange={setPriority} placeholder="Prioridad" options={[
+          { value: 'urgent', label: 'Urgente' }, { value: 'high', label: 'Alta' }, { value: 'medium', label: 'Media' }, { value: 'low', label: 'Baja' },
+        ]} />
+      </div>
 
       {/* KPIs */}
       {loading || !data ? (
@@ -235,122 +183,7 @@ export default function Tickets() {
           </div>
         </>
       )}
-
-      {/* Filtros */}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <FilterSelect value={projectId} onChange={setProjectId} placeholder="Proyecto" options={(filters.data?.projects ?? []).map((p) => ({ value: p.id, label: p.name }))} />
-        <FilterSelect value={state} onChange={setState} placeholder="Estado" options={(filters.data?.states ?? []).map((s) => ({ value: s.value, label: s.label }))} />
-        <FilterSelect value={assignee} onChange={setAssignee} placeholder="Responsable" options={(filters.data?.devs ?? []).map((d) => ({ value: d.id, label: d.name }))} />
-        <FilterSelect value={priority} onChange={setPriority} placeholder="Prioridad" options={[
-          { value: 'urgent', label: 'Urgente' }, { value: 'high', label: 'Alta' }, { value: 'medium', label: 'Media' }, { value: 'low', label: 'Baja' },
-        ]} />
-      </div>
-
-      {/* Desktop: tabla */}
-      <Card className="mt-3 hidden md:block">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-8"></TableHead>
-              <TableHead>Ticket</TableHead>
-              <TableHead>Estado</TableHead>
-              <TableHead>Proyecto</TableHead>
-              <TableHead>Responsable</TableHead>
-              <TableHead>Código</TableHead>
-              <TableHead>Vence</TableHead>
-              <TableHead className="w-8"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading && Array.from({ length: 8 }).map((_, i) => (
-              <TableRow key={i}><TableCell colSpan={8}><Skeleton className="h-8 w-full" /></TableCell></TableRow>
-            ))}
-            {!loading && data?.tickets.map((t) => <TicketRow key={t.id} t={t} />)}
-          </TableBody>
-        </Table>
-        {!loading && !data?.tickets.length && <EmptyState icon={<TicketIcon className="size-6" />}>No hay tickets con estos filtros</EmptyState>}
-      </Card>
-
-      {/* Móvil: tarjetas */}
-      <div className="mt-3 space-y-2 md:hidden">
-        {loading && Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
-        {!loading && data?.tickets.map((t) => <TicketCardMobile key={t.id} t={t} />)}
-        {!loading && !data?.tickets.length && <Card><EmptyState icon={<TicketIcon className="size-6" />}>No hay tickets con estos filtros</EmptyState></Card>}
-      </div>
     </Layout>
-  );
-}
-
-function TicketCardMobile({ t }: { t: Ticket }) {
-  const prio = t.priority ? PRIO[t.priority] : null;
-  const inner = (
-    <Card className="p-3">
-      <div className="flex items-start gap-2">
-        <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', prio?.cls ?? 'bg-muted')} title={prio?.label ?? 'sin prioridad'} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
-            <Badge variant={stateVariant(t.state)}>{t.stateName}</Badge>
-          </div>
-          <div className="mt-1 line-clamp-2 break-words text-sm leading-snug">{t.title}</div>
-          <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-            {t.projectName && <span className="truncate">{t.projectName}</span>}
-            {t.assignee && (
-              <span className="flex items-center gap-1">
-                <UserAvatar url={t.assignee.avatarUrl} name={t.assignee.name} className="size-4" /> {t.assignee.name}
-              </span>
-            )}
-            {t.dueDate && <span className={cn('ml-auto shrink-0', t.overdue && 'font-medium text-destructive')}>{shortDate(t.dueDate)}</span>}
-          </div>
-          {(t.pr || t.source === 'commit' || t.reviewers.length > 0) && (
-            <div className="mt-2"><CodeCell t={t} /></div>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-  // Wrapper como div clickeable (no <a>) para no anidar anclas: CodeCell ya enlaza al PR.
-  return t.url && t.url !== '#'
-    ? <div role="link" tabIndex={0} className="block cursor-pointer" onClick={() => window.open(t.url!, '_blank', 'noopener')}>{inner}</div>
-    : inner;
-}
-
-function TicketRow({ t }: { t: Ticket }) {
-  const prio = t.priority ? PRIO[t.priority] : null;
-  return (
-    <TableRow>
-      <TableCell>
-        <span className={cn('block size-2 rounded-full', prio?.cls ?? 'bg-muted')} title={prio?.label ?? 'sin prioridad'} />
-      </TableCell>
-      <TableCell>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-muted-foreground">{t.identifier}</span>
-          <span className="max-w-[28ch] truncate text-sm md:max-w-[44ch]">{t.title}</span>
-          {t.labels.slice(0, 2).map((l) => <Badge key={l} variant="secondary" className="hidden lg:inline-flex">{l}</Badge>)}
-        </div>
-      </TableCell>
-      <TableCell><Badge variant={stateVariant(t.state)}>{t.stateName}</Badge></TableCell>
-      <TableCell className="text-sm text-muted-foreground">{t.projectName ?? '—'}</TableCell>
-      <TableCell>
-        {t.assignee ? (
-          <div className="flex items-center gap-2">
-            <UserAvatar url={t.assignee.avatarUrl} name={t.assignee.name} className="size-6" />
-            <span className="hidden text-sm sm:inline">{t.assignee.name}</span>
-          </div>
-        ) : <span className="text-xs text-muted-foreground">Sin asignar</span>}
-      </TableCell>
-      <TableCell><CodeCell t={t} /></TableCell>
-      <TableCell>
-        {t.dueDate ? (
-          <span className={cn('text-xs', t.overdue ? 'font-medium text-destructive' : 'text-muted-foreground')}>{shortDate(t.dueDate)}</span>
-        ) : <span className="text-xs text-muted-foreground">—</span>}
-      </TableCell>
-      <TableCell>
-        {t.url && t.url !== '#' && (
-          <a href={t.url} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-foreground"><ExternalLink className="size-4" /></a>
-        )}
-      </TableCell>
-    </TableRow>
   );
 }
 

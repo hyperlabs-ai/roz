@@ -37,6 +37,14 @@ import {
   unlinkService,
   getTickets,
   getTicketFilters,
+  createTask,
+  updateTask,
+  deleteTask,
+  listTaskComments,
+  addTaskComment,
+  listAttachments,
+  addAttachment,
+  deleteAttachment,
   getSkillCatalog,
   getSkillsMatrix,
   createSkill,
@@ -467,7 +475,8 @@ dashboardRoutes.post('/push/unsubscribe', async (c) => {
   }
 });
 
-// Tickets (espejo de Linear): lista filtrable + agregaciones, y opciones de filtro.
+// Tareas / tickets: lista filtrable + agregaciones, y opciones de filtro. `from`/`to` acotan por
+// fecha agendada (vista calendario); sin ellos, todo el conjunto (abierto por defecto).
 dashboardRoutes.get('/tickets', async (c) => {
   try {
     return c.json(
@@ -477,6 +486,8 @@ dashboardRoutes.get('/tickets', async (c) => {
         assigneeDevId: c.req.query('assignee'),
         priority: c.req.query('priority'),
         scope: c.req.query('scope') === 'all' ? 'all' : 'open',
+        from: c.req.query('from'),
+        to: c.req.query('to'),
       }),
     );
   } catch (err) {
@@ -487,6 +498,158 @@ dashboardRoutes.get('/tickets', async (c) => {
 dashboardRoutes.get('/tickets/filters', async (c) => {
   try {
     return c.json(await getTicketFilters());
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// ---- CRUD de tareas nativas (cualquier usuario autenticado) ----
+
+const TASK_STATE = z.enum(['backlog', 'unstarted', 'started', 'review', 'completed', 'canceled']);
+const TASK_PRIORITY = z.enum(['urgent', 'high', 'medium', 'low']);
+
+const TaskCreateBody = z.object({
+  projectId: z.string().uuid(),
+  title: z.string().min(1),
+  spec: z.string().nullish(),
+  state: TASK_STATE.optional(),
+  priority: TASK_PRIORITY.nullish(),
+  assigneeDevId: z.string().uuid().nullish(),
+  assigneeDevIds: z.array(z.string().uuid()).optional(),
+  scheduledStart: z.string().datetime({ offset: true }).nullish(),
+  scheduledEnd: z.string().datetime({ offset: true }).nullish(),
+  dueDate: z.string().nullish(),
+  labels: z.array(z.string()).optional(),
+  parentId: z.string().uuid().nullish(),
+});
+
+dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
+  const parsed = TaskCreateBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    // z.infer marca requeridos como opcionales en el build de prod → destructurar + `!`.
+    const { projectId, title, spec, state, priority, assigneeDevId, assigneeDevIds, scheduledStart, scheduledEnd, dueDate, labels, parentId } = parsed.data;
+    const task = await createTask({
+      projectId: projectId!,
+      title: title!,
+      spec,
+      state,
+      priority,
+      assigneeDevId,
+      assigneeDevIds,
+      scheduledStart,
+      scheduledEnd,
+      dueDate,
+      labels,
+      parentId,
+      createdBy: c.get('user')?.id ?? null,
+    });
+    return c.json({ task }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const TaskPatchBody = z
+  .object({
+    title: z.string().min(1).optional(),
+    spec: z.string().nullish(),
+    state: TASK_STATE.optional(),
+    priority: TASK_PRIORITY.nullish(),
+    assigneeDevId: z.string().uuid().nullish(),
+    assigneeDevIds: z.array(z.string().uuid()).optional(),
+    scheduledStart: z.string().datetime({ offset: true }).nullish(),
+    scheduledEnd: z.string().datetime({ offset: true }).nullish(),
+    dueDate: z.string().nullish(),
+    labels: z.array(z.string()).optional(),
+    parentId: z.string().uuid().nullish(),
+  })
+  .refine((b) => Object.keys(b).length > 0, 'sin cambios');
+
+dashboardRoutes.patch('/tickets/:id', requireAdmin, async (c) => {
+  const parsed = TaskPatchBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    return c.json({ task: await updateTask(c.req.param('id'), parsed.data) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.delete('/tickets/:id', requireAdmin, async (c) => {
+  try {
+    await deleteTask(c.req.param('id'));
+    return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Comentarios de una tarea.
+dashboardRoutes.get('/tickets/:id/comments', async (c) => {
+  try {
+    return c.json({ comments: await listTaskComments(c.req.param('id')) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const CommentBody = z.object({ body: z.string().min(1), mentions: z.array(z.string().uuid()).optional() });
+
+dashboardRoutes.post('/tickets/:id/comments', requireAdmin, async (c) => {
+  const parsed = CommentBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    const user = c.get('user');
+    const { body, mentions } = parsed.data;
+    const comment = await addTaskComment(c.req.param('id'), {
+      authorId: user?.id ?? null,
+      authorName: user?.name ?? user?.email ?? null,
+      body: body!,
+      mentions,
+    });
+    return c.json({ comment }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Adjuntos (imágenes) de una tarea. Subida multipart; el backend sube a Storage (service_role).
+const MAX_ATTACH_BYTES = 4 * 1024 * 1024; // 4MB (bajo el límite de body de la función serverless)
+
+dashboardRoutes.get('/tickets/:id/attachments', async (c) => {
+  try {
+    return c.json({ attachments: await listAttachments(c.req.param('id')) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.post('/tickets/:id/attachments', requireAdmin, async (c) => {
+  try {
+    const body = await c.req.parseBody();
+    const file = body['file'];
+    if (!(file instanceof File)) return c.json({ error: { code: 'VALIDATION_ERROR', message: 'falta el archivo' } }, 400);
+    if (!file.type.startsWith('image/')) return c.json({ error: { code: 'VALIDATION_ERROR', message: 'solo se aceptan imágenes' } }, 400);
+    if (file.size > MAX_ATTACH_BYTES) return c.json({ error: { code: 'VALIDATION_ERROR', message: 'la imagen supera 4MB' } }, 400);
+    const buf = Buffer.from(await file.arrayBuffer());
+    const attachment = await addAttachment(c.req.param('id'), {
+      body: buf,
+      name: file.name || 'imagen',
+      contentType: file.type,
+      size: file.size,
+      uploadedBy: c.get('user')?.id ?? null,
+    });
+    return c.json({ attachment }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.delete('/tickets/:id/attachments/:attachmentId', requireAdmin, async (c) => {
+  try {
+    await deleteAttachment(c.req.param('attachmentId'));
+    return c.json({ ok: true });
   } catch (err) {
     return fail(c, err);
   }

@@ -122,6 +122,78 @@
   .scrollbar-thin::-webkit-scrollbar-track {
     background: transparent;
   }
+
+  /* Scrollbar estilizado theme-aware (tokens del tema, no colores fijos). Se usa en el
+     backlog y en el modal de tareas; el thumb se oscurece al hover del contenedor. */
+  .scroll-thin {
+    scrollbar-width: thin; /* Firefox */
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .scroll-thin:hover {
+    scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: hsl(var(--border));
+    transition: background-color 0.15s ease;
+  }
+  .scroll-thin:hover::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.4);
+  }
+  .scroll-thin::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.6);
+  }
+}
+
+/* Render de Markdown (descripción de tareas). Theme-aware con tokens del tema; se ve
+   legible en claro y oscuro dentro del panel del bento. */
+@layer components {
+  .markdown-body {
+    @apply text-sm leading-relaxed text-foreground;
+  }
+  .markdown-body > :first-child { margin-top: 0; }
+  .markdown-body > :last-child { margin-bottom: 0; }
+  .markdown-body h1 { @apply mb-2 mt-4 text-lg font-semibold tracking-tight; }
+  .markdown-body h2 { @apply mb-2 mt-4 text-base font-semibold tracking-tight; }
+  .markdown-body h3 { @apply mb-1.5 mt-3 text-sm font-semibold; }
+  .markdown-body h4,
+  .markdown-body h5,
+  .markdown-body h6 { @apply mb-1 mt-3 text-sm font-semibold; }
+  .markdown-body p { @apply my-2; }
+  .markdown-body strong { @apply font-semibold text-foreground; }
+  .markdown-body em { @apply italic; }
+  .markdown-body a { @apply font-medium text-chart-1 underline-offset-2 hover:underline; }
+  .markdown-body ul { @apply my-2 list-disc pl-5; }
+  .markdown-body ol { @apply my-2 list-decimal pl-5; }
+  .markdown-body li { @apply my-0.5; }
+  .markdown-body li > ul,
+  .markdown-body li > ol { @apply my-0.5; }
+  .markdown-body li::marker { @apply text-muted-foreground; }
+  .markdown-body blockquote { @apply my-2 border-l-2 border-border pl-3 text-muted-foreground; }
+  .markdown-body code { @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]; }
+  .markdown-body pre {
+    @apply my-2 overflow-x-auto rounded-md bg-muted p-3;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .markdown-body pre::-webkit-scrollbar { height: 8px; }
+  .markdown-body pre::-webkit-scrollbar-thumb { @apply rounded-full bg-border; }
+  .markdown-body pre::-webkit-scrollbar-track { background: transparent; }
+  .markdown-body pre code { @apply bg-transparent p-0 text-[0.85em]; }
+  .markdown-body hr { @apply my-3 border-border; }
+  .markdown-body table { @apply my-2 w-full border-collapse text-sm; }
+  .markdown-body thead { @apply bg-muted/50; }
+  .markdown-body th,
+  .markdown-body td { @apply border border-border px-2 py-1 text-left; }
+  .markdown-body img { @apply my-2 max-w-full rounded-md; }
+  .markdown-body input[type='checkbox'] { @apply mr-1.5 align-middle; }
 }
 
 /* ============================================================================

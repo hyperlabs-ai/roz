@@ -1,7 +1,7 @@
 // Auto-ingesta [endpoint de apps de clientes]: sin humano en el loop. roz documenta con
-// Claude (título, spec, tipo y prioridad inferidos), AUTO-ASIGNA al mejor dev y crea el
-// issue en Linear, dejando constancia en la descripción de que vino de una app externa.
-// Reutiliza evaluateProposal (documentar + rankear) y confirmProposal (crear en Linear).
+// Claude (título, spec, tipo y prioridad inferidos), AUTO-ASIGNA al mejor dev y crea la
+// tarea NATIVA, dejando constancia en la descripción de que vino de una app externa.
+// Reutiliza evaluateProposal (documentar + rankear) y confirmProposal (crear tarea nativa).
 import { evaluateProposal, confirmProposal, type ProposalSource } from './proposal.js';
 import { ValidationError } from '../utils/errors.js';
 
@@ -47,7 +47,7 @@ export async function autoIngest(input: AutoIngestInput): Promise<AutoIngestResu
     );
   }
 
-  // 3. Crear el issue en Linear (asignado) + espejo + notificación — mismo camino que el chat.
+  // 3. Crear la tarea nativa (asignada) + notificación — mismo camino que el chat.
   const created = await confirmProposal(verdict.proposalId, chosen.devId);
 
   return {

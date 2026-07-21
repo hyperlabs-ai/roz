@@ -20,6 +20,11 @@ function firstName(name?: string | null): string {
   return name.replace(/\s*\(.*\)\s*$/, '').trim();
 }
 
+/** Deep-link a la tarea nativa en el dashboard de roz (abre el detalle vía ?task=<id>). */
+function taskUrl(id?: string | null): string | null {
+  return id && config.dashboard.url ? `${config.dashboard.url}/app/tasks?task=${id}` : null;
+}
+
 /** Plantilla de correo: branding ROZ, bien formateada, con botón directo a Linear. */
 function renderEmail(opts: {
   greeting: string;
@@ -30,7 +35,7 @@ function renderEmail(opts: {
 }): { html: string; text: string } {
   const { greeting, identifier, title, priority, url } = opts;
   const button = url
-    ? `<a href="${url}" style="display:inline-block;background:#5e6ad2;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Abrir en Linear →</a>`
+    ? `<a href="${url}" style="display:inline-block;background:#5e6ad2;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Abrir tarea →</a>`
     : '';
   const prioBadge = priority
     ? `<span style="display:inline-block;background:#eef0ff;color:#5e6ad2;border-radius:6px;padding:3px 10px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.4px">${priority}</span>`
@@ -63,7 +68,7 @@ function renderEmail(opts: {
   const text =
     `${greeting}\nTe asignaron ${identifier}${title ? ` — ${title}` : ''}` +
     (priority ? ` (prioridad: ${priority})` : '') +
-    (url ? `\n\nAbrir en Linear: ${url}` : '') +
+    (url ? `\n\nAbrir tarea: ${url}` : '') +
     `\n\n— ROZ`;
 
   return { html, text };
@@ -77,7 +82,7 @@ function renderDoneEmail(opts: {
 }): { html: string; text: string } {
   const { identifier, title, url } = opts;
   const button = url
-    ? `<a href="${url}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver en Linear →</a>`
+    ? `<a href="${url}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver tarea →</a>`
     : '';
   const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
@@ -104,7 +109,7 @@ function renderDoneEmail(opts: {
 </body></html>`;
   const text =
     `✓ Completado\nTu solicitud ${identifier}${title ? ` — ${title}` : ''} quedó cerrada y documentada.` +
-    (url ? `\n\nVer en Linear: ${url}` : '') +
+    (url ? `\n\nVer tarea: ${url}` : '') +
     `\n\n— ROZ`;
   return { html, text };
 }
@@ -186,7 +191,8 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
     identifier,
     title,
     priority: wi?.priority,
-    url: wi?.url,
+    // Tareas nativas no tienen url externa → deep-link al detalle en roz; cae a la url del ticket si existiera.
+    url: taskUrl(workItemId) ?? wi?.url,
   });
 
   if (!dev?.email) {
@@ -213,7 +219,7 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
     await pushToDev(devId, dev.email, {
       title: `Te asignaron ${identifier}`,
       body: title || 'Nueva tarea asignada',
-      url: `${config.dashboard.url}/app/tickets`,
+      url: taskUrl(workItemId) ?? `${config.dashboard.url}/app/tasks`,
       tag: `assign:${identifier}`,
     }, 'assigned');
   } catch (err) {
@@ -252,7 +258,7 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
   // Con un solo cambio, botón directo al issue resuelto en Linear (verde = completado).
   const button =
     n === 1 && items[0]!.url
-      ? `<a href="${items[0]!.url}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver en Linear →</a>`
+      ? `<a href="${items[0]!.url}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver tarea →</a>`
       : '';
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
@@ -262,7 +268,7 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
       <tr><td style="padding:28px 28px 12px">
         <p style="margin:0 0 4px;color:#16a34a;font-size:13px;font-weight:600">✓ Cambio documentado</p>
         <p style="margin:0 0 6px;color:#111827;font-size:17px;font-weight:600">${heading}</p>
-        <p style="margin:0 0 16px;color:#6b7280;font-size:13px">${greeting} roz registró tu trabajo en Linear (ya completado). No necesitas hacer nada.</p>
+        <p style="margin:0 0 16px;color:#6b7280;font-size:13px">${greeting} roz registró tu trabajo (ya completado). No necesitas hacer nada.</p>
       </td></tr>
       <tr><td style="padding:0 12px 16px">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:10px">${rows}</table>
@@ -274,7 +280,7 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
 </body></html>`;
 
   const text =
-    `${heading}\n${greeting} roz registró tu trabajo en Linear (ya completado):\n\n` +
+    `${heading}\n${greeting} roz registró tu trabajo (ya completado):\n\n` +
     items.map((i) => `• ${i.identifier} — ${i.title}${i.url ? ` (${i.url})` : ''}`).join('\n') +
     `\n\n— ROZ`;
 
@@ -317,7 +323,9 @@ export async function notifyChangesDocumented(devId: string): Promise<void> {
 
   const greeting = dev.name ? `Hola ${firstName(dev.name)},` : 'Hola,';
   const subject = list.length === 1 ? `ROZ · Cambio documentado — ${list[0]!.identifier}` : `ROZ · ${list.length} cambios documentados`;
-  const { html, text } = renderDocumentedEmail({ greeting, items: list });
+  // Deep-link a la tarea nativa (url del work_item es null en nativas) → botón/enlace "Ver tarea".
+  const emailItems = list.map((i) => ({ identifier: i.identifier, title: i.title, url: taskUrl(i.id) ?? i.url }));
+  const { html, text } = renderDocumentedEmail({ greeting, items: emailItems });
 
   const res = await sendEmail({ to: dev.email, subject, html, text }); // si falla, lanza → reintento (pendientes intactos)
   // Marca como notificados SOLO tras enviar OK, para que un fallo reintente sin perder el aviso.
@@ -325,8 +333,9 @@ export async function notifyChangesDocumented(devId: string): Promise<void> {
   await supabase.from('notification').insert({ channel: 'email', to_dev_id: devId, to_address: dev.email, template: 'change_documented', body: text, status: 'sent', provider_id: res.id });
   await pushToDev(devId, dev.email, {
     title: list.length === 1 ? 'Cambio documentado' : `${list.length} cambios documentados`,
-    body: list.length === 1 ? `${list[0]!.identifier} — ${list[0]!.title}` : 'roz registró tu trabajo en Linear',
-    url: `${config.dashboard.url}/app/tickets`,
+    body: list.length === 1 ? `${list[0]!.identifier} — ${list[0]!.title}` : 'roz registró tu trabajo',
+    // Un solo cambio → deep-link directo a esa tarea; varios → la vista de tareas.
+    url: (list.length === 1 ? taskUrl(list[0]!.id) : null) ?? `${config.dashboard.url}/app/tasks`,
     tag: `documented:${devId}`,
   }, 'change_documented');
 }

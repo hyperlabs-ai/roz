@@ -17,9 +17,11 @@ import {
   type PrAuthor,
   type PrReview,
 } from '../adapters/github.js';
-import { createComment, createIssue, moveIssueToCompleted, priorityToLinear, resolveInitialStateId } from '../adapters/linear.js';
+import { createComment, moveIssueToCompleted } from '../adapters/linear.js';
 import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
+import { createDocumentedTask } from '../dashboard/queries.js';
+import { STATE_LABEL } from '../tasks/states.js';
 import { config } from '../config.js';
 
 export interface ReconcilePrInput {
@@ -171,11 +173,11 @@ async function reconcileBody(
     };
   }
 
-  // 3b. Sustantivo huérfano → documentar creando un issue en Linear, asignado al autor.
-  if (!project?.linear_team_id) {
+  // 3b. Sustantivo huérfano → documentar creando una TAREA NATIVA (completada), asignada al autor.
+  if (!project?.id) {
     return {
       action: 'orphan:no-project',
-      detail: `repo ${input.repo} sin proyecto/team mapeado; no se puede crear issue`,
+      detail: `repo ${input.repo} sin proyecto mapeado; no se puede documentar`,
     };
   }
 
@@ -192,66 +194,32 @@ async function reconcileBody(
 
   const title = (a.title || pr.title || `PR #${pr.number}`).slice(0, 120);
   const description =
-    `> 🔗 **Auto-documentado desde PR #${pr.number}** (sin issue previo)\n` +
+    `> 🔗 **Auto-documentado desde PR #${pr.number}** (sin tarea previa)\n` +
     `> Repo \`${input.repo}\` · [ver PR](${pr.url})\n` +
     `> **Commiteó:** ${authorsLine} · **Revisó:** ${reviewerLine} · **Mergeó:** ${mention(pr.mergedByLogin)}` +
     `\n\n${a.summary || pr.body || pr.title}`;
 
-  const assigneeId = authorDev?.linear_user_id ?? undefined;
-  const stateId = await resolveInitialStateId(project.linear_team_id, 'completed');
   // Valida la prioridad de salida del modelo contra una lista blanca (defensa anti prompt-injection).
-  const priority = a.priority && ['urgent', 'high', 'medium', 'low'].includes(a.priority) ? a.priority : undefined;
-  const issue = await createIssue({
-    teamId: project.linear_team_id,
-    projectId: project.linear_project_id ?? undefined,
+  const priority = a.priority && ['urgent', 'high', 'medium', 'low'].includes(a.priority) ? a.priority : null;
+
+  // Tarea nativa completada (source='pr') con atribución. Crear la tarea es un efecto NO idempotente
+  // (un reintento duplicaría), así que a partir de aquí no se libera la llave del claim.
+  const task = await createDocumentedTask({
+    projectId: project.id,
     title,
-    description,
-    assigneeId,
-    priority: priorityToLinear(priority),
-    stateId: stateId ?? undefined,
+    spec: description,
+    priority,
+    assigneeDevId: authorDev?.id ?? null,
+    mergerDevId: mergerDev?.id ?? null,
+    source: 'pr',
+    repo: input.repo,
+    prNumber: pr.number,
+    prState: 'merged',
+    headRef: pr.headRef ?? null,
   });
   state.issueCreated = true;
 
-  // Suprime el correo de "te asignaron una tarea": el espejo del webhook de Linear vería un
-  // assignee nuevo y dispararía notifyAssignment. Pre-reclamamos su llave (la misma que usa
-  // notifyAssignment) para que el eco se salte el envío — no tiene sentido por trabajo ya hecho.
-  // En su lugar emitimos "cambio documentado" (un solo correo agrupado al autor).
-  if (authorDev?.id) {
-    await claimOnce(`notify-assign:${issue.identifier}:${authorDev.id}`, 'notify-assign').catch(() => {});
-  }
-
-  // Espejo (idempotente con el webhook). source='pr' + atribución por columnas de conveniencia.
-  await supabase.from('work_item').upsert(
-    {
-      linear_id: issue.id,
-      identifier: issue.identifier,
-      project_id: project.id,
-      title,
-      spec: description,
-      state: 'completed',
-      completed_at: new Date().toISOString(),
-      assignee_dev_id: authorDev?.id ?? null,
-      merger_dev_id: mergerDev?.id ?? null,
-      priority: a.priority ?? null,
-      documented: true,
-      change_notified: false,
-      url: issue.url,
-      source: 'pr',
-      repo: input.repo,
-      pr_number: pr.number,
-    },
-    { onConflict: 'linear_id' },
-  );
-
-  // Recuperar el id del work_item para la atribución normalizada.
-  const { data: wi } = await supabase
-    .from('work_item')
-    .select('id')
-    .eq('linear_id', issue.id)
-    .maybeSingle();
-  if (wi?.id) {
-    await persistActors(supabase, wi.id, { authors, reviews, mergerLogin: pr.mergedByLogin });
-  }
+  await persistActors(supabase, task.id, { authors, reviews, mergerLogin: pr.mergedByLogin });
 
   // Notificar al autor (un solo correo agrupado de "cambio documentado").
   if (authorDev?.id) {
@@ -262,7 +230,7 @@ async function reconcileBody(
     ).catch(() => {});
   }
 
-  return { action: 'documented', identifier: issue.identifier, detail: 'issue creado desde PR con atribución' };
+  return { action: 'documented', identifier: task.identifier, detail: 'tarea nativa creada desde PR con atribución' };
 }
 
 /**
@@ -290,7 +258,7 @@ async function postPrLinkComment(
 }
 
 /** Resuelve un dev de roz por su github_login. */
-async function resolveDevByLogin(
+export async function resolveDevByLogin(
   supabase: ReturnType<typeof db>,
   login: string | null,
 ): Promise<{ id: string; linear_user_id: string | null } | null> {
@@ -315,7 +283,7 @@ async function attributePr(
   supabase: ReturnType<typeof db>,
   identifier: string,
   input: ReconcilePrInput,
-  pr: { number: number; mergedByLogin: string | null },
+  pr: { number: number; mergedByLogin: string | null; headRef?: string | null },
   authors: PrAuthor[],
   reviews: PrReview[],
   mergerDevId: string | null,
@@ -324,7 +292,7 @@ async function attributePr(
   if (!wi?.id) return;
   await supabase
     .from('work_item')
-    .update({ repo: input.repo, pr_number: pr.number, merger_dev_id: mergerDevId })
+    .update({ repo: input.repo, pr_number: pr.number, merger_dev_id: mergerDevId, pr_state: 'merged', head_ref: pr.headRef ?? null })
     .eq('id', wi.id);
   await persistActors(supabase, wi.id, { authors, reviews, mergerLogin: pr.mergedByLogin });
 }
@@ -345,9 +313,20 @@ async function completeLinkedIssue(supabase: ReturnType<typeof db>, identifier: 
     .select('id, linear_id, state')
     .eq('identifier', identifier)
     .maybeSingle();
-  if (!wi?.id || !wi.linear_id) return;
+  if (!wi?.id) return;
   if (wi.state === 'completed' || wi.state === 'canceled') return; // ya cerrado: no re-tocar
-  const done = await moveIssueToCompleted(wi.linear_id); // resuelve el estado del team del issue
+
+  // Tarea NATIVA (sin linear_id): roz es la fuente de verdad → se cierra directamente en local.
+  if (!wi.linear_id) {
+    await supabase
+      .from('work_item')
+      .update({ state: 'completed', state_name: STATE_LABEL.completed, completed_at: new Date().toISOString() })
+      .eq('id', wi.id);
+    return;
+  }
+
+  // Espejo histórico de Linear: mueve PRIMERO en Linear (fuente de verdad) y solo si funciona espeja.
+  const done = await moveIssueToCompleted(wi.linear_id);
   if (!done) return; // Linear falló o sin estado completed: no espejamos algo que no aplicamos
   await supabase
     .from('work_item')
@@ -360,7 +339,7 @@ async function completeLinkedIssue(supabase: ReturnType<typeof db>, identifier: 
  * quién mergeó. github_login SIEMPRE se guarda (aunque el actor no esté mapeado a un dev), para
  * no perder el crédito de quien aún no está en roz.dev. Upsert idempotente por (work_item, login, rol).
  */
-async function persistActors(
+export async function persistActors(
   supabase: ReturnType<typeof db>,
   workItemId: string,
   data: { authors: PrAuthor[]; reviews: PrReview[]; mergerLogin: string | null },

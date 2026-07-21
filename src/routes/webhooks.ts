@@ -61,7 +61,8 @@ webhookRoutes.post('/github', async (c) => {
   }
   const event = c.req.header('x-github-event');
   const payload = JSON.parse(raw) as {
-    ref?: string; // "refs/heads/<branch>" en push
+    ref?: string; // "refs/heads/<branch>" en push; nombre de rama/tag en `create`
+    ref_type?: string; // 'branch' | 'tag' en el evento `create`
     before?: string; // tip anterior de la rama (push)
     after?: string; // tip nuevo de la rama (push)
     repository?: { id?: number; full_name?: string; name?: string; description?: string | null; html_url?: string; default_branch?: string };
@@ -73,6 +74,7 @@ webhookRoutes.post('/github', async (c) => {
       owner?: { from?: { user?: { login?: string }; organization?: { login?: string } } }; // transferred: owner viejo
     };
     pull_request?: { number?: number; merged?: boolean };
+    review?: { state?: string }; // evento pull_request_review
   };
   const repo = payload.repository?.full_name;
   const repoId = payload.repository?.id ?? null; // id numérico inmutable (ancla para renames)
@@ -133,6 +135,29 @@ webhookRoutes.post('/github', async (c) => {
         );
       }
     }
+  }
+
+  // Rama creada (evento `create`, ref_type=branch): si su nombre referencia una tarea (feat/ROZ-123),
+  // ésta pasa a "En curso". Es una señal EN VIVO del ciclo del código (a diferencia del push a default,
+  // que solo cuenta trabajo ya integrado). Idempotente por rama.
+  if (event === 'create' && payload.ref_type === 'branch' && repo && payload.ref) {
+    await emit('branch.created', { repo, ref: payload.ref, githubId: repoId }, { idempotencyKey: `branch:${repo}:${payload.ref}` });
+  }
+
+  // PR abierta/reabierta/lista-para-review: si referencia una tarea, ésta pasa a "En revisión" y se
+  // registra el PR (nº, rama, autores, revisores) en vivo. Idempotente por (PR, acción). `synchronize`
+  // (nuevos commits en la PR) no cambia de estado, así que no se procesa aquí.
+  if (event === 'pull_request' && repo && payload.pull_request?.number != null &&
+      ['opened', 'reopened', 'ready_for_review'].includes(payload.action ?? '')) {
+    const number = payload.pull_request.number;
+    await emit('pr.opened', { repo, number, githubId: repoId }, { idempotencyKey: `pr-open:${repo}:${number}:${payload.action}` });
+  }
+
+  // Revisión de PR (aprobó / pidió cambios / comentó): refresca los revisores de la tarea ligada
+  // EN VIVO, sin esperar al merge. NO se dedup por idempotency_key: cada review es un cambio de
+  // estado legítimo y el refresco (persistActors) es idempotente por (tarea, login, rol).
+  if (event === 'pull_request_review' && repo && payload.action === 'submitted' && payload.pull_request?.number != null) {
+    await emit('pr.reviewed', { repo, number: payload.pull_request.number, githubId: repoId });
   }
 
   // PR mergeada → documentar por PR (un ticket con atribución). Idempotente por nº de PR, así
