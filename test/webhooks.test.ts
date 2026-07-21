@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createHmac } from 'node:crypto';
-import { verifyGithub, verifyLinear } from '../src/utils/webhooks.js';
+import { verifyGithub } from '../src/utils/webhooks.js';
 
 const secret = 'shhh';
 const body = '{"hello":"world"}';
@@ -20,15 +20,5 @@ describe('verifyGithub', () => {
   it('rechaza si el cuerpo cambió (tamper)', () => {
     const sig = 'sha256=' + createHmac('sha256', secret).update(body).digest('hex');
     expect(verifyGithub(body + ' ', sig, secret)).toBe(false);
-  });
-});
-
-describe('verifyLinear', () => {
-  it('acepta una firma válida (hex sin prefijo)', () => {
-    const sig = createHmac('sha256', secret).update(body).digest('hex');
-    expect(verifyLinear(body, sig, secret)).toBe(true);
-  });
-  it('rechaza una firma inválida', () => {
-    expect(verifyLinear(body, 'nope', secret)).toBe(false);
   });
 });

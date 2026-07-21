@@ -4,26 +4,28 @@
 ![Works with GitHub](https://img.shields.io/badge/Works%20with-GitHub-181717?logo=github)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?logo=typescript&logoColor=white)
 
-**The intelligence layer over Linear & GitHub.** roz is a layer of **context, routing and
-notification** around development work. **It is not a task manager** — that's Linear. roz is the
-**reasoning layer** that watches what happens in Linear and GitHub, understands it with AI, and
-keeps each project's and each developer's context alive — to **document, route and notify**
-automatically, with nobody having to administer it.
+**The intelligence layer over GitHub.** roz is a layer of **context, routing and
+notification** around development work. Work lives in roz as **native tasks** (a calendar +
+backlog you manage inside the app); roz is the **reasoning layer** that watches what happens
+across those tasks and GitHub, understands it with AI, and keeps each project's and each
+developer's context alive — to **document, route and notify** automatically, with nobody having
+to administer it.
 
 > 🇪🇸 *Español:* [README.es.md](README.es.md)
 
-The difference from a task manager: a task manager waits for you to feed it (create the ticket,
-assign it, mark it done, link the repo). roz **derives state from reality** — commits, issues,
-repos — and reconciles. The work is the source of truth; roz interprets it.
+What sets it apart from a plain task manager: a plain tracker waits for you to feed it (mark the
+task done, link the repo). roz **derives state from reality** — commits, PRs, repos — and
+reconciles: a branch named `ROZ-123` moves the task to *in progress*, an open PR to *in review*,
+a merge to *completed*. The work is the source of truth; roz interprets it.
 
 - **Reasons, doesn't just record.** For an orphan commit, Claude decides whether it's trivial or
   substantive, whether it resolves an existing open issue (semantic dedup, no embeddings) and, if
   not, **creates the already-documented issue**. It doesn't ask you to document — it documents for you.
-- **Has project context.** Anchors Linear (work) and GitHub (code) to the same canonical project,
-  auto-onboards new projects, and links new repos to the project they belong to by similarity — or
-  flags them for someone to link.
-- **Has developer context.** Resolves the same person across Linear, their GitHub login and their
-  commit email; knows their load and availability to route work by **skill + capacity**, not at random.
+- **Has project context.** Anchors native tasks (work) and GitHub (code) to the same canonical
+  project, auto-onboards new projects, and links new repos to the project they belong to by
+  similarity — or flags them for someone to link.
+- **Has developer context.** Resolves the same person across their GitHub login and their commit
+  email; knows their load and availability to route work by **skill + capacity**, not at random.
 - **Closes the loop with people.** Notifies by email what matters (you were assigned, your change was
   documented, a repo was detected) — targeted communication, not a board you have to go check.
 - **Second brain.** Embeddings + retrieval to recover historical project context and feed its own reasoning.
@@ -32,7 +34,7 @@ repos — and reconciles. The work is the source of truth; roz interprets it.
 
 **TypeScript + Hono** on **Vercel serverless** · **Supabase Postgres + pgvector** · async queue =
 **Postgres outbox drained by Vercel Cron** (no external service) · **Claude** (reasoning) ·
-**OpenAI** (embeddings) · **Linear / GitHub / Resend** (email) · **React** dashboard SPA in `web/`.
+**OpenAI** (embeddings) · **GitHub / Resend** (email) · **React** dashboard SPA in `web/`.
 
 Full design: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -47,7 +49,6 @@ deployment, so **your data stays in your own database**.
 |---|---|
 | **Supabase** | Postgres + pgvector (roz's database) |
 | **Vercel** | serverless runtime + cron |
-| **Linear** | roz is a layer *on top of* Linear + GitHub — required |
 | **GitHub** | a fine-grained PAT — see [`docs/GITHUB-SETUP.md`](docs/GITHUB-SETUP.md) |
 | **Anthropic** | Claude (reasoning) |
 | **OpenAI** | embeddings (`text-embedding-3-large`, 3072 dims) |
@@ -79,9 +80,9 @@ npm run dev                 # GET /health -> { "status": "ok" }
    Fridays). Set `CRON_SECRET` in production or the crons return `403`.
 3. **Connect GitHub.** Follow [`docs/GITHUB-SETUP.md`](docs/GITHUB-SETUP.md) (PAT scopes +
    webhook).
-4. **Seed.** From the MCP, run `sync_projects` (imports Linear Projects) and `sync_linear_members`
-   (links devs), then `npx tsx scripts/backfill-embeddings.ts` to generate skill embeddings.
-   Optionally `npx tsx scripts/backfill-commits.ts` for historical commits.
+4. **Seed.** Run `npx tsx scripts/backfill-embeddings.ts` to generate skill embeddings.
+   Optionally `npx tsx scripts/backfill-commits.ts` for historical commits. Create your projects
+   and tasks natively from the dashboard.
 
 The public **landing page** is served at `/`; the operator **dashboard** lives behind login at
 `/app`.
@@ -95,9 +96,8 @@ The public **landing page** is served at `/`; the operator **dashboard** lives b
 | Route | Caller | What it does |
 |---|---|---|
 | `GET /health` | — | healthcheck |
-| `POST /mcp` | Claude (bearer `ROZ_MCP_TOKEN`) | intake/dev/context tools: `get_intake_form`, `propose_change`, `confirm_proposal`, `list_projects`, `suggest_assignee`, `list_devs`, `sync_*`, `upsert_dev`, `set_availability`, `set_dev_skills`, `get_project_context` |
-| `POST /webhooks/linear` | Linear | issues (mirror + close) and projects (auto-onboarding); signature-verified |
-| `POST /webhooks/github` | GitHub | push/commits (reconciliation) and new-repo detection; HMAC-verified |
+| `POST /mcp` | Claude (bearer `ROZ_MCP_TOKEN`) | intake/dev/context tools: `get_intake_form`, `propose_change`, `confirm_proposal`, `list_projects`, `suggest_assignee`, `list_devs`, `upsert_dev`, `set_availability`, `set_dev_skills`, `get_project_context` |
+| `POST /webhooks/github` | GitHub | push/commits (reconciliation), PR lifecycle (task state) and new-repo detection; HMAC-verified |
 | `POST /v1/intake` | Client apps (bearer `ROZ_INGEST_TOKEN`) | auto-documented, auto-assigned intake |
 | `GET /api/dashboard/*` | Dashboard SPA (Supabase auth + domain) | engineering metrics + infra health |
 | `GET /v1/internal/drain` | Vercel Cron (every min) | drains the outbox (idempotent, with retries) |
@@ -108,7 +108,7 @@ The public **landing page** is served at `/`; the operator **dashboard** lives b
 
 ## Status
 
-Implemented: multi-channel intake (conversational via MCP + apps via `/v1/intake` + Linear mirror),
+Implemented: multi-channel intake (conversational via MCP + apps via `/v1/intake` + native tasks),
 skill-based router, email notifications, second brain (documentation on close + hybrid retrieval +
 embedding sweep), commit reconciliation, new-repo tracking (detection + similarity link + dev
 notification), the visibility dashboard, and the weekly digest. See [`ARCHITECTURE.md`](ARCHITECTURE.md)

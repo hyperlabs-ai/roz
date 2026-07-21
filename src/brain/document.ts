@@ -1,9 +1,9 @@
-// Second brain — documentación al cierre [fase 4]. Disparado por `work_item.done` (webhook de
-// Linear cuando un issue pasa a completed). roz:
+// Second brain — documentación al cierre [fase 4]. Disparado por `work_item.done` cuando una tarea
+// pasa a Completado (cierre nativo desde el dashboard o PR mergeada). roz:
 //   1. marca el work_item como documentado;
 //   2. crea/actualiza un átomo de conocimiento con el delta del trabajo (título + spec),
-//      con embedding y procedencia ligada al identifier de Linear — supersede en vez de
-//      duplicar (si ya hay un átomo para ese issue con otro contenido, lo marca superseded);
+//      con embedding y procedencia ligada al identifier de la tarea — supersede en vez de
+//      duplicar (si ya hay un átomo para esa tarea con otro contenido, lo marca superseded);
 //   3. avisa por email a quien propuso (si el requester es un correo) que su cambio cerró.
 //
 // Todo es idempotente: el efecto se reintenta vía el outbox, así que reprocesar el mismo
@@ -17,7 +17,6 @@ import { notifyProposerDone } from '../notify/notifications.js';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export interface DoneInput {
-  linearId?: string;
   identifier?: string;
 }
 
@@ -33,13 +32,13 @@ function contentHash(s: string): string {
 
 export async function documentCompletedWork(payload: DoneInput): Promise<DocumentResult> {
   const supabase = db();
-  const linearId = String(payload.linearId ?? '');
-  if (!linearId) return { documented: false, atom: 'skipped', notified: false };
+  const identifier = String(payload.identifier ?? '');
+  if (!identifier) return { documented: false, atom: 'skipped', notified: false };
 
   const { data: wi } = await supabase
     .from('work_item')
     .select('id, identifier, project_id, title, spec, requester, url, documented')
-    .eq('linear_id', linearId)
+    .eq('identifier', identifier)
     .maybeSingle();
   if (!wi) return { documented: false, atom: 'skipped', notified: false };
 
@@ -58,7 +57,7 @@ export async function documentCompletedWork(payload: DoneInput): Promise<Documen
   let notified = false;
   const requester = (wi.requester ?? '').trim();
   if (EMAIL_RE.test(requester)) {
-    const firstTime = await claimOnce(`done-notify:${linearId}`, 'done-notify');
+    const firstTime = await claimOnce(`done-notify:${identifier}`, 'done-notify');
     if (firstTime) {
       try {
         await notifyProposerDone({
@@ -70,7 +69,7 @@ export async function documentCompletedWork(payload: DoneInput): Promise<Documen
         notified = true;
       } catch (err) {
         // Liberar para reintentar el aviso en el próximo drain (no perder la notificación).
-        await supabase.from('idempotency_key').delete().eq('key', `done-notify:${linearId}`);
+        await supabase.from('idempotency_key').delete().eq('key', `done-notify:${identifier}`);
         throw err;
       }
     }

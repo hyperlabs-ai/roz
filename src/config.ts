@@ -25,19 +25,6 @@ const raw = z
     ROZ_EMBEDDING_MODEL: z.string().default('text-embedding-3-large'),
     ROZ_EMBEDDING_DIM: z.coerce.number().default(3072),
 
-    LINEAR_API_KEY: z.string().default(''),
-    LINEAR_WEBHOOK_SECRET: z.string().default(''),
-    // Endpoint GraphQL. Default: Linear. Se puede apuntar a un backend compatible con el
-    // protocolo de Linear (p.ej. la fachada de Ops) sin tocar codigo; el switch es reversible.
-    LINEAR_API_ENDPOINT: z.string().default('https://api.linear.app/graphql'),
-    // Publicar un comentario con el enlace del PR dentro del issue al reconciliar. Off por
-    // defecto: con Linear la integracion nativa ya muestra el link, asi no cambia su comportamiento.
-    // Se enciende al apuntar a un backend sin integracion nativa con GitHub (p.ej. Ops).
-    LINEAR_POST_PR_COMMENTS: z
-      .enum(['true', 'false'])
-      .default('false')
-      .transform((v) => v === 'true'),
-
     GITHUB_TOKEN: z.string().default(''),
     GITHUB_WEBHOOK_SECRET: z.string().default(''),
 
@@ -88,7 +75,6 @@ const raw = z
       SUPABASE_URL: v.SUPABASE_URL,
       SUPABASE_SERVICE_ROLE_KEY: v.SUPABASE_SERVICE_ROLE_KEY,
       SUPABASE_ANON_KEY: v.SUPABASE_ANON_KEY,
-      LINEAR_WEBHOOK_SECRET: v.LINEAR_WEBHOOK_SECRET,
       GITHUB_WEBHOOK_SECRET: v.GITHUB_WEBHOOK_SECRET,
       ROZ_MCP_TOKEN: v.ROZ_MCP_TOKEN,
       ROZ_INGEST_TOKEN: v.ROZ_INGEST_TOKEN,
@@ -128,12 +114,6 @@ export const config = {
     apiKey: raw.OPENAI_API_KEY,
     embeddingModel: raw.ROZ_EMBEDDING_MODEL,
     embeddingDim: raw.ROZ_EMBEDDING_DIM,
-  },
-  linear: {
-    apiKey: raw.LINEAR_API_KEY,
-    webhookSecret: raw.LINEAR_WEBHOOK_SECRET,
-    endpoint: raw.LINEAR_API_ENDPOINT,
-    postPrComments: raw.LINEAR_POST_PR_COMMENTS,
   },
   github: { token: raw.GITHUB_TOKEN, webhookSecret: raw.GITHUB_WEBHOOK_SECRET },
   hyperops: { fallback: raw.HYPEROPS_FALLBACK },

@@ -85,13 +85,10 @@ export interface DeveloperListItem {
 
 export interface Ticket { id: string; identifier: string; title: string; state: string; priority: string | null; url: string | null; }
 
-/** Miembro del workspace de Linear, para el selector al crear un developer. */
-export interface LinearUserOption { id: string; name: string; displayName: string | null; email: string | null; }
-
 /** Credenciales editables de un developer (formulario de alta/edición). */
 export interface DeveloperCredentials {
   id: string; name: string; email: string | null;
-  githubLogin: string | null; githubEmail: string | null; linearUserId: string | null;
+  githubLogin: string | null; githubEmail: string | null;
   availability: number; active: boolean;
 }
 
@@ -172,8 +169,9 @@ export interface Ticket {
   labels: string[]; creatorName: string | null; url: string | null;
   updatedAt: string | null; ageDays: number | null;
   parentId: string | null;
-  // Agendado (calendario)
+  // Agendado (calendario) + resolución
   scheduledStart: string | null; scheduledEnd: string | null;
+  completedAt: string | null;
   // Conexión con código (migraciones 0011 + 0016)
   source: 'pr' | 'commit' | 'native' | null;
   headRef: string | null;

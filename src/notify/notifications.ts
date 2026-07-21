@@ -25,7 +25,7 @@ function taskUrl(id?: string | null): string | null {
   return id && config.dashboard.url ? `${config.dashboard.url}/app/tasks?task=${id}` : null;
 }
 
-/** Plantilla de correo: branding ROZ, bien formateada, con botón directo a Linear. */
+/** Plantilla de correo: branding ROZ, bien formateada, con botón directo a la tarea en el dashboard. */
 function renderEmail(opts: {
   greeting: string;
   identifier: string;
@@ -255,7 +255,7 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
     )
     .join('');
 
-  // Con un solo cambio, botón directo al issue resuelto en Linear (verde = completado).
+  // Con un solo cambio, botón directo a la tarea resuelta en el dashboard (verde = completado).
   const button =
     n === 1 && items[0]!.url
       ? `<a href="${items[0]!.url}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver tarea →</a>`

@@ -4,23 +4,18 @@
 // procesa de forma idempotente, con reintentos (backoff exponencial) y dead-letter.
 import { db } from '../db/supabase.js';
 import { notifyAssignment, notifyChangesDocumented, notifyRepoDetected } from '../notify/notifications.js';
-import { syncIssueFromWebhook, removeMirror } from '../sync/linear-issue.js';
 import { reconcileCommit, backfillPushCommits } from '../reconcile/commits.js';
 import { backfillRepoCommits, markRepoSyncError } from '../reconcile/backfill.js';
 import { reconcilePullRequest } from '../reconcile/pull-request.js';
 import { handleBranchCreated, handlePrOpened, handlePrReviewed } from '../reconcile/task-events.js';
 import { handleRepoDetected, handleRepoRenamed } from '../reconcile/repos.js';
 import type { RepoMeta } from '../adapters/github.js';
-import { upsertLinearProject } from '../projects/resolve.js';
 import { documentCompletedWork } from '../brain/document.js';
 
 export type OutboxEventType =
   | 'work_item.created'
   | 'work_item.assigned'
   | 'work_item.done'
-  | 'linear.issue_upserted'
-  | 'linear.issue_removed'
-  | 'linear.project_upserted'
   | 'commit.received'
   | 'commits.backfill'
   | 'repo.backfill'
@@ -181,35 +176,8 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
       await notifyAssignment(payload as { workItemId?: string; devId?: string; identifier?: string });
       return;
 
-    // Espejo bidireccional: issue creado/actualizado en Linear (de cualquier origen).
-    case 'linear.issue_upserted': {
-      const r = await syncIssueFromWebhook(payload.data);
-      // Si Linear asignó a un dev conocido, notifícalo (misma vía que el chat). La clave
-      // de idempotencia es compartida con confirm_proposal → nunca hay doble aviso.
-      if (r.assigneeToNotify) {
-        await emit('work_item.assigned', r.assigneeToNotify, {
-          idempotencyKey: `assigned:${(payload.data as any)?.id}:${r.assigneeToNotify.devId}`,
-        });
-      }
-      return;
-    }
-    case 'linear.issue_removed':
-      await removeMirror(String(payload.linearId ?? ''));
-      return;
-
-    // Auto-onboarding de proyectos: Linear Project nuevo/actualizado → roz.project.
-    case 'linear.project_upserted': {
-      const d = payload.data as { id: string; name?: string; teamIds?: string[]; team?: { id?: string } };
-      await upsertLinearProject({
-        id: d.id,
-        name: d.name,
-        teamId: d.team?.id ?? d.teamIds?.[0] ?? null,
-      });
-      return;
-    }
-
     case 'work_item.done':
-      await documentCompletedWork(payload as { linearId?: string; identifier?: string });
+      await documentCompletedWork(payload as { identifier?: string });
       return;
     case 'commit.received':
       await reconcileCommit({

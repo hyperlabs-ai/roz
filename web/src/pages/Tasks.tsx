@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, Inbox } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, Inbox, Circle, CircleDashed, CircleDot, CircleDotDashed, CircleCheck, CircleSlash } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { TaskDialog } from '@/components/TaskDialog';
 import { AvatarStack, EmptyState } from '@/components/bits';
@@ -10,11 +10,12 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { useApi } from '@/lib/useApi';
 import { apiGet, apiSend, type TicketsResponse, type TicketFilterOptions, type Ticket } from '@/lib/api';
 import {
-  WEEKDAYS, addDays, addMonths, localDateStr, monthGrid, monthLabel, pad, sameDay, startOfMonth, startOfWeek, toIso, weekLabel,
+  WEEKDAYS, addDays, addMonths, localDateStr, localTimeStr, monthGrid, monthLabel, pad, sameDay, startOfMonth, startOfWeek, toIso, weekLabel,
 } from '@/lib/calendar';
 import { shortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -205,7 +206,6 @@ export default function Tasks() {
   const dragTask = useRef<Ticket | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
 
-  const scheduled = useMemo(() => tasks.filter((t) => t.scheduledStart), [tasks]);
   const backlog = useMemo(
     () => tasks
       .filter((t) => !t.scheduledStart && t.state !== 'canceled' && t.state !== 'completed')
@@ -336,9 +336,9 @@ export default function Tasks() {
             {loading ? (
               <Skeleton className="h-[560px] w-full" />
             ) : view === 'week' ? (
-              <WeekView anchor={anchor} tasks={scheduled} dragId={dragId} onDragStart={onDragStart} onDragEnd={onDragEnd} onDropSlot={dropOnSlot} onOpen={openEdit} />
+              <WeekView anchor={anchor} tasks={tasks} dragId={dragId} onDragStart={onDragStart} onDragEnd={onDragEnd} onDropSlot={dropOnSlot} onOpen={openEdit} />
             ) : (
-              <MonthView anchor={anchor} tasks={scheduled} onDropDay={dropOnDay} onOpen={openEdit} onCreate={openCreate} />
+              <MonthView anchor={anchor} tasks={tasks} onDropDay={dropOnDay} onOpen={openEdit} onCreate={openCreate} />
             )}
           </div>
 
@@ -384,6 +384,38 @@ export default function Tasks() {
   );
 }
 
+// Íconos de estado estilo Linear (la firma visual): círculo punteado (backlog), vacío (por hacer),
+// con punto (en curso), punteado-con-punto (en revisión), check verde (completado), tachado (cancelada).
+const STATUS_ICON: Record<string, { Icon: typeof Circle; cls: string }> = {
+  backlog: { Icon: CircleDashed, cls: 'text-muted-foreground' },
+  triage: { Icon: CircleDashed, cls: 'text-muted-foreground' },
+  unstarted: { Icon: Circle, cls: 'text-muted-foreground' },
+  started: { Icon: CircleDot, cls: 'text-chart-1' },
+  in_progress: { Icon: CircleDot, cls: 'text-chart-1' },
+  review: { Icon: CircleDotDashed, cls: 'text-warning' },
+  completed: { Icon: CircleCheck, cls: 'text-success' },
+  done: { Icon: CircleCheck, cls: 'text-success' },
+  canceled: { Icon: CircleSlash, cls: 'text-muted-foreground' },
+};
+function StatusIcon({ state, className }: { state: string; className?: string }) {
+  const s = STATUS_ICON[state] ?? { Icon: Circle, cls: 'text-muted-foreground' };
+  const I = s.Icon;
+  return <I className={cn('size-4 shrink-0', s.cls, className)} />;
+}
+
+/** ¿Se posiciona en el calendario como RESUELTA? completed/canceled con `completedAt` → por su
+ *  fecha de resolución (con estilo distinto), aunque tenga scheduledStart (evita duplicar). */
+function isResolvedDisplay(t: Ticket): boolean {
+  return (DONE_STATES.includes(t.state) || t.state === 'canceled') && !!t.completedAt;
+}
+
+// Estilo del chip/bloque de una tarea resuelta en el calendario: verde+check (hecho) o gris+tachado (cancelada).
+function resolvedStyle(state: string): { cls: string; Icon: typeof Circle; iconCls: string } {
+  return state === 'canceled'
+    ? { cls: 'border-l-muted-foreground bg-muted', Icon: CircleSlash, iconCls: 'text-muted-foreground' }
+    : { cls: 'border-l-success bg-success/10', Icon: CircleCheck, iconCls: 'text-success' };
+}
+
 // ---- Vista lista (plana, densa, estilo Linear, con "agrupar por") ----
 function ListView({ tasks, onOpen }: { tasks: Ticket[]; onOpen: (t: Ticket) => void }) {
   const [params, setParams] = useSearchParams();
@@ -395,20 +427,16 @@ function ListView({ tasks, onOpen }: { tasks: Ticket[]; onOpen: (t: Ticket) => v
     setParams(p, { replace: true });
   };
 
-  const [showDone, setShowDone] = useState(false); // completadas/canceladas ocultas por defecto
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}); // por defecto TODO expandido
+  const groups = useMemo(() => buildGroups(tasks, group), [tasks, group]);
 
-  // La lista es para el trabajo VIVO: oculta completadas/canceladas por defecto (evita el ruido del
-  // histórico ya cerrado, p.ej. lo auto-documentado desde PRs). Toggle para mostrarlas.
-  const visible = useMemo(
-    () => (showDone ? tasks : tasks.filter((t) => !DONE_STATES.includes(t.state) && t.state !== 'canceled')),
-    [tasks, showDone],
-  );
-  const groups = useMemo(() => buildGroups(visible, group), [visible, group]);
-
-  const toggle = (key: string) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
-  const anyOpen = groups.some((g) => !collapsed[g.key]);
-  const setAll = () => setCollapsed(anyOpen ? Object.fromEntries(groups.map((g) => [g.key, true])) : {});
+  // Apertura por sección. Sin override explícito, al agrupar por ESTADO las secciones resueltas
+  // (completado/cancelada) arrancan colapsadas (pero con su conteo visible); el resto, abiertas.
+  const [openOverride, setOpenOverride] = useState<Record<string, boolean>>({});
+  const defaultOpen = (key: string) => (group === 'state' ? !['completed', 'done', 'canceled'].includes(key) : true);
+  const isOpen = (g: Group) => (group === 'none' ? true : openOverride[g.key] ?? defaultOpen(g.key));
+  const toggle = (g: Group) => setOpenOverride((o) => ({ ...o, [g.key]: !isOpen(g) }));
+  const anyOpen = groups.some((g) => isOpen(g));
+  const setAll = () => setOpenOverride(Object.fromEntries(groups.map((g) => [g.key, !anyOpen])));
 
   const header = (
     <div className="mb-2 flex items-center gap-2">
@@ -421,25 +449,19 @@ function ListView({ tasks, onOpen }: { tasks: Ticket[]; onOpen: (t: Ticket) => v
           <SelectItem value="none">Sin agrupar</SelectItem>
         </SelectContent>
       </Select>
-      <div className="ml-auto flex items-center gap-1">
-        <Button variant="ghost" size="sm" onClick={() => setShowDone((v) => !v)}>
-          {showDone ? 'Ocultar completadas' : 'Mostrar completadas'}
+      {group !== 'none' && (
+        <Button variant="ghost" size="sm" className="ml-auto" onClick={setAll} disabled={!groups.length}>
+          {anyOpen ? 'Colapsar todo' : 'Expandir todo'}
         </Button>
-        {group !== 'none' && (
-          <Button variant="ghost" size="sm" onClick={setAll} disabled={!groups.length}>
-            {anyOpen ? 'Colapsar todo' : 'Expandir todo'}
-          </Button>
-        )}
-      </div>
+      )}
     </div>
   );
 
-  const empty = !groups.some((g) => g.tasks.length);
-  if (empty) {
+  if (!groups.some((g) => g.tasks.length)) {
     return (
       <div>
         {header}
-        <Card><EmptyState icon={<Inbox className="size-6" />}>{showDone ? 'No hay tareas' : 'No hay tareas activas'}</EmptyState></Card>
+        <Card><EmptyState icon={<Inbox className="size-6" />}>No hay tareas</EmptyState></Card>
       </div>
     );
   }
@@ -450,23 +472,23 @@ function ListView({ tasks, onOpen }: { tasks: Ticket[]; onOpen: (t: Ticket) => v
       {/* Lista plana: contenedor scrolleable propio con encabezados de sección sticky dentro. */}
       <div className="scroll-thin max-h-[calc(100dvh-11rem)] overflow-y-auto rounded-lg border">
         {groups.map((g) => {
-          const isOpen = group === 'none' || !collapsed[g.key];
+          const openNow = isOpen(g);
           return (
             <div key={g.key}>
               {g.name && (
                 <button
                   type="button"
-                  onClick={() => toggle(g.key)}
+                  onClick={() => toggle(g)}
                   className="sticky top-0 z-10 flex w-full items-center gap-1.5 border-b bg-background/95 px-3 py-1.5 text-left backdrop-blur"
                 >
-                  <ChevronDown className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', !isOpen && '-rotate-90')} />
+                  <ChevronDown className={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', !openNow && '-rotate-90')} />
                   <span className="truncate text-xs font-semibold uppercase tracking-wide text-muted-foreground">{g.name}</span>
                   <span className="text-xs text-muted-foreground/60">{g.tasks.length}</span>
                 </button>
               )}
-              {isOpen && (
+              {openNow && (
                 <div className="divide-y divide-border">
-                  {g.tasks.map((t) => <ListRow key={t.id} t={t} onOpen={onOpen} hideState={group === 'state'} />)}
+                  {g.tasks.map((t) => <ListRow key={t.id} t={t} onOpen={onOpen} />)}
                 </div>
               )}
             </div>
@@ -477,25 +499,102 @@ function ListView({ tasks, onOpen }: { tasks: Ticket[]; onOpen: (t: Ticket) => v
   );
 }
 
-/** Fila densa de una sola línea. En móvil oculta estado + fecha (deja dot · ID · título · avatares). */
-function ListRow({ t, onOpen, hideState }: { t: Ticket; onOpen: (t: Ticket) => void; hideState: boolean }) {
+/** Fila densa estilo Linear (una línea): ícono de estado · dot de prioridad · ID · título ·
+ *  etiquetas · avatares · fecha. En móvil oculta etiquetas + fecha. Click → editar. */
+function ListRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
   const prio = t.priority ? PRIO[t.priority] : null;
-  const date = listDate(t);
+  const resolved = t.state === 'completed' || t.state === 'done' || t.state === 'canceled';
+  const date = resolved && t.completedAt ? { label: shortDate(t.completedAt), overdue: false } : listDate(t);
   return (
     <button
       type="button"
       onClick={() => onOpen(t)}
-      className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-accent/50"
+      className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-accent/50"
     >
+      <StatusIcon state={t.state} />
       <span className={cn('size-2 shrink-0 rounded-full', prio?.dot ?? 'bg-muted')} title={prio?.label ?? 'sin prioridad'} />
       <span className="w-14 shrink-0 truncate font-mono text-xs text-muted-foreground">{t.identifier}</span>
-      <span className="min-w-0 flex-1 truncate text-sm">{t.title}</span>
-      {!hideState && <Badge variant={stateVariant(t.state)} className="hidden shrink-0 sm:inline-flex">{t.stateName}</Badge>}
+      <span className={cn('min-w-0 flex-1 truncate text-sm', resolved && 'text-muted-foreground')}>{t.title}</span>
+      {t.labels.length > 0 && (
+        <span className="hidden shrink-0 gap-1 lg:flex">
+          {t.labels.slice(0, 2).map((l) => <Badge key={l} variant="secondary" className="px-1.5 py-0 text-[10px]">{l}</Badge>)}
+        </span>
+      )}
       <AvatarStack people={assigneesOf(t)} max={3} size="size-5" className="shrink-0" />
       <span className={cn('hidden w-12 shrink-0 text-right text-xs sm:block', date?.overdue ? 'font-medium text-destructive' : 'text-muted-foreground')}>
         {date?.label ?? '—'}
       </span>
     </button>
+  );
+}
+
+/** Chip de una tarea RESUELTA en el calendario (verde+check / gris+tachado), no arrastrable. */
+function ResolvedChip({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
+  const s = resolvedStyle(t.state);
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onOpen(t); }}
+      className={cn('flex w-full items-center gap-1 rounded border-l-2 px-1 py-0.5 text-left text-[11px] transition hover:brightness-95', s.cls)}
+      title={`${t.identifier} · ${t.title}${t.completedAt ? ` · resuelta ${shortDate(t.completedAt)}` : ''}`}
+    >
+      <s.Icon className={cn('size-3 shrink-0', s.iconCls)} />
+      <span className="truncate font-mono font-medium">{t.identifier}</span>
+      <AvatarStack people={assigneesOf(t)} max={2} size="size-4" className="ml-auto shrink-0" />
+    </button>
+  );
+}
+
+const MES_CORTO = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+function dayTitle(d: Date): string {
+  return `${WEEKDAYS[(d.getDay() + 6) % 7]} ${d.getDate()} ${MES_CORTO[d.getMonth()]}`;
+}
+
+/** Fila de una tarea dentro del popover del día: estado · prioridad · ID · título · hora/fecha · avatares. */
+function DayPeekRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
+  const resolved = isResolvedDisplay(t);
+  const time = !resolved && t.scheduledStart ? localTimeStr(new Date(t.scheduledStart)) : null;
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onOpen(t); }}
+      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
+    >
+      <StatusIcon state={t.state} className="size-3.5" />
+      {t.priority && <span className={cn('size-1.5 shrink-0 rounded-full', PRIO[t.priority]?.dot ?? 'bg-muted')} />}
+      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
+      <span className={cn('min-w-0 flex-1 truncate', resolved && 'text-muted-foreground line-through')}>{t.title}</span>
+      {time && <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{time}</span>}
+      <AvatarStack people={assigneesOf(t)} max={2} size="size-4" className="shrink-0" />
+    </button>
+  );
+}
+
+/** Modal con la lista COMPLETA de tareas de un día. Reutilizado por mes ("+N más") y semana.
+ *  Es un diálogo (instancia única): no se pueden solapar varios ni cerrarse solos. Al elegir una
+ *  tarea, cierra el modal del día y abre el detalle. */
+function DayPeek({ day, tasks, onOpen, trigger, open, onOpenChange }: {
+  day: Date; tasks: Ticket[]; onOpen: (t: Ticket) => void; trigger: ReactNode;
+  open: boolean; onOpenChange: (o: boolean) => void;
+}) {
+  const openTask = (t: Ticket) => { onOpenChange(false); onOpen(t); };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-sm">
+        <DialogHeader className="border-b px-4 py-3">
+          <DialogTitle className="flex items-center gap-2 text-sm capitalize">
+            {dayTitle(day)}
+            <Badge variant="secondary">{tasks.length}</Badge>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="scroll-thin max-h-[60vh] space-y-0.5 overflow-y-auto p-2">
+          {tasks.length === 0
+            ? <p className="px-2 py-3 text-center text-xs text-muted-foreground">Sin tareas</p>
+            : tasks.map((t) => <DayPeekRow key={t.id} t={t} onOpen={openTask} />)}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -516,6 +615,7 @@ function WeekView({
   const today = new Date();
   const nowFrac = today.getHours() + today.getMinutes() / 60;
   const showNow = nowFrac >= START_HOUR && nowFrac <= END_HOUR;
+  const [peek, setPeek] = useState<string | null>(null); // solo un popover de día abierto a la vez
 
   return (
     <Card className="overflow-hidden">
@@ -526,12 +626,49 @@ function WeekView({
             <div />
             {days.map((d, i) => {
               const isToday = sameDay(d, today);
+              // Todas las tareas del día (agendadas + resueltas) — el número abre el día completo.
+              const dayAll = tasks.filter((t) =>
+                (!isResolvedDisplay(t) && t.scheduledStart && sameDay(new Date(t.scheduledStart), d)) ||
+                (isResolvedDisplay(t) && t.completedAt && sameDay(new Date(t.completedAt), d)),
+              );
               return (
                 <div key={i} className={cn('border-l py-2 text-center', isToday && 'bg-primary/5')}>
                   <div className="text-[11px] uppercase text-muted-foreground">{WEEKDAYS[i]}</div>
-                  <div className={cn('mx-auto mt-0.5 grid size-7 place-items-center rounded-full text-sm font-semibold', isToday && 'bg-primary text-primary-foreground')}>
-                    {d.getDate()}
-                  </div>
+                  <DayPeek day={d} tasks={dayAll} onOpen={onOpen}
+                    open={peek === `num:${localDateStr(d)}`}
+                    onOpenChange={(o) => setPeek((prev) => (o ? `num:${localDateStr(d)}` : prev === `num:${localDateStr(d)}` ? null : prev))}
+                    trigger={
+                    <button
+                      type="button"
+                      title={`${dayAll.length} tarea(s) — ver el día`}
+                      className={cn('mx-auto mt-0.5 grid size-7 place-items-center rounded-full text-sm font-semibold transition-colors hover:bg-accent', isToday && 'bg-primary text-primary-foreground hover:bg-primary/90')}
+                    >
+                      {d.getDate()}
+                    </button>
+                  } />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Banda "todo el día": tareas RESUELTAS posicionadas por completedAt (estilo distinto). */}
+          <div className="grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] border-b bg-card">
+            <div className="flex items-start justify-end pr-1.5 pt-1 text-[10px] text-muted-foreground">resueltas</div>
+            {days.map((day, di) => {
+              const done = tasks.filter((t) => isResolvedDisplay(t) && t.completedAt && sameDay(new Date(t.completedAt), day));
+              return (
+                <div key={di} className={cn('min-h-[1.75rem] space-y-0.5 border-l p-1', sameDay(day, today) && 'bg-primary/5')}>
+                  {done.slice(0, 3).map((t) => <ResolvedChip key={t.id} t={t} onOpen={onOpen} />)}
+                  {done.length > 3 && (
+                    <DayPeek day={day} tasks={done} onOpen={onOpen}
+                      open={peek === `done:${localDateStr(day)}`}
+                      onOpenChange={(o) => setPeek((prev) => (o ? `done:${localDateStr(day)}` : prev === `done:${localDateStr(day)}` ? null : prev))}
+                      trigger={
+                      <button type="button" className="w-full px-1 text-left text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground">
+                        +{done.length - 3} más
+                      </button>
+                    } />
+                  )}
                 </div>
               );
             })}
@@ -551,7 +688,7 @@ function WeekView({
             {/* Columnas por día */}
             {days.map((day, di) => {
               const isToday = sameDay(day, today);
-              const dayTasks = tasks.filter((t) => t.scheduledStart && sameDay(new Date(t.scheduledStart), day));
+              const dayTasks = tasks.filter((t) => !isResolvedDisplay(t) && t.scheduledStart && sameDay(new Date(t.scheduledStart), day));
               return (
                 <div key={di} className={cn('relative border-l', isToday && 'bg-primary/5')} style={{ height: SPAN * ROW_H }}>
                   {/* Celdas de drop (una por hora) */}
@@ -628,6 +765,7 @@ function MonthView({
   const cells = useMemo(() => monthGrid(anchor), [anchor]);
   const today = new Date();
   const monthStart = startOfMonth(anchor);
+  const [peek, setPeek] = useState<string | null>(null); // solo un día abierto a la vez
 
   return (
     <Card className="overflow-hidden">
@@ -642,44 +780,67 @@ function MonthView({
         {cells.map((day, i) => {
           const inMonth = day.getMonth() === monthStart.getMonth();
           const isToday = sameDay(day, today);
-          const dayTasks = tasks
-            .filter((t) => t.scheduledStart && sameDay(new Date(t.scheduledStart), day))
+          const scheduledDay = tasks
+            .filter((t) => !isResolvedDisplay(t) && t.scheduledStart && sameDay(new Date(t.scheduledStart), day))
             .sort((a, b) => new Date(a.scheduledStart!).getTime() - new Date(b.scheduledStart!).getTime());
-          const shown = dayTasks.slice(0, 3);
-          const extra = dayTasks.length - shown.length;
+          const resolvedDay = tasks.filter((t) => isResolvedDisplay(t) && t.completedAt && sameDay(new Date(t.completedAt), day));
+          const dayItems = [...scheduledDay, ...resolvedDay]; // agendadas primero, resueltas después
+          const shown = dayItems.slice(0, 3);
+          const extra = dayItems.length - shown.length;
           return (
-            <div
+            <DayPeek
               key={i}
-              className={cn(
-                'group min-h-[104px] cursor-pointer border-b border-l p-1.5 transition-colors first:border-l-0 [&:nth-child(7n+1)]:border-l-0 hover:bg-accent/30',
-                !inMonth && 'bg-muted/30 text-muted-foreground',
-              )}
-              onClick={() => onCreate(localDateStr(day))}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={() => onDropDay(day)}
-            >
-              <div className="mb-1 flex items-center justify-between">
-                <span className={cn('grid size-6 place-items-center rounded-full text-xs font-medium', isToday && 'bg-primary text-primary-foreground')}>
-                  {day.getDate()}
-                </span>
-              </div>
-              <div className="space-y-1">
-                {shown.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onOpen(t); }}
-                    className={cn('flex w-full items-center gap-1 rounded border-l-2 px-1 py-0.5 text-left text-[11px] transition hover:brightness-95', prioBlock(t.priority))}
-                    title={`${t.identifier} · ${t.title}`}
-                  >
-                    {/* Solo ID + stack de avatares: el título completo está en el modal. */}
-                    <span className="truncate font-mono font-medium">{t.identifier}</span>
-                    <AvatarStack people={assigneesOf(t)} max={3} size="size-4" className="ml-auto shrink-0" />
-                  </button>
-                ))}
-                {extra > 0 && <div className="px-1 text-[11px] text-muted-foreground">+{extra} más</div>}
-              </div>
-            </div>
+              day={day}
+              tasks={dayItems}
+              onOpen={onOpen}
+              open={peek === localDateStr(day)}
+              onOpenChange={(o) => setPeek((prev) => (o ? localDateStr(day) : prev === localDateStr(day) ? null : prev))}
+              trigger={
+                <div
+                  className={cn(
+                    'group min-h-[104px] cursor-pointer border-b border-l p-1.5 text-left transition-colors first:border-l-0 [&:nth-child(7n+1)]:border-l-0 hover:bg-accent/30',
+                    !inMonth && 'bg-muted/30 text-muted-foreground',
+                  )}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => onDropDay(day)}
+                >
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className={cn('grid size-6 place-items-center rounded-full text-xs font-medium', isToday && 'bg-primary text-primary-foreground')}>
+                      {day.getDate()}
+                    </span>
+                    {/* Click en la celda → abre el día completo. El "+" (hover) crea en este día. */}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onCreate(localDateStr(day)); }}
+                      className="grid size-5 place-items-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover:opacity-100 focus:opacity-100"
+                      aria-label="Nueva tarea este día"
+                      title="Nueva tarea"
+                    >
+                      <Plus className="size-3.5" />
+                    </button>
+                  </div>
+                  <div className="space-y-1">
+                    {shown.map((t) => isResolvedDisplay(t) ? (
+                      <ResolvedChip key={t.id} t={t} onOpen={onOpen} />
+                    ) : (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onOpen(t); }}
+                        className={cn('flex w-full items-center gap-1 rounded border-l-2 px-1 py-0.5 text-left text-[11px] transition hover:brightness-95', prioBlock(t.priority))}
+                        title={`${t.identifier} · ${t.title}`}
+                      >
+                        {/* Solo ID + stack de avatares: el título completo está en el modal. */}
+                        <span className="truncate font-mono font-medium">{t.identifier}</span>
+                        <AvatarStack people={assigneesOf(t)} max={3} size="size-4" className="ml-auto shrink-0" />
+                      </button>
+                    ))}
+                    {/* Deja burbujear el click a la celda → abre el modal del día. */}
+                    {extra > 0 && <div className="px-1 text-[11px] font-medium text-muted-foreground">+{extra} más</div>}
+                  </div>
+                </div>
+              }
+            />
           );
         })}
       </div>

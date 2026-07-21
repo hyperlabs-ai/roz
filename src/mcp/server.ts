@@ -13,12 +13,9 @@ import {
   setAvailability,
   setDevSkills,
   suggestAssignee,
-  syncLinearMembers,
   listProjects,
-  syncProjects,
 } from '../router/assign.js';
 import { intakeForm } from '../intake/form.js';
-import { listUsers } from '../adapters/linear.js';
 import { getProjectContext } from '../brain/retrieval.js';
 
 export interface McpTool {
@@ -67,7 +64,7 @@ export const tools: McpTool[] = [
     name: 'confirm_proposal',
     description:
       'Confirma una propuesta YA evaluada y el dev ELEGIDO EXPLÍCITAMENTE por el usuario. ' +
-      'roz crea el issue en Linear (asignado) y dispara la notificación. No elijas tú al dev: ' +
+      'roz crea la tarea nativa (asignada) y dispara la notificación. No elijas tú al dev: ' +
       'el usuario debe decidirlo (puede ser el sugerido u otro de list_devs).',
     schema: z.object({
       proposalId: z.string().describe('id devuelto por propose_change'),
@@ -85,15 +82,6 @@ export const tools: McpTool[] = [
     handler: () => listProjects(),
   },
   {
-    name: 'sync_projects',
-    description:
-      'Importa los Linear Projects como proyectos de roz (upsert por linear_project_id; intenta ' +
-      'enlazar HyperOps por nombre). roz también los auto-onboarda vía webhook cuando se crean en ' +
-      'Linear; corre esto para importar los existentes.',
-    schema: z.object({}),
-    handler: () => syncProjects(),
-  },
-  {
     name: 'suggest_assignee',
     description:
       'Devuelve la sugerencia del router (skill×disponibilidad÷carga) para un texto de spec, ' +
@@ -108,38 +96,20 @@ export const tools: McpTool[] = [
   // ---------- Gestión de devs / roles / ocupación ----------
   {
     name: 'list_devs',
-    description: 'Lista devs con skills, disponibilidad (ocupación) y carga actual (issues in-progress en Linear).',
+    description: 'Lista devs con skills, disponibilidad (ocupación) y carga actual (tareas nativas en curso).',
     schema: z.object({}),
     handler: () => listDevs(),
   },
   {
-    name: 'list_linear_members',
-    description:
-      'Lista los miembros reales del workspace de Linear (id, nombre, email). Útil para vincular ' +
-      'un dev de roz con la persona correcta antes de asignar.',
-    schema: z.object({}),
-    handler: () => listUsers(),
-  },
-  {
-    name: 'sync_linear_members',
-    description:
-      'Importa/vincula los miembros del workspace de Linear como devs de roz: vincula por ' +
-      'linear_user_id o email y crea los que falten. Así el nombre del dev SÍ apunta a la ' +
-      'persona real de Linear y las asignaciones funcionan automáticamente.',
-    schema: z.object({}),
-    handler: () => syncLinearMembers(),
-  },
-  {
     name: 'upsert_dev',
     description:
-      'Crea o actualiza un dev. Para actualizar, pasa su id. Mapea linearUserId para que los ' +
-      'issues queden asignados a la persona real y email para notificar (Resend).',
+      'Crea o actualiza un dev. Para actualizar, pasa su id. Mapea githubLogin para atribuir su ' +
+      'trabajo y email para notificar (Resend).',
     schema: z.object({
       id: z.string().optional().describe('id del dev para actualizar; omitir para crear'),
       name: z.string(),
       email: z.string().optional().describe('correo del dev — canal de notificación actual'),
       whatsapp: z.string().optional().describe('E.164 (guardado para uso futuro; aún no se notifica por aquí)'),
-      linearUserId: z.string().optional(),
       githubLogin: z.string().optional(),
       availability: z.number().min(0).max(1).optional().describe('0 saturado .. 1 libre'),
       active: z.boolean().optional(),

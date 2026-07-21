@@ -1,13 +1,11 @@
 // Router de devs [fase 2]: sugiere asignado por match real de skill (embedding) ×
-// disponibilidad, penalizando la carga (issues in-progress en Linear). Humano-en-el-loop:
+// disponibilidad, penalizando la carga (tareas nativas en curso). Humano-en-el-loop:
 // SOLO sugiere; la asignación se confirma explícitamente vía confirm_proposal.
 //
 // También expone la gestión de devs/roles/ocupación (upsertDev, setAvailability,
 // setDevSkills) para manejarlo desde el MCP sin tocar la base a mano.
 import { db } from '../db/supabase.js';
 import { embed } from '../adapters/embeddings.js';
-import { inProgressCountByAssignee, listUsers, listLinearProjects } from '../adapters/linear.js';
-import { upsertLinearProject } from '../projects/resolve.js';
 
 // ---------- utilidades de vectores ----------
 function parseVec(v: unknown): number[] | null {
@@ -43,14 +41,25 @@ export interface DevSummary {
   id: string;
   name: string;
   availability: number;
-  load: number; // issues in-progress (derivado de Linear)
+  load: number; // tareas nativas en curso (state='started') asignadas al dev
   skills: { tag: string; level: number }[];
+}
+
+/** Carga = tareas nativas en curso (state='started') asignadas al dev. Reemplaza el conteo de
+ *  issues in-progress de Linear tras el corte a tareas nativas. */
+async function inProgressCount(devId: string): Promise<number> {
+  const { count } = await db()
+    .from('work_item')
+    .select('id', { count: 'exact', head: true })
+    .eq('assignee_dev_id', devId)
+    .eq('state', 'started');
+  return count ?? 0;
 }
 
 export async function listDevs(): Promise<DevSummary[]> {
   const { data: devs } = await db()
     .from('dev')
-    .select('id, name, availability, linear_user_id, dev_skill(level, skill:skill_id(tag))')
+    .select('id, name, availability, dev_skill(level, skill:skill_id(tag))')
     .eq('active', true);
   if (!devs) return [];
 
@@ -59,7 +68,7 @@ export async function listDevs(): Promise<DevSummary[]> {
       id: d.id,
       name: d.name,
       availability: d.availability,
-      load: d.linear_user_id ? await inProgressCountByAssignee(d.linear_user_id).catch(() => 0) : 0,
+      load: await inProgressCount(d.id),
       skills: (d.dev_skill ?? []).map((ds: any) => ({ tag: ds.skill?.tag, level: ds.level })),
     })),
   );
@@ -72,7 +81,6 @@ export interface AssigneeSuggestion {
   score: number;
   reason: string;
   matchedSkill: string | null;
-  linked: boolean; // ¿está vinculado a un usuario real de Linear?
 }
 
 /**
@@ -96,18 +104,14 @@ export async function rankAssignees(
 
   const { data: devs } = await db()
     .from('dev')
-    .select(
-      'id, name, availability, linear_user_id, dev_skill(level, skill:skill_id(tag, embedding))',
-    )
+    .select('id, name, availability, dev_skill(level, skill:skill_id(tag, embedding))')
     .eq('active', true);
   if (!devs?.length) return [];
 
   const scored: AssigneeSuggestion[] = [];
 
   for (const d of devs as any[]) {
-    const load = d.linear_user_id
-      ? await inProgressCountByAssignee(d.linear_user_id).catch(() => 0)
-      : 0;
+    const load = await inProgressCount(d.id);
 
     let skillMatch = 0;
     let bestTag = '';
@@ -131,12 +135,9 @@ export async function rankAssignees(
       name: d.name,
       score: Number(score.toFixed(4)),
       matchedSkill: bestTag || null,
-      linked: !!d.linear_user_id,
       reason: bestTag
-        ? `skill "${bestTag}" (match ${skillMatch.toFixed(2)}) · disp ${d.availability} · carga ${load}` +
-          (d.linear_user_id ? '' : ' · ⚠ sin vincular a Linear')
-        : `sin skill que matchee · disp ${d.availability} · carga ${load}` +
-          (d.linear_user_id ? '' : ' · ⚠ sin vincular a Linear'),
+        ? `skill "${bestTag}" (match ${skillMatch.toFixed(2)}) · disp ${d.availability} · carga ${load}`
+        : `sin skill que matchee · disp ${d.availability} · carga ${load}`,
     });
   }
 
@@ -155,32 +156,18 @@ export async function suggestAssignee(
 
 // ---------- Proyectos (selector) ----------
 export async function listProjects(): Promise<
-  { key: string; name: string; linkedLinear: boolean; linkedHyperops: boolean }[]
+  { key: string; name: string; linkedHyperops: boolean }[]
 > {
   const { data } = await db()
     .from('project')
-    .select('key, name, linear_project_id, hyperops_project_id')
+    .select('key, name, hyperops_project_id')
     .eq('active', true)
     .order('key');
   return (data ?? []).map((p: any) => ({
     key: p.key,
     name: p.name,
-    linkedLinear: !!p.linear_project_id,
     linkedHyperops: !!p.hyperops_project_id, // necesario para reconciliar commits del proyecto
   }));
-}
-
-/** Importa los Linear Projects como roz.project (upsert por linear_project_id). */
-export async function syncProjects(): Promise<{ created: number; updated: number }> {
-  const projects = await listLinearProjects();
-  let created = 0;
-  let updated = 0;
-  for (const p of projects) {
-    const r = await upsertLinearProject({ id: p.id, name: p.name, teamId: p.teamId });
-    if (r?.created) created++;
-    else if (r) updated++;
-  }
-  return { created, updated };
 }
 
 // ---------- gestión (desde el MCP) ----------
@@ -189,7 +176,6 @@ export interface UpsertDevInput {
   name: string;
   email?: string;
   whatsapp?: string;
-  linearUserId?: string;
   githubLogin?: string;
   availability?: number;
   active?: boolean;
@@ -199,7 +185,6 @@ export async function upsertDev(input: UpsertDevInput): Promise<{ id: string; na
   const row: Record<string, unknown> = { name: input.name };
   if (input.email !== undefined) row.email = input.email;
   if (input.whatsapp !== undefined) row.whatsapp = input.whatsapp;
-  if (input.linearUserId !== undefined) row.linear_user_id = input.linearUserId;
   if (input.githubLogin !== undefined) row.github_login = input.githubLogin;
   if (input.availability !== undefined) row.availability = input.availability;
   if (input.active !== undefined) row.active = input.active;
@@ -210,66 +195,6 @@ export async function upsertDev(input: UpsertDevInput): Promise<{ id: string; na
     : await q.insert(row).select('id, name').single();
   if (error) throw error;
   return data;
-}
-
-/**
- * Sincroniza los miembros del workspace de Linear como devs de roz. Vincula así:
- *   1) si ya hay un dev con ese linear_user_id → actualiza email (respeta el name de roz);
- *   2) si no, pero hay un dev con el mismo email → le pega el linear_user_id (lo vincula);
- *   3) si no existe → crea el dev con el nombre de Linear.
- * No borra devs (los ficticios o inactivos en Linear quedan; se pueden desactivar a mano).
- */
-export async function syncLinearMembers(): Promise<{
-  created: string[];
-  linked: string[];
-  updated: string[];
-}> {
-  const supabase = db();
-  const members = await listUsers();
-  const created: string[] = [];
-  const linked: string[] = [];
-  const updated: string[] = [];
-
-  for (const m of members) {
-    // Saltar bots/usuarios de app de Linear (no son personas asignables).
-    if (!m.email || m.email.endsWith('@linear.linear.app')) continue;
-
-    const displayName = m.displayName || m.name || m.email || m.id;
-
-    const { data: byLinear } = await supabase
-      .from('dev')
-      .select('id, name')
-      .eq('linear_user_id', m.id)
-      .maybeSingle();
-    if (byLinear) {
-      if (m.email) await supabase.from('dev').update({ email: m.email }).eq('id', byLinear.id);
-      updated.push(byLinear.name);
-      continue;
-    }
-
-    if (m.email) {
-      const { data: byEmail } = await supabase
-        .from('dev')
-        .select('id, name')
-        .eq('email', m.email)
-        .maybeSingle();
-      if (byEmail) {
-        await supabase.from('dev').update({ linear_user_id: m.id }).eq('id', byEmail.id);
-        linked.push(byEmail.name);
-        continue;
-      }
-    }
-
-    const { data: ins, error } = await supabase
-      .from('dev')
-      .insert({ name: displayName, email: m.email, linear_user_id: m.id, active: true })
-      .select('name')
-      .single();
-    if (error) throw error;
-    created.push(ins.name);
-  }
-
-  return { created, linked, updated };
 }
 
 /** Ocupación: availability 0 (saturado) .. 1 (totalmente disponible). */

@@ -37,10 +37,8 @@ export async function autoIngest(input: AutoIngestInput): Promise<AutoIngestResu
     source,
   });
 
-  // 2. Elegir asignado automáticamente. Preferimos un dev VINCULADO a Linear (para que el
-  // issue quede asignado a la persona real); si ninguno lo está, tomamos el mejor score.
-  const linked = verdict.candidates.find((c) => c.linked);
-  const chosen = linked ?? verdict.candidates[0];
+  // 2. Elegir asignado automáticamente: el mejor score del ranker (skill × disponibilidad ÷ carga).
+  const chosen = verdict.candidates[0];
   if (!chosen) {
     throw new ValidationError(
       'No hay devs activos para auto-asignar. Registra/activa devs antes de usar el endpoint.',

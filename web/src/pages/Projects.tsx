@@ -395,7 +395,7 @@ function DeleteProject({ project, open, onOpenChange, onDeleted }: { project: Pr
           <AlertDialogTitle>Eliminar "{project.name}"</AlertDialogTitle>
           <AlertDialogDescription>
             Esta acción es permanente. Se desvinculan sus repos y se quita el proyecto de los commits y tickets
-            relacionados. El trabajo de Linear no se borra, pero pierde su vínculo con este proyecto. No se puede deshacer.
+            relacionados. Las tareas no se borran, pero pierden su vínculo con este proyecto. No se puede deshacer.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-1.5">
