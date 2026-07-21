@@ -136,13 +136,12 @@ interface DevRow {
   name: string;
   email: string | null;
   github_login: string | null;
-  linear_user_id: string | null;
   active: boolean;
   availability: number;
 }
 
 async function allDevs(): Promise<DevRow[]> {
-  const { data } = await db().from('dev').select('id, name, email, github_login, linear_user_id, active, availability');
+  const { data } = await db().from('dev').select('id, name, email, github_login, active, availability');
   return (data ?? []) as unknown as DevRow[];
 }
 
@@ -282,16 +281,14 @@ export interface NewDeveloperInput {
   email?: string | null;
   githubLogin?: string | null;
   githubEmail?: string | null;
-  linearUserId?: string | null;
   availability?: number | null;
 }
 
 /**
  * Da de alta un developer con las credenciales que hacen funcionar su flujo: github_login +
- * github_email (atribución de commits/PRs), linear_user_id (mapear assignees de Linear y asignar
- * tickets) y email (notificaciones). Rechaza duplicados en los campos de identidad porque la
- * resolución de devs usa maybeSingle(), que ERRORA si dos devs comparten login/email/linear —
- * un duplicado rompería la atribución de TODO el equipo, no solo del dev nuevo.
+ * github_email (atribución de commits/PRs) y email (notificaciones). Rechaza duplicados en los
+ * campos de identidad porque la resolución de devs usa maybeSingle(), que ERRORA si dos devs
+ * comparten login/email — un duplicado rompería la atribución de TODO el equipo, no solo del nuevo.
  */
 export async function createDeveloper(input: NewDeveloperInput): Promise<{ id: string; name: string }> {
   const supabase = db();
@@ -299,14 +296,12 @@ export async function createDeveloper(input: NewDeveloperInput): Promise<{ id: s
   const email = input.email?.trim() || null;
   const githubLogin = input.githubLogin?.trim() || null;
   const githubEmail = input.githubEmail?.trim().toLowerCase() || null;
-  const linearUserId = input.linearUserId?.trim() || null;
 
   // Anti-duplicado por identidad. github_* son texto → comparación case-insensitive (ilike sin
-  // comodines = igualdad sin distinguir mayúsculas); linear_user_id es uuid → igualdad exacta.
+  // comodines = igualdad sin distinguir mayúsculas).
   const checks: { col: string; val: string; ci: boolean; label: string }[] = [];
   if (githubLogin) checks.push({ col: 'github_login', val: githubLogin, ci: true, label: 'login de GitHub' });
   if (githubEmail) checks.push({ col: 'github_email', val: githubEmail, ci: true, label: 'email de GitHub' });
-  if (linearUserId) checks.push({ col: 'linear_user_id', val: linearUserId, ci: false, label: 'usuario de Linear' });
   for (const ch of checks) {
     const base = supabase.from('dev').select('id, name');
     const { data: dupe } = await (ch.ci ? base.ilike(ch.col, ch.val) : base.eq(ch.col, ch.val)).maybeSingle();
@@ -320,7 +315,6 @@ export async function createDeveloper(input: NewDeveloperInput): Promise<{ id: s
       email,
       github_login: githubLogin,
       github_email: githubEmail,
-      linear_user_id: linearUserId,
       availability: input.availability ?? 1,
       active: true,
     })
@@ -340,7 +334,6 @@ export interface DeveloperPatch {
   email?: string | null;
   githubLogin?: string | null;
   githubEmail?: string | null;
-  linearUserId?: string | null;
   availability?: number;
   active?: boolean;
 }
@@ -351,7 +344,6 @@ export interface DeveloperCredentials {
   email: string | null;
   githubLogin: string | null;
   githubEmail: string | null;
-  linearUserId: string | null;
   availability: number;
   active: boolean;
 }
@@ -360,7 +352,7 @@ export interface DeveloperCredentials {
 export async function getDeveloperCredentials(id: string): Promise<DeveloperCredentials | null> {
   const { data } = await db()
     .from('dev')
-    .select('id, name, email, github_login, github_email, linear_user_id, availability, active')
+    .select('id, name, email, github_login, github_email, availability, active')
     .eq('id', id)
     .maybeSingle();
   if (!data) return null;
@@ -371,7 +363,6 @@ export async function getDeveloperCredentials(id: string): Promise<DeveloperCred
     email: d.email,
     githubLogin: d.github_login,
     githubEmail: d.github_email,
-    linearUserId: d.linear_user_id,
     availability: d.availability,
     active: d.active,
   };
@@ -391,7 +382,6 @@ export async function updateDeveloper(id: string, patch: DeveloperPatch): Promis
   if (patch.email !== undefined) row.email = patch.email?.trim() || null;
   if (patch.githubLogin !== undefined) row.github_login = patch.githubLogin?.trim() || null;
   if (patch.githubEmail !== undefined) row.github_email = patch.githubEmail?.trim().toLowerCase() || null;
-  if (patch.linearUserId !== undefined) row.linear_user_id = patch.linearUserId?.trim() || null;
   if (patch.availability !== undefined) row.availability = patch.availability;
   if (patch.active !== undefined) row.active = patch.active;
 
@@ -399,7 +389,6 @@ export async function updateDeveloper(id: string, patch: DeveloperPatch): Promis
   const checks: { col: string; val: unknown; ci: boolean; label: string }[] = [];
   if (typeof row.github_login === 'string') checks.push({ col: 'github_login', val: row.github_login, ci: true, label: 'login de GitHub' });
   if (typeof row.github_email === 'string') checks.push({ col: 'github_email', val: row.github_email, ci: true, label: 'email de GitHub' });
-  if (typeof row.linear_user_id === 'string') checks.push({ col: 'linear_user_id', val: row.linear_user_id, ci: false, label: 'usuario de Linear' });
   for (const ch of checks) {
     const base = supabase.from('dev').select('id, name').neq('id', id);
     const { data: dupe } = await (ch.ci ? base.ilike(ch.col, ch.val as string) : base.eq(ch.col, ch.val as string)).maybeSingle();
@@ -803,7 +792,7 @@ export async function listDevelopers(period: Period) {
 // ---- Perfil de un developer ----
 
 export async function getDeveloper(devId: string, period: Period, cmp: Period | null) {
-  const dev = await db().from('dev').select('id, name, email, github_login, linear_user_id, active, availability').eq('id', devId).maybeSingle();
+  const dev = await db().from('dev').select('id, name, email, github_login, active, availability').eq('id', devId).maybeSingle();
   const d = dev.data as unknown as DevRow | null;
   if (!d) return null;
 
@@ -1176,9 +1165,10 @@ export async function getTickets(f: TicketFilters) {
         updatedAt: w.linear_updated_at ?? w.updated_at,
         ageDays: (w.linear_created_at ?? w.created_at) ? Math.floor((now - new Date(w.linear_created_at ?? w.created_at).getTime()) / 86_400_000) : null,
         parentId: w.parent_id ?? null,
-        // Agendado (calendario)
+        // Agendado (calendario) + resolución (para ver el flujo de cierres)
         scheduledStart: w.scheduled_start ?? null,
         scheduledEnd: w.scheduled_end ?? null,
+        completedAt: w.completed_at ?? null,
         // Conexión con código
         source: (w.source as 'pr' | 'commit' | 'native' | null) ?? null,
         headRef: w.head_ref ?? null,
@@ -1450,6 +1440,9 @@ export async function createDocumentedTask(input: {
   prNumber?: number | null;
   prState?: 'merged' | 'open' | 'closed' | null;
   headRef?: string | null;
+  /** Fecha REAL en que se completó (merge del PR / commit). Si falta, cae a ahora. Evita que un
+   *  reproceso/backfill feche todo "hoy" e infle el período actual. */
+  completedAt?: string | null;
 }): Promise<{ id: string; identifier: string }> {
   const supabase = db();
   const { data: proj } = await supabase.from('project').select('key').eq('id', input.projectId).maybeSingle();
@@ -1460,7 +1453,9 @@ export async function createDocumentedTask(input: {
   if (nerr) throw nerr;
   const number = Number(num);
   const identifier = `${key}-${number}`;
-  const now = new Date().toISOString();
+  // Fecha real del cierre (merge/commit) si el caller la da; si no, ahora. Así un reproceso no
+  // feche todo "hoy" e infle el período actual.
+  const completedAt = input.completedAt ?? new Date().toISOString();
 
   const { data, error } = await supabase
     .from('work_item')
@@ -1473,7 +1468,7 @@ export async function createDocumentedTask(input: {
       spec: input.spec,
       state: 'completed',
       state_name: STATE_LABEL.completed,
-      completed_at: now,
+      completed_at: completedAt,
       priority: input.priority ?? null,
       assignee_dev_id: input.assigneeDevId ?? null,
       merger_dev_id: input.mergerDevId ?? null,
@@ -1548,6 +1543,12 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: st
         { idempotencyKey: `assigned:${w.id}:${devId}` },
       );
     }
+  }
+
+  // Cierre → dispara los efectos de documentación al brain + aviso al proposer (fase 4).
+  // Idempotente por identifier: reprocesar un `done` no crea átomos ni correos duplicados.
+  if (patch.state === 'completed') {
+    await emit('work_item.done', { identifier: w.identifier }, { idempotencyKey: `done:${w.identifier}` }).catch(() => {});
   }
   return { id: w.id };
 }

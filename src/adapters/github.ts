@@ -1,6 +1,6 @@
-// GitHub = fuente de verdad del código. roz solo lee (commits/PRs) para reconciliar;
-// la integración nativa Linear<->GitHub ya enlaza por branch/magic words, así que roz
-// NO reimplementa eso — solo procesa el trabajo huérfano.
+// GitHub = fuente de verdad del código. roz solo lee (commits/PRs) para reconciliar:
+// si el trabajo referencia una tarea por su identificador (rama/título/cuerpo) la enlaza,
+// y si no, documenta el trabajo huérfano.
 import { config } from '../config.js';
 
 const API = 'https://api.github.com';
@@ -289,7 +289,8 @@ export async function getRepo(repo: string): Promise<RepoMeta> {
   return { githubId: d.id, fullName: d.full_name, name: d.name, description: d.description ?? null, url: d.html_url };
 }
 
-/** Heurística barata: ¿el mensaje del commit referencia un issue de Linear (ABC-123)? */
+/** Heurística barata: ¿el mensaje del commit referencia una tarea por su identificador (ABC-123,
+ *  p.ej. ROZ-42)? El nombre `referencesLinearIssue` es histórico; hoy detecta IDs de tareas nativas. */
 export function referencesLinearIssue(message: string): string | null {
   const m = message.match(/\b([A-Z]{2,}-\d+)\b/);
   return m ? m[1]! : null;
@@ -300,10 +301,11 @@ export interface PullRequestMeta {
   title: string;
   body: string | null;
   url: string;
-  headRef: string | null; // rama de origen (para detectar referencia a Linear, p.ej. "feat/HYP-12")
+  headRef: string | null; // rama de origen (para detectar referencia a una tarea, p.ej. "feat/ROZ-12")
   baseRef: string | null; // rama destino
   merged: boolean;
   mergeCommitSha: string | null;
+  mergedAt: string | null; // fecha REAL del merge (para fechar la tarea, no el momento del reproceso)
   authorLogin: string | null; // quién abrió la PR
   mergedByLogin: string | null; // quién la mergeó (solo existe a nivel de PR, no del commit)
 }
@@ -317,6 +319,7 @@ export async function getPullRequest(repo: string, number: number): Promise<Pull
     html_url: string;
     merged: boolean;
     merge_commit_sha: string | null;
+    merged_at: string | null;
     head: { ref?: string } | null;
     base: { ref?: string } | null;
     user: { login?: string } | null;
@@ -331,6 +334,7 @@ export async function getPullRequest(repo: string, number: number): Promise<Pull
     baseRef: d.base?.ref ?? null,
     merged: !!d.merged,
     mergeCommitSha: d.merge_commit_sha ?? null,
+    mergedAt: d.merged_at ?? null,
     authorLogin: d.user?.login ?? null,
     mergedByLogin: d.merged_by?.login ?? null,
   };

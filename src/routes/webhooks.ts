@@ -4,7 +4,7 @@
 import { Hono } from 'hono';
 import type { RozContext } from '../types/hono.js';
 import { config } from '../config.js';
-import { verifyGithub, verifyLinear } from '../utils/webhooks.js';
+import { verifyGithub } from '../utils/webhooks.js';
 import { emit } from '../events/outbox.js';
 
 export const webhookRoutes = new Hono<RozContext>();
@@ -13,44 +13,6 @@ export const webhookRoutes = new Hono<RozContext>();
 // pudo traer más commits → se encola un backfill que enumera el rango completo vía la API.
 const GITHUB_PUSH_COMMIT_CAP = 20;
 const ZERO_SHA = '0'.repeat(40); // `before` en la creación de una rama (sin historial previo)
-
-// --- Linear: cambios de estado de issues (fuente de verdad del trabajo). ---
-webhookRoutes.post('/linear', async (c) => {
-  const raw = await c.req.text();
-  const sig = c.req.header('linear-signature');
-  if (!verifyLinear(raw, sig ?? null, config.linear.webhookSecret)) {
-    return c.json({ error: 'bad signature' }, 401);
-  }
-  const evt = JSON.parse(raw) as { type?: string; action?: string; data?: any };
-
-  // Auto-onboarding: proyecto nuevo en Linear → roz empieza a trackearlo.
-  if (evt.type === 'Project') {
-    if (evt.action !== 'remove') {
-      await emit('linear.project_upserted', { data: evt.data });
-    }
-    return c.json({ ok: true });
-  }
-
-  if (evt.type === 'Issue') {
-    if (evt.action === 'remove') {
-      await emit('linear.issue_removed', { linearId: evt.data?.id });
-    } else {
-      // create | update: espejar SIEMPRE (sin idempotency_key — cada update es legítimo;
-      // el upsert por linear_id es idempotente, así que reprocesar es seguro).
-      await emit('linear.issue_upserted', { data: evt.data });
-
-      // Completado -> disparar efectos de cierre (fase 4: documentar + avisar al proposer).
-      if (evt.data?.state?.type === 'completed') {
-        await emit(
-          'work_item.done',
-          { linearId: evt.data.id, identifier: evt.data.identifier },
-          { idempotencyKey: `done:${evt.data.id}` },
-        );
-      }
-    }
-  }
-  return c.json({ ok: true });
-});
 
 // --- GitHub: push/commits (fuente de verdad del código). ---
 webhookRoutes.post('/github', async (c) => {

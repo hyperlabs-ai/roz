@@ -2,9 +2,9 @@
 // en vivo, así que todo lo anterior a la vinculación es invisible: este módulo lo recupera.
 //
 // Es backfill SOLO de métricas (roz.commit para el dashboard): NO llama a Claude ni crea/enlaza
-// tickets en Linear (eso inundaría Linear con cientos de issues históricos). Mismas reglas de
-// conteo que el flujo en vivo: rama por defecto, cada sha una vez, merges NO cuentan (recontarían
-// líneas ya atribuidas). Idempotente por (repo, sha) → re-correr es seguro.
+// tareas (eso generaría cientos de tareas históricas espurias). Mismas reglas de conteo que el
+// flujo en vivo: rama por defecto, cada sha una vez, merges NO cuentan (recontarían líneas ya
+// atribuidas). Idempotente por (repo, sha) → re-correr es seguro.
 //
 // Se procesa una PÁGINA (100 commits) por evento y se re-encola la siguiente: cada invocación del
 // drain queda acotada muy por debajo del maxDuration serverless, aunque el repo tenga miles de

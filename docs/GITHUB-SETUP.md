@@ -95,7 +95,7 @@ roz does **not** process webhooks synchronously. The flow:
    for inspection. Idempotency keys (e.g. `commit:{repo}:{sha}`) make retries and duplicate
    deliveries safe — no double effects.
 
-This means a slow downstream call (Claude, Linear) never blocks GitHub's webhook delivery, and
+This means a slow downstream call (Claude) never blocks GitHub's webhook delivery, and
 a transient failure never loses an event. No external queue (Redis, etc.) is required — Postgres
 + cron is the whole pipeline.
 

@@ -1,6 +1,6 @@
 // Endpoint público de ingesta para apps de clientes. Un solo endpoint al que se conectan
 // TODOS los proyectos: la app manda la solicitud del cliente, roz la documenta con Claude,
-// la auto-asigna y la enruta a Linear (sin humano en el loop). Autenticado por bearer
+// la auto-asigna y crea la tarea nativa (sin humano en el loop). Autenticado por bearer
 // ROZ_INGEST_TOKEN (compartido entre apps; el proyecto se distingue por projectKey).
 import { Hono } from 'hono';
 import { z } from 'zod';

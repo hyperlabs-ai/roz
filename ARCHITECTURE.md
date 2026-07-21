@@ -2,8 +2,9 @@
 
 > 🇪🇸 *Español:* [ARCHITECTURE.es.md](ARCHITECTURE.es.md)
 
-`roz` is the layer of **context, routing and notification** around development work. **It is not a
-task manager and has no inbox** — that's **Linear**. roz does three things and only three:
+`roz` is the layer of **context, routing and notification** around development work. Work lives in
+roz as **native tasks** (a calendar + backlog with local `ROZ-123` identifiers), and on top of that
+roz does three things and only three:
 
 1. **Manage context** (the *second brain*): Claude *reads* project context via MCP; roz *writes*
    context (almost always when work is completed).
@@ -11,13 +12,13 @@ task manager and has no inbox** — that's **Linear**. roz does three things and
 3. **Notify**: email (Resend).
 
 Intake is **multi-channel** but converges on the same pipeline (evaluate against context →
-document → route → Linear): (a) **conversational** via MCP — the chat drives a guided interview and
-roz documents and suggests an assignee; the human confirms; (b) **tickets from apps** via
-`POST /v1/intake` — auto-documented and auto-assigned, no human in the loop; (c) **directly in
-Linear** — a native issue is mirrored via webhook. From there, work lives in Linear. The follow-up
-(on completion): document / update context, reconcile GitHub commits, and notify whoever proposed
-it. The hardest part — and the reason behind several design decisions — is to **not duplicate**:
-not tickets, not documentation, not knowledge.
+document → route → native task): (a) **conversational** via MCP — the chat drives a guided interview
+and roz documents and suggests an assignee; the human confirms; (b) **tickets from apps** via
+`POST /v1/intake` — auto-documented and auto-assigned, no human in the loop; (c) **directly in the
+dashboard** — a task is created natively (calendar / backlog). From there, work lives in roz. The
+follow-up (on completion): document / update context, reconcile GitHub commits, and notify whoever
+proposed it. The hardest part — and the reason behind several design decisions — is to **not
+duplicate**: not tasks, not documentation, not knowledge.
 
 ---
 
@@ -25,16 +26,16 @@ not tickets, not documentation, not knowledge.
 
 Four patterns recur across ALL of roz's domains:
 
-1. **Canonical identity.** Each unit (issue, commit, knowledge atom) has a stable ID. Linear is the
-   **source of truth for work**; GitHub is the **source of truth for code**.
+1. **Canonical identity.** Each unit (task, commit, knowledge atom) has a stable ID. roz's native
+   tasks are the **source of truth for work**; GitHub is the **source of truth for code**.
 2. **Supersede, don't duplicate.** Nothing is deleted or blindly stacked: the old is marked
    `superseded` and kept with its provenance. Applies to the brain and to documentation.
-3. **Provenance back to Linear.** Every knowledge atom and every generated doc points back to the
-   Linear issue that originated it.
+3. **Provenance back to the task.** Every knowledge atom and every generated doc points back to the
+   task (`work_item`) that originated it.
 4. **MCP inward, direct APIs outward.**
    - *Inward* (Claude/humans → roz): roz **exposes an MCP server** (Streamable HTTP). That's how you
      "ship a feature from Claude": the chat calls roz's tools.
-   - *Outward* (roz → tools): roz consumes **direct APIs/webhooks** from Linear, GitHub, Resend
+   - *Outward* (roz → tools): roz consumes **direct APIs/webhooks** from GitHub, Resend
      (email) and OpenAI/Anthropic.
 
 ---
@@ -51,7 +52,7 @@ Four patterns recur across ALL of roz's domains:
 | Embeddings | **OpenAI** `text-embedding-3-large` (3072 dims) — via API |
 | Async queue | **Postgres outbox drained by Vercel Cron** — no external service |
 | Interactive face | **MCP server** over HTTP (own stateless JSON-RPC) |
-| Integrations | **Linear** (truth of work), **GitHub** (truth of code), **Resend** (email) |
+| Integrations | **GitHub** (truth of code), **Resend** (email) |
 
 > **No persistent worker.** In serverless there is no long-lived process. The worker's role is
 > filled by the **Postgres outbox + Vercel Cron**: each effect is written as an `outbox_event` and a
@@ -92,16 +93,16 @@ roz/
     middleware/         # logger, MCP auth
     utils/              # errors, webhook signature verification
     events/outbox.ts    # emit() + idempotent drain with retries (drainOutbox)
-    adapters/           # linear, github, email(resend), anthropic, embeddings(openai)
+    adapters/           # github, email(resend), anthropic, embeddings(openai)
     mcp/server.ts       # MCP server: defines the tools (interactive face)
-    intake/             # proposal -> evaluation -> Linear (MCP + apps) [phase 1]
+    intake/             # proposal -> evaluation -> native task (MCP + apps) [phase 1]
     router/             # suggests assignee by skill + load          [phase 2]
     notify/             # email (Resend): assignment, close, doc, repo, digest [phase 3]
     brain/              # second brain: atoms, embeddings, graph, retrieval [phase 4]
     reconcile/          # commits (dedup/auto-doc) + new repos (detection/link) [phase 5-6]
-    projects/           # repo→project resolution and Linear auto-onboarding
+    projects/           # repo→project resolution and project auto-onboarding
     dashboard/          # engineering-visibility queries (consumed by web/)
-    routes/             # health, mcp, webhooks (linear/github), intake, dashboard, internal
+    routes/             # health, mcp, webhooks (github), intake, dashboard, internal
   migrations/           # full schema (pgvector, outbox, idempotency)
   web/                  # React SPA: public landing (/) + dashboard (/app)
 ```
@@ -111,23 +112,27 @@ roz/
 ## The flow, end to end
 
 ```
+Native task lifecycle (in-app):
+  task created / moved         → calendar + backlog; task.done → document/update brain + email
 Incoming webhooks:
-  Linear   → issue created/updated → mirror to work_item (+ project auto-onboarding)
-           → issue moves to Done   → document/update brain + email the proposer
-  GitHub   → push/commit           → does it point to an issue? if not, substantive orphan work?
-                                     → link/dedup against Linear + auto-doc
-           → new repo (1st push)   → link to a project by similarity, or notify the devs
+  GitHub   → branch ROZ-123     → moves the task to "in progress"
+           → PR opened          → moves the task to "in review"
+           → PR merged          → moves the task to "completed" (fires work_item.done)
+           → push/commit        → does it point to a task? if not, substantive orphan work?
+                                   → link/dedup against existing tasks + auto-doc
+           → new repo (1st push) → link to a project by similarity, or notify the devs
 ```
 
-### 1. Intake (multi-channel, no inbox)
-roz has no inbox and no draft states. Three entry doors, one pipeline: conversational (MCP),
-tickets from apps (`/v1/intake`) and directly in Linear (webhook). On confirm/ingest, roz **creates
-the Linear issue already assigned** (or mirrors it), saves the `WorkItem` and emits the event to the
-outbox. From then on, Linear is the inbox.
+### 1. Intake (multi-channel, native tasks)
+Three entry doors, one pipeline: conversational (MCP), tickets from apps (`/v1/intake`) and directly
+in the dashboard (calendar / backlog). On confirm/ingest, roz **creates the native task already
+assigned** (`source='native'`, local `ROZ-123` identifier), saves the `WorkItem` and emits the event
+to the outbox. From then on, the task lives in roz and its state is driven by the dashboard and by
+GitHub activity.
 
 ### 2. Developer router
 roz has context on every dev: skills (with a profile embedding), manual availability and **derived
-load** (number of Linear issues `in progress`). It computes `skill_match × availability`, **proposes**
+load** (number of tasks `in progress`). It computes `skill_match × availability`, **proposes**
 and a human confirms.
 
 ### 3. Notifications (via outbox → drain)
@@ -136,17 +141,18 @@ repo detected, and the weekly digest. Each notification is an idempotent effect 
 it claims a per-recipient key so a retried event never sends duplicates.
 
 ### 4. Second brain (on completion)
-Triggered by `work_item.done` (Linear webhook). roz creates/updates a **knowledge atom** with an
-embedding and provenance tied to the identifier; if an atom already existed for that issue with
+Triggered by `work_item.done`, emitted when a task moves to **completed** — either manually in the
+dashboard or automatically when its PR is merged. roz creates/updates a **knowledge atom** with an
+embedding and provenance tied to the identifier; if an atom already existed for that task with
 different content, it marks it **superseded** rather than duplicating. A daily sweep backfills
 missing embeddings.
 
 ### 5. Commit reconciliation (the main challenge)
-For each commit (GitHub webhook): (1) does it point to a Linear issue? (the native Linear↔GitHub
-integration resolves this; roz doesn't reimplement it); (2) if not → **orphan work**: a single
-Claude pass decides trivial/substantive and semantic dedup against open issues; (3) substantive with
-no match → roz creates the issue **already completed** and notifies the author; (4) persists the
-commit for the dashboard; (5) idempotency by `repo:sha`.
+For each commit (GitHub webhook): (1) does it point to a task? (a `ROZ-123` reference in the branch
+or message links it); (2) if not → **orphan work**: a single Claude pass decides trivial/substantive
+and semantic dedup against open tasks; (3) substantive with no match → roz creates the task
+**already completed** and notifies the author; (4) persists the commit for the dashboard; (5)
+idempotency by `repo:sha`.
 
 Project and dev are resolved **live** (`resolveProjectByRepo`). The repo→project mapping lives in
 `roz.project_repo`; there is an **optional** fallback (`HYPEROPS_FALLBACK`, default off) to a
@@ -176,8 +182,9 @@ exponential backoff, and after 5 attempts → `dead`.
 See `migrations/0001_roz_schema.sql`:
 
 - **dev / skill / dev_skill** — router: person, skill profile (with `embedding`), level and load.
-- **project / project_repo** — canonical project (Linear+GitHub) and repo→project mapping.
-- **work_item** — Linear mirror; `linear_id`/`identifier` (ROZ-123) is canonical.
+- **project / project_repo** — canonical project and repo→project mapping.
+- **work_item** — native tasks (`source='native'`); the local `identifier` (ROZ-123) is canonical.
+  Legacy `linear_*` columns are kept read-only as a historical mirror of pre-teardown tickets.
 - **commit** — history of reconciled commits (resolved project/dev) for the dashboard.
 - **knowledge_atom / atom_edge** — second brain: an addressable atom and the relationship graph.
 - **notification** — outgoing email (Resend) with send status and `provider_id`.
@@ -195,8 +202,7 @@ small scale, exact KNN is enough.
 - **MCP** (`/mcp`): bearer `ROZ_MCP_TOKEN`.
 - **App intake** (`/v1/intake`): bearer `ROZ_INGEST_TOKEN` (the project is distinguished by
   `projectKey`). At scale, prefer a per-app token + rate limiting.
-- **Webhooks**: signature verified per provider (Linear `LINEAR_WEBHOOK_SECRET`, GitHub HMAC
-  `GITHUB_WEBHOOK_SECRET`).
+- **Webhooks**: GitHub signature verified via HMAC (`GITHUB_WEBHOOK_SECRET`).
 - **Internal/cron** (`/v1/internal/*`): protected by `CRON_SECRET` (Vercel injects the bearer).
 - **Dashboard** (`/app`): Supabase Auth + domain filter (`DASHBOARD_ALLOWED_DOMAINS`). The role is
   resolved best-effort; if the profiles table doesn't exist, the dashboard is read-only.
@@ -209,8 +215,8 @@ small scale, exact KNN is enough.
 | Phase | Delivery |
 |---|---|
 | 0 | Scaffold: Hono+Vercel, config, db, outbox+drain (cron), MCP, webhook stubs, migration. |
-| 1 | **Intake**: `propose_change` / `confirm_proposal` → Linear + notification. |
-| 2 | **Router**: skills, Linear-derived load, assignee suggestion. |
+| 1 | **Intake**: `propose_change` / `confirm_proposal` → native task + notification. |
+| 2 | **Router**: skills, task-derived load, assignee suggestion. |
 | 3 | **Notifications**: idempotent email templates (Resend). |
 | 4 | **Brain**: atoms with embeddings (OpenAI), hybrid retrieval, documentation on close + sweep. |
 | 5 | **Reconciliation**: orphan commits, classification, dedup, auto-doc. |

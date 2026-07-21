@@ -1,7 +1,7 @@
 // Intake [fase 1]: propuesta -> evaluación de optimalidad -> (al confirmar) tarea NATIVA en roz.
 // evaluateProposal NO crea nada: valida estrictamente, compone una spec bien documentada (según el
 // tipo), guarda el borrador, recupera contexto, pide el veredicto de Claude y rankea candidatos.
-// confirmProposal materializa la tarea nativa (asignada + con prioridad) — ya NO round-trip a Linear.
+// confirmProposal materializa la tarea nativa en roz (asignada + con prioridad).
 import { db } from '../db/supabase.js';
 import { config } from '../config.js';
 import { complete } from '../adapters/anthropic.js';
@@ -13,7 +13,7 @@ import { ValidationError } from '../utils/errors.js';
 export type ProposalKind = 'feature' | 'bug' | 'chore' | 'ticket' | 'refactor';
 export type Priority = 'urgent' | 'high' | 'medium' | 'low';
 
-/** Procedencia de la propuesta: de dónde vino (para documentarlo en Linear). */
+/** Procedencia de la propuesta: de dónde vino (para documentarlo en la tarea). */
 export interface ProposalSource {
   channel: 'chat' | 'app';
   app?: string; // nombre del proyecto/app que la originó
@@ -42,7 +42,7 @@ export interface ProposalVerdict {
   title: string; // generado por roz si no se dio
   kind: ProposalKind; // resuelto (dado o inferido)
   priority: Priority; // resuelto (dado o inferido)
-  spec: string; // descripción documentada (markdown) que irá a Linear
+  spec: string; // descripción documentada (markdown) de la tarea
   optimality: string;
   missing: string[]; // info crítica que falta — preguntar DESPUÉS, no antes
   suggestedAssignee: AssigneeSuggestion | null;
@@ -149,7 +149,7 @@ export async function evaluateProposal(input: ProposeInput): Promise<ProposalVer
   const missing: string[] = Array.isArray(parsed.missing) ? parsed.missing.slice(0, 3) : [];
   const optimality: string = (parsed.verdict || '').trim();
 
-  // Bloque de procedencia (apps de clientes) — queda documentado en la descripción de Linear.
+  // Bloque de procedencia (apps de clientes) — queda documentado en la descripción de la tarea.
   const provenance =
     input.source?.channel === 'app'
       ? `> 📥 **Solicitud externa** recibida vía ${input.source.app ?? 'app de cliente'}` +
@@ -236,7 +236,7 @@ export async function confirmProposal(
   if (!dev) throw new ValidationError(`Dev no encontrado: ${assigneeDevId}`);
   if (dev.active === false) throw new ValidationError(`El dev ${assigneeDevId} está inactivo.`);
 
-  // Materializa la tarea NATIVA (sin Linear): asignada, con prioridad, estado inicial "Por hacer".
+  // Materializa la tarea NATIVA: asignada, con prioridad, estado inicial "Por hacer".
   // createTask genera el identificador local (KEY-N), fija source='native' y emite el aviso de
   // asignación (misma clave de idempotencia que el espejo → sin doble notificación).
   const task = await createTask({

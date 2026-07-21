@@ -9,7 +9,6 @@ import { config } from '../config.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
 import { pushEnabled } from '../adapters/web-push.js';
 import { savePushSubscription, deletePushSubscription } from '../notify/push.js';
-import { listUsers } from '../adapters/linear.js';
 import { getContributionCalendar, getRepo, listOrgRepos } from '../adapters/github.js';
 import { enqueueRepoBackfill } from '../reconcile/backfill.js';
 import {
@@ -119,26 +118,14 @@ dashboardRoutes.get('/developers', async (c) => {
   }
 });
 
-// Miembros del workspace de Linear (para el selector al crear un developer): el linear_user_id
-// es un uuid imposible de saber a mano, así que el front lo elige de esta lista (admin).
-dashboardRoutes.get('/linear/users', requireAdmin, async (c) => {
-  try {
-    const users = await listUsers();
-    return c.json({ users: users.map((u) => ({ id: u.id, name: u.name, displayName: u.displayName, email: u.email })) });
-  } catch (err) {
-    return fail(c, err);
-  }
-});
-
-// Alta de developer (admin). Todas las credenciales que arrancan su flujo: github_login/email
-// (atribución), linear_user_id (asignación de tickets) y email (notificaciones). name es lo único
-// obligatorio; el resto es opcional pero recomendado. createDeveloper rechaza identidades duplicadas.
+// Alta de developer (admin). Las credenciales que arrancan su flujo: github_login/github_email
+// (atribución) y email (notificaciones). name es lo único obligatorio; el resto es opcional pero
+// recomendado. createDeveloper rechaza identidades duplicadas.
 const DeveloperCreate = z.object({
   name: z.string().min(1),
   email: z.string().email().nullish(),
   githubLogin: z.string().min(1).nullish(),
   githubEmail: z.string().email().nullish(),
-  linearUserId: z.string().min(1).nullish(),
   availability: z.number().min(0).max(1).optional(),
 });
 
@@ -148,9 +135,9 @@ dashboardRoutes.post('/developers', requireAdmin, async (c) => {
   try {
     // name garantizado por el schema (min 1); z.infer lo marca opcional (ver fix "inferencia de
     // campos en dashboard"), así que se destructura y asevera como en createProject/linkService.
-    const { name, email, githubLogin, githubEmail, linearUserId, availability } = parsed.data;
+    const { name, email, githubLogin, githubEmail, availability } = parsed.data;
     return c.json(
-      { developer: await createDeveloper({ name: name!, email, githubLogin, githubEmail, linearUserId, availability }) },
+      { developer: await createDeveloper({ name: name!, email, githubLogin, githubEmail, availability }) },
       201,
     );
   } catch (err) {
@@ -177,7 +164,6 @@ const DeveloperPatch = z
     email: z.string().email().nullish(),
     githubLogin: z.string().min(1).nullish(),
     githubEmail: z.string().email().nullish(),
-    linearUserId: z.string().min(1).nullish(),
     availability: z.number().min(0).max(1).optional(),
     active: z.boolean().optional(),
   })

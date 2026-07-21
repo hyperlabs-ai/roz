@@ -1,11 +1,11 @@
 // Reconciliación de commits [fase 5]. Por cada commit de GitHub:
-//  1. ¿referencia un issue de Linear (ABC-123)? → la integración nativa Linear↔GitHub ya lo
-//     enlaza; roz solo marca el work_item como documentado. No duplica.
+//  1. ¿referencia una tarea por su identificador (ABC-123)? → roz solo marca el work_item como
+//     documentado. No duplica.
 //  2. Si no → trabajo HUÉRFANO. Una sola pasada de Claude clasifica (trivial vs sustantivo) y,
-//     contra los issues ABIERTOS del proyecto, decide si el commit RESUELVE alguno (dedup
+//     contra las tareas ABIERTAS del proyecto, decide si el commit RESUELVE alguna (dedup
 //     semántico por razonamiento, sin infra de embeddings).
-//  3. Trivial → se ignora. Sustantivo que resuelve un issue → se enlaza. Sustantivo SIN match
-//     → roz crea un issue en Linear documentando el trabajo (para que todo quede registrado).
+//  3. Trivial → se ignora. Sustantivo que resuelve una tarea → se enlaza. Sustantivo SIN match
+//     → roz crea una tarea nativa documentando el trabajo (para que todo quede registrado).
 //  4. Idempotencia por sha (claimOnce) — cada commit se procesa una sola vez.
 import { db } from '../db/supabase.js';
 import { complete } from '../adapters/anthropic.js';
@@ -27,11 +27,11 @@ export interface ReconcileResult {
   action:
     | 'skipped:already-processed'
     | 'skipped:in-pr' // pertenece a una PR → lo documenta reconcilePullRequest
-    | 'linked' // referencia un issue de Linear
+    | 'linked' // referencia una tarea por su identificador (p.ej. ROZ-123)
     | 'trivial' // chore/merge/lint: se ignora
-    | 'matched' // resuelve un issue abierto → enlazado
-    | 'documented' // trabajo sustantivo huérfano → issue creado
-    | 'orphan:no-project' // repo sin proyecto mapeado y sin team para crear
+    | 'matched' // resuelve una tarea abierta → enlazado
+    | 'documented' // trabajo sustantivo huérfano → tarea creada
+    | 'orphan:no-project' // repo sin proyecto mapeado
     | 'skipped:merge' // merge commit: no es trabajo nuevo (recontaría líneas), no se persiste
     ;
   identifier?: string;
@@ -78,9 +78,9 @@ export async function reconcileCommit(input: ReconcileInput): Promise<ReconcileR
   const claimKey = `commit:${input.repo}:${input.sha}`;
 
   // Exactamente-una-vez por commit. La llave se reclama ANTES del trabajo para no procesar
-  // el mismo commit dos veces; pero si algo falla ANTES de crear el issue en Linear, se
-  // LIBERA (releaseOnce) para que el reintento del outbox vuelva a intentarlo. Una vez creado
-  // el issue (efecto no idempotente), ya no se libera: el espejo posterior es best-effort.
+  // el mismo commit dos veces; pero si algo falla ANTES de crear la tarea, se LIBERA
+  // (releaseOnce) para que el reintento del outbox vuelva a intentarlo. Una vez creada la
+  // tarea (efecto no idempotente), ya no se libera.
   const first = await claimOnce(claimKey, 'commit');
   if (!first) return { action: 'skipped:already-processed' };
 
@@ -232,6 +232,7 @@ async function reconcileBody(
     assigneeDevId: dev?.id ?? null,
     source: 'commit',
     repo: input.repo.toLowerCase(),
+    completedAt: commit.committedAt, // fecha real del commit (no el momento del reproceso)
   });
   state.issueCreated = true;
 

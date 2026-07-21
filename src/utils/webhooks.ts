@@ -10,10 +10,3 @@ export function verifyGithub(rawBody: string, signature: string | null, secret: 
   const digest = 'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex');
   return secureEqual(digest, signature);
 }
-
-/** Linear: header `Linear-Signature: <hex>` = HMAC-SHA256(rawBody) con el webhook secret. */
-export function verifyLinear(rawBody: string, signature: string | null, secret: string): boolean {
-  if (!signature || !secret) return false;
-  const digest = createHmac('sha256', secret).update(rawBody).digest('hex');
-  return secureEqual(digest, signature);
-}

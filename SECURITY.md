@@ -38,8 +38,7 @@ If you self-host roz, the essentials:
   `SUPABASE_SERVICE_ROLE_KEY` to the browser.
 - Set every variable marked **[required in prod]** in `.env.example` — the server fails fast
   in production if a critical secret is missing.
-- Set a strong, unique `GITHUB_WEBHOOK_SECRET` and `LINEAR_WEBHOOK_SECRET`; roz verifies
-  every webhook signature.
+- Set a strong, unique `GITHUB_WEBHOOK_SECRET`; roz verifies every webhook signature.
 - Set `CRON_SECRET` so the internal cron endpoints (`/v1/internal/*`, including the outbox
   drain) are not publicly invocable.
 - Rotate tokens periodically and restrict the GitHub PAT to the read-only scopes documented

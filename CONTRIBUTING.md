@@ -7,8 +7,7 @@ we follow.
 
 - Node.js 20+ and npm
 - A Supabase project (Postgres + pgvector) — see the [Self-hosting](README.md#self-hosting)
-  section for the full list of accounts roz integrates with (Linear, Anthropic, OpenAI,
-  GitHub, Resend).
+  section for the full list of accounts roz integrates with (Anthropic, OpenAI, GitHub, Resend).
 
 ## Local setup
 
@@ -65,9 +64,9 @@ A quick map (full detail in [`ARCHITECTURE.md`](ARCHITECTURE.md)):
 ```
 api/            Vercel entry (re-exports the Hono app)
 src/
-  adapters/     external integrations (github, linear, anthropic, openai, resend, ...)
+  adapters/     external integrations (github, anthropic, openai, resend, ...)
   events/       outbox: emit() + idempotent drain with retries
-  intake/       proposal -> evaluation -> Linear
+  intake/       proposal -> evaluation -> native task
   router/       assignee suggestion (skill + load)
   notify/       transactional email (Resend)
   brain/        second brain: atoms, embeddings, hybrid retrieval

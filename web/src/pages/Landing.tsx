@@ -124,7 +124,7 @@ function Header() {
 
 /* ── Pipeline (hero visual + How it works) ──────────────────────────────────── */
 const STAGES: { icon: Icon; label: string; sub: string; body: string }[] = [
-  { icon: Activity, label: 'Observe', sub: 'commits · PRs · issues', body: 'GitHub webhooks and the Linear API feed roz a live stream of what your team is actually doing.' },
+  { icon: Activity, label: 'Observe', sub: 'commits · PRs · tasks', body: 'GitHub webhooks feed roz a live stream of what your team is actually doing.' },
   { icon: Sparkles, label: 'Reason', sub: 'Claude classifies', body: 'Is this commit trivial or substantive? Does it already resolve an open issue? Semantic dedup, no manual triage.' },
   { icon: GitMerge, label: 'Reconcile', sub: 'link · document', body: 'roz links code to the right project and developer, documents the change, and writes the missing issue for you.' },
   { icon: Mail, label: 'Notify', sub: 'the right people', body: 'It closes the loop with targeted email — assigned, documented, repo detected — plus a weekly digest.' },
@@ -186,10 +186,10 @@ function Hero() {
         <div data-reveal className="mx-auto max-w-3xl text-center">
           <GitHubPill className="mb-6" />
           <h1 className="text-balance text-4xl font-extrabold leading-[1.05] tracking-tight md:text-6xl">
-            The intelligence layer over <span className="text-primary">GitHub &amp; Linear</span>
+            The intelligence layer over <span className="text-primary">GitHub</span>
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-muted-foreground">
-            roz watches what happens in your repos and your tracker, understands it with AI, and
+            roz watches what happens in your repos and your tasks, understands it with AI, and
             <span className="text-foreground"> documents, routes and notifies</span> automatically —
             so nobody has to manage a board. It doesn’t ask you to log work; it derives it from reality.
           </p>
@@ -433,9 +433,9 @@ function Features() {
           body="Claude decides what a change means, whether it’s worth tracking, and which issue it belongs to — then writes the documentation for you."
           visual={<MiniReason />} />
         <FeatureTile icon={FolderGit2} title="Project context"
-          body="Anchors Linear and GitHub to one canonical project, auto-onboards new projects and links new repos by similarity." />
+          body="Anchors native tasks and GitHub code to one canonical project, auto-onboards new projects and links new repos by similarity." />
         <FeatureTile icon={Users} title="Developer context"
-          body="Resolves the same person across Linear, GitHub login and commit email; routes by skill + capacity, not at random." />
+          body="Resolves the same person across GitHub login and commit email; routes by skill + capacity, not at random." />
         <FeatureTile className="md:col-span-2" icon={Sparkles} title="Second brain"
           body="Embeddings + hybrid retrieval (full-text + pgvector + RRF) keep historical project context alive and feed roz’s own reasoning."
           visual={<MiniVectors />} />
@@ -452,7 +452,7 @@ function Features() {
 /* ── GitHub: animated webhook → outbox → drain request flow ──────────────────── */
 function WebhookFlow() {
   return (
-    <svg viewBox="0 0 900 260" className="w-full" role="img" aria-label="A GitHub webhook is verified, queued in a Postgres outbox, and drained idempotently with retries to Linear and email">
+    <svg viewBox="0 0 900 260" className="w-full" role="img" aria-label="A GitHub webhook is verified, queued in a Postgres outbox, and drained idempotently with retries to a task and email">
       {/* main path */}
       <path id="ghpath" d="M 120 130 H 360 M 540 130 H 760" fill="none" className="stroke-border" strokeWidth={2} />
       <path d="M 120 130 H 360" fill="none" className="stroke-primary/60 roz-dash" strokeWidth={2} />
@@ -503,7 +503,7 @@ function WebhookFlow() {
       {/* outputs */}
       <g>
         <rect x={760} y={92} width={120} height={34} rx={9} className="fill-card stroke-border" strokeWidth={1.5} />
-        <text x={820} y={114} textAnchor="middle" className="fill-foreground" fontSize={13}>Linear issue</text>
+        <text x={820} y={114} textAnchor="middle" className="fill-foreground" fontSize={13}>Task</text>
         <rect x={760} y={134} width={120} height={34} rx={9} className="fill-card stroke-border" strokeWidth={1.5} />
         <text x={820} y={156} textAnchor="middle" className="fill-foreground" fontSize={13}>email</text>
       </g>
@@ -621,7 +621,7 @@ function Footer() {
         <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
           <div className="max-w-sm">
             <div className="flex items-center gap-2.5"><RozLogo className="size-8" /><span className="text-lg font-extrabold tracking-tight">roz</span></div>
-            <p className="mt-3 text-sm text-muted-foreground">The intelligence layer over GitHub &amp; Linear. Open source, self-hostable.</p>
+            <p className="mt-3 text-sm text-muted-foreground">The intelligence layer over GitHub. Open source, self-hostable.</p>
             <GitHubPill className="mt-4" />
           </div>
           <div className="grid grid-cols-2 gap-8 text-sm sm:grid-cols-3">
