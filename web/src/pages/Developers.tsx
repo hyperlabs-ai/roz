@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ChevronRight, GitCommitHorizontal, Code2, CircleCheck, CircleDot, FolderGit2, Plus, Trophy, Crown, Sparkles, Zap } from 'lucide-react';
+import { Search, ChevronRight, GitCommitHorizontal, Code2, CircleCheck, CircleDot, FolderGit2, Plus, Trophy, Crown, Zap } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
-import { UserAvatar, EmptyState, SkillChip } from '@/components/bits';
+import { UserAvatar, EmptyState, SkillChip, ErrorCard } from '@/components/bits';
 import { DeveloperDialog } from '@/components/DeveloperDialog';
 import { useAuth } from '@/auth/AuthContext';
 import { Card } from '@/components/ui/card';
@@ -79,13 +79,13 @@ export default function Developers() {
       {/* Buscador en el cuerpo solo en móvil */}
       <div className="mb-4 sm:hidden">{search}</div>
 
-      {error && <Card className="p-4 text-sm text-destructive">{error}</Card>}
+      {error && <ErrorCard message={error} className="mb-4" />}
 
       {!loading && !q && sorted.length > 0 && (
         <div className="mb-8">
           <div className="mb-3 flex flex-col items-center gap-2 sm:flex-row sm:justify-between">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
-              <Trophy className="size-4 text-amber-500" /> Top 3 por {m.label}
+              <Trophy className="size-4 text-primary" /> Top 3 por {m.label}
             </div>
             <Tabs value={metric} onValueChange={(v) => setMetric(v as RankMetric)}>
               <TabsList className="h-8">
@@ -131,40 +131,44 @@ export default function Developers() {
   );
 }
 
+// Podio pulido con TOKENS del tema (adapta a light y dark): #1 con el acento de marca, #2/#3 en
+// neutros. La altura del pedestal comunica el puesto; sin emojis ni degradados crudos amber/slate.
+// Podio con la MISMA paleta de charts (theme-aware): #1 azul de marca (sólido, destaca el ganador),
+// #2 aqua y #3 naranja (tintados). Cada puesto con su color; la altura del pedestal marca el ranking.
 const RANK_STYLES: Record<number, {
-  card: string; ring: string; medal: string; pedestal: string; pedestalH: string;
-  avatar: string; commits: string; basis: string; lift: string;
+  card: string; ring: string; badge: string; pedestal: string; pedestalH: string;
+  avatar: string; value: string; basis: string; lift: string;
 }> = {
   1: {
-    card: 'bg-gradient-to-b from-amber-100 to-background ring-2 ring-amber-400 shadow-lg shadow-amber-400/25 dark:from-amber-500/15',
-    ring: 'ring-2 ring-amber-400 ring-offset-2 ring-offset-background sm:ring-4',
-    medal: '🥇',
-    pedestal: 'bg-gradient-to-b from-amber-400 to-amber-500 text-white text-xl sm:text-2xl',
+    card: 'bg-primary/[0.06] ring-1 ring-primary/30',
+    ring: 'ring-2 ring-primary ring-offset-2 ring-offset-background sm:ring-[3px]',
+    badge: 'bg-primary text-primary-foreground',
+    pedestal: 'bg-primary text-primary-foreground text-xl sm:text-2xl',
     pedestalH: 'h-16 sm:h-24',
     avatar: 'size-14 sm:size-24',
-    commits: 'text-2xl sm:text-5xl',
+    value: 'text-2xl text-primary sm:text-5xl',
     basis: 'flex-[1.3] sm:flex-[1.4]',
     lift: '-mt-6 sm:-mt-8',
   },
   2: {
-    card: 'bg-gradient-to-b from-slate-100 to-background ring-1 ring-slate-300 dark:from-slate-400/10',
-    ring: 'ring-2 ring-slate-300',
-    medal: '🥈',
-    pedestal: 'bg-gradient-to-b from-slate-300 to-slate-400 text-white text-base sm:text-lg',
+    card: 'bg-chart-3/[0.08] ring-1 ring-chart-3/30',
+    ring: 'ring-2 ring-chart-3',
+    badge: 'bg-chart-3 text-white',
+    pedestal: 'bg-chart-3/20 text-chart-3 text-base sm:text-lg',
     pedestalH: 'h-11 sm:h-16',
     avatar: 'size-11 sm:size-16',
-    commits: 'text-lg sm:text-2xl',
+    value: 'text-lg text-foreground sm:text-2xl',
     basis: 'flex-1',
     lift: '',
   },
   3: {
-    card: 'bg-gradient-to-b from-orange-100/70 to-background ring-1 ring-orange-300 dark:from-orange-500/10',
-    ring: 'ring-2 ring-orange-400/70',
-    medal: '🥉',
-    pedestal: 'bg-gradient-to-b from-orange-400 to-orange-500 text-white text-base sm:text-lg',
+    card: 'bg-chart-2/[0.08] ring-1 ring-chart-2/30',
+    ring: 'ring-2 ring-chart-2',
+    badge: 'bg-chart-2 text-white',
+    pedestal: 'bg-chart-2/20 text-chart-2 text-base sm:text-lg',
     pedestalH: 'h-8 sm:h-10',
     avatar: 'size-11 sm:size-16',
-    commits: 'text-lg sm:text-2xl',
+    value: 'text-lg text-foreground sm:text-2xl',
     basis: 'flex-1',
     lift: '',
   },
@@ -181,55 +185,49 @@ function TopCard({ d, rank, metric, onClick }: { d: DeveloperListItem; rank: num
       onClick={onClick}
       className={cn('group relative flex min-w-0 flex-col items-center focus:outline-none', s?.basis, s?.lift)}
     >
-      {/* Resplandor difuso detrás del ganador */}
+      {/* Resplandor difuso detrás del ganador (azul de marca, sutil en ambos modos) */}
       {isFirst && (
-        <div className="pointer-events-none absolute -top-6 left-1/2 size-40 -translate-x-1/2 rounded-full bg-amber-300/40 blur-3xl dark:bg-amber-400/20" aria-hidden />
+        <div className="pointer-events-none absolute -top-6 left-1/2 size-40 -translate-x-1/2 rounded-full bg-primary/15 blur-3xl" aria-hidden />
       )}
 
       <Card
         className={cn(
-          'relative z-10 flex w-full flex-col items-center gap-1.5 overflow-visible rounded-b-none px-1.5 pb-4 text-center backdrop-blur-sm transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-xl sm:gap-2 sm:px-3 sm:pb-5',
+          'relative z-10 flex w-full flex-col items-center gap-1.5 overflow-visible rounded-b-none px-1.5 pb-4 text-center transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-md sm:gap-2 sm:px-3 sm:pb-5',
           isFirst ? 'pt-8 sm:pt-10' : 'pt-6 sm:pt-7',
           s?.card,
         )}
       >
         {isFirst && (
-          <>
-            <Crown className="absolute left-1/2 -top-3 size-7 -translate-x-1/2 fill-amber-400 text-amber-500 drop-shadow-md transition-transform duration-300 group-hover:-translate-y-0.5 sm:-top-4 sm:size-9" aria-hidden />
-            <Sparkles className="absolute right-2 top-2 size-3.5 text-amber-400/80 sm:right-3 sm:top-3 sm:size-4" aria-hidden />
-          </>
+          <Crown className="absolute left-1/2 -top-3 size-7 -translate-x-1/2 fill-primary/20 text-primary transition-transform duration-300 group-hover:-translate-y-0.5 sm:-top-4 sm:size-9" aria-hidden />
         )}
         <div className="relative">
-          {/* Halo del avatar */}
-          <div className={cn('absolute inset-0 -z-10 rounded-full blur-md', isFirst ? 'bg-amber-400/40' : 'bg-transparent')} aria-hidden />
           <UserAvatar url={d.avatarUrl} name={d.name} className={cn('shrink-0', s?.ring, s?.avatar)} />
-          <span className={cn('absolute -bottom-1.5 -right-1.5 leading-none drop-shadow-sm', isFirst ? 'text-lg sm:text-3xl' : 'text-base sm:text-xl')} aria-hidden>{s?.medal}</span>
+          {/* Insignia de puesto redibujada (chip numérico tokenizado por rango, no emoji) */}
+          <span
+            className={cn(
+              'absolute -bottom-1 -right-1 flex size-5 items-center justify-center rounded-full text-[10px] font-bold ring-2 ring-card sm:size-6 sm:text-xs',
+              s?.badge,
+            )}
+            aria-hidden
+          >
+            {rank}
+          </span>
         </div>
         <div className="min-w-0 w-full">
           <div className={cn('truncate font-semibold', isFirst ? 'text-sm sm:text-lg' : 'text-xs sm:text-sm')}>{d.name}</div>
           {d.githubLogin && <div className="hidden truncate text-xs text-muted-foreground sm:block">@{d.githubLogin}</div>}
         </div>
         <div className="mt-0.5 flex flex-col items-center leading-none">
-          <span
-            className={cn(
-              'bg-clip-text font-extrabold tabular-nums text-transparent',
-              s?.commits,
-              isFirst ? 'bg-gradient-to-b from-amber-500 to-amber-600' : 'bg-gradient-to-b from-primary to-primary/70',
-            )}
-          >
-            {compact(m.value(d))}
-          </span>
+          <span className={cn('font-mono font-extrabold tabular-nums', s?.value)}>{compact(m.value(d))}</span>
           <span className="mt-1 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
             <MetricIcon className="size-3" /> {m.label}
           </span>
         </div>
       </Card>
 
-      {/* Pedestal: la altura comunica el puesto */}
-      <div className={cn('relative w-full overflow-hidden rounded-b-lg shadow-inner', s?.pedestal, s?.pedestalH)}>
-        {/* Brillo superior tipo gloss */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/35 to-transparent" aria-hidden />
-        <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-black leading-none opacity-95 drop-shadow-sm">
+      {/* Pedestal: la altura comunica el puesto (bloque sólido con el número, tokenizado) */}
+      <div className={cn('relative w-full overflow-hidden rounded-b-lg', s?.pedestal, s?.pedestalH)}>
+        <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 font-mono font-black leading-none opacity-90">
           {rank}
         </span>
       </div>
@@ -285,9 +283,9 @@ function DevRow({ d, onClick }: { d: DeveloperListItem; onClick: () => void }) {
 
 function BigStat({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent?: boolean }) {
   return (
-    <div className={cn('rounded-lg border p-2 text-center', accent ? 'border-primary/20 bg-primary/5' : 'bg-muted/40')}>
+    <div className={cn('rounded-lg border p-2 text-center', accent ? 'border-hyper/25 bg-hyper/[0.06]' : 'bg-muted/40')}>
       <div className="flex items-center justify-center gap-1 text-muted-foreground">{icon}</div>
-      <div className={cn('mt-0.5 text-xl font-bold tabular-nums leading-none', accent && 'text-primary')}>{value}</div>
+      <div className={cn('mt-0.5 text-xl font-bold tabular-nums leading-none', accent && 'text-hyper')}>{value}</div>
       <div className="mt-1 text-[10px] text-muted-foreground">{label}</div>
     </div>
   );

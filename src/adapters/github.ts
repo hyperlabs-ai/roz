@@ -363,6 +363,19 @@ export async function listPullRequestCommits(repo: string, number: number): Prom
   return out;
 }
 
+/**
+ * SHAs de los commits de una PR (los de la rama de origen). Se usan para LIGAR esos commits al
+ * work_item → esfuerzo real (commits/líneas/hyperpoints). Solo se ligarán los que existan en
+ * roz.commit según la estrategia de merge: en merge/rebase son los commits individuales (que sí
+ * aterrizan en la default); en squash el único persistido es el squash (que va aparte, por
+ * mergeCommitSha). Una sola página de 100 basta (para PRs enormes el fallback del flujo de commits
+ * cubre el resto). Devuelve [] ante cualquier fallo del caller (se llama con .catch).
+ */
+export async function listPullRequestCommitShas(repo: string, number: number): Promise<string[]> {
+  const data = await gh<{ sha: string }[]>(`/repos/${encRepo(repo)}/pulls/${number}/commits?per_page=100`);
+  return data.map((c) => c.sha).filter(Boolean);
+}
+
 export interface PrReview {
   login: string | null;
   state: string; // approved | changes_requested | commented | dismissed | pending

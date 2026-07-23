@@ -22,8 +22,7 @@ import { apiGet, apiSend, type ProjectDetail as Detail, type RepoSyncStatus } fr
 import { compact, relative } from '@/lib/format';
 import { usePeriod } from '@/lib/usePeriod';
 import { cn } from '@/lib/utils';
-
-const PRIO_DOT: Record<string, string> = { urgent: 'bg-destructive', high: 'bg-warning', medium: 'bg-chart-1', low: 'bg-muted-foreground' };
+import { PRIO_DOT } from '@/lib/labels';
 
 function MiniStat({ icon, label, value, valueClassName, className }: { icon: React.ReactNode; label: string; value: string; valueClassName?: string; className?: string }) {
   return (
@@ -362,12 +361,12 @@ export default function ProjectDetail() {
 
               <Card>
                 <CardHeader className="flex-row items-center justify-between space-y-0">
-                  <CardTitle>Tickets abiertos</CardTitle>
-                  <span className="text-sm text-muted-foreground">{data.openTickets.length}</span>
+                  <CardTitle>Tickets completados</CardTitle>
+                  <span className="text-sm text-muted-foreground">{data.resolvedTickets.length}</span>
                 </CardHeader>
-                <CardContent className="space-y-1">
-                  {data.openTickets.length ? (
-                    data.openTickets.map((t) => (
+                <CardContent className="max-h-[24rem] space-y-1 overflow-y-auto scroll-thin pr-1">
+                  {data.resolvedTickets.length ? (
+                    data.resolvedTickets.map((t) => (
                       <a
                         key={t.id}
                         href={t.url && t.url !== '#' ? t.url : undefined}
@@ -381,7 +380,7 @@ export default function ProjectDetail() {
                         {t.assignee && <UserAvatar url={t.assignee.avatarUrl} name={t.assignee.name} className="size-5 shrink-0" />}
                       </a>
                     ))
-                  ) : <EmptyState>Sin tickets abiertos</EmptyState>}
+                  ) : <EmptyState>Sin tickets completados en este período</EmptyState>}
                 </CardContent>
               </Card>
 

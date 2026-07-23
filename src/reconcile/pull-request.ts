@@ -12,6 +12,7 @@ import { complete } from '../adapters/anthropic.js';
 import {
   getPullRequest,
   listPullRequestCommits,
+  listPullRequestCommitShas,
   listPullRequestReviews,
   referencesLinearIssue,
   type PrAuthor,
@@ -95,18 +96,24 @@ async function reconcileBody(
   // TODAS las ramas (linked / matched / documented) para alimentar la conexión-con-código del
   // dashboard, no solo en la huérfana. Antes solo se grababa al auto-documentar, por eso los PRs
   // que enlazan una tarea por su identificador (el flujo normal) no registraban nada.
-  const [authors, reviews] = await Promise.all([
+  const [authors, reviews, prShas] = await Promise.all([
     listPullRequestCommits(input.repo, input.number).catch(() => [] as PrAuthor[]),
     listPullRequestReviews(input.repo, input.number).catch(() => [] as PrReview[]),
+    listPullRequestCommitShas(input.repo, input.number).catch(() => [] as string[]),
   ]);
   const mergerDev = await resolveDevByLogin(supabase, pr.mergedByLogin);
+
+  // Commits a ligar al work_item para su esfuerzo real: el merge/squash commit (único persistido
+  // en un squash) + los commits de la rama (los persistidos en un merge/rebase). linkPrCommits solo
+  // actualiza los que EXISTEN en roz.commit, así que pasar la unión cubre cualquier estrategia.
+  const commitShas = [pr.mergeCommitSha, ...prShas].filter(Boolean) as string[];
 
   // 1. ¿La PR referencia una tarea por su identificador (rama "feat/ROZ-12", título o cuerpo)?
   //    roz la marca documentada y la cierra; no duplica.
   const linked = referencesLinearIssue(`${pr.title}\n${pr.body ?? ''}\n${pr.headRef ?? ''}`);
   if (linked) {
     await supabase.from('work_item').update({ documented: true }).eq('identifier', linked);
-    await attributePr(supabase, linked, input, pr, authors, reviews, mergerDev?.id ?? null);
+    await attributePr(supabase, linked, input, pr, authors, reviews, mergerDev?.id ?? null, commitShas);
     await completeLinkedIssue(supabase, linked);
     return { action: 'linked', identifier: linked, detail: 'enlazado por identificador de tarea' };
   }
@@ -160,7 +167,7 @@ async function reconcileBody(
   const matched = a.matchedIdentifier && openItems.find((i: any) => i.identifier === a.matchedIdentifier);
   if (matched) {
     await supabase.from('work_item').update({ documented: true }).eq('identifier', a.matchedIdentifier!);
-    await attributePr(supabase, a.matchedIdentifier!, input, pr, authors, reviews, mergerDev?.id ?? null);
+    await attributePr(supabase, a.matchedIdentifier!, input, pr, authors, reviews, mergerDev?.id ?? null, commitShas);
     await completeLinkedIssue(supabase, a.matchedIdentifier!);
     return {
       action: 'matched',
@@ -217,6 +224,7 @@ async function reconcileBody(
   state.issueCreated = true;
 
   await persistActors(supabase, task.id, { authors, reviews, mergerLogin: pr.mergedByLogin });
+  await linkPrCommits(supabase, input.repo, task.id, commitShas);
 
   // Notificar al autor (un solo correo agrupado de "cambio documentado").
   if (authorDev?.id) {
@@ -260,6 +268,7 @@ async function attributePr(
   authors: PrAuthor[],
   reviews: PrReview[],
   mergerDevId: string | null,
+  commitShas: string[],
 ): Promise<void> {
   const { data: wi } = await supabase.from('work_item').select('id').eq('identifier', identifier).maybeSingle();
   if (!wi?.id) return;
@@ -268,6 +277,31 @@ async function attributePr(
     .update({ repo: input.repo, pr_number: pr.number, merger_dev_id: mergerDevId, pr_state: 'merged', head_ref: pr.headRef ?? null })
     .eq('id', wi.id);
   await persistActors(supabase, wi.id, { authors, reviews, mergerLogin: pr.mergedByLogin });
+  await linkPrCommits(supabase, input.repo, wi.id, commitShas);
+}
+
+/**
+ * Liga los commits de una PR a su work_item (roz.commit.work_item_id) → así la tarea suma su
+ * esfuerzo real (commits/líneas/hyperpoints) en el dashboard. Antes ningún commit se ligaba desde
+ * el flujo de PR, así que una tarea nacida/cerrada por PR mostraba 0/0/0 salvo que el mensaje del
+ * commit trajera el identificador. Solo actualiza filas que YA existen (repo+sha) → idempotente y
+ * a prueba de la estrategia de merge. Casing canónico del repo en minúsculas (como en persistCommit).
+ * Best-effort: un fallo no debe tumbar la reconciliación de la PR.
+ */
+async function linkPrCommits(
+  supabase: ReturnType<typeof db>,
+  repo: string,
+  workItemId: string,
+  shas: string[],
+): Promise<void> {
+  const clean = [...new Set(shas.filter(Boolean))];
+  if (!clean.length) return;
+  await supabase
+    .from('commit')
+    .update({ work_item_id: workItemId })
+    .eq('repo', repo.toLowerCase())
+    .in('sha', clean)
+    .then(() => {}, () => {});
 }
 
 /**

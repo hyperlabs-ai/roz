@@ -90,8 +90,10 @@ export function TaskDialog({
   const [commentBody, setCommentBody] = useState('');
   const [commentBusy, setCommentBusy] = useState(false);
 
-  // Adjuntos / galería (solo en edición).
+  // Adjuntos / galería. En edición se suben al instante; en creación se encolan (pending) con
+  // preview local y se suben después de crear la tarea (cuando ya existe su id).
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [pending, setPending] = useState<{ file: File; url: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const [dropActive, setDropActive] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -124,6 +126,7 @@ export function TaskDialog({
     setCommentBody('');
     setComments([]);
     setAttachments([]);
+    setPending((prev) => { prev.forEach((p) => URL.revokeObjectURL(p.url)); return []; });
     // Al abrir en edición con descripción → arranca en Vista; en alta o sin texto → Editar.
     setDescMode(task && (task.spec ?? '').trim() ? 'view' : 'edit');
   }, [open, task, defaultDate, filters.allProjects]);
@@ -169,6 +172,15 @@ export function TaskDialog({
         toast.success('Tarea actualizada', { description: title.trim() });
       } else {
         const { task: created } = await apiSend<{ task: { id: string; identifier: string } }>('POST', '/tickets', body);
+        // Subir las imágenes encoladas ahora que la tarea existe (best-effort: no anula la creación).
+        if (pending.length) {
+          try {
+            for (const p of pending) await apiUpload<{ attachment: Attachment }>(`/tickets/${created.id}/attachments`, p.file);
+          } catch {
+            toast.error('La tarea se creó, pero algunas imágenes no se subieron');
+          }
+          pending.forEach((p) => URL.revokeObjectURL(p.url));
+        }
         toast.success('Tarea creada', { description: `${created.identifier} · ${title.trim()}` });
       }
       onOpenChange(false);
@@ -207,13 +219,18 @@ export function TaskDialog({
   }
 
   async function uploadFiles(files: File[]) {
-    if (!task || !files.length) return;
+    if (!files.length) return;
     const valid = files.filter((f) => {
       if (!f.type.startsWith('image/')) { toast.error('Solo se aceptan imágenes', { description: f.name }); return false; }
       if (f.size > MAX_BYTES) { toast.error('La imagen supera 4MB', { description: f.name }); return false; }
       return true;
     });
     if (!valid.length) return;
+    // Creación: aún no hay tarea → se encolan con preview local y se suben al guardar.
+    if (!task) {
+      setPending((prev) => [...prev, ...valid.map((f) => ({ file: f, url: URL.createObjectURL(f) }))]);
+      return;
+    }
     setUploading(true);
     try {
       for (const f of valid) {
@@ -225,6 +242,15 @@ export function TaskDialog({
       toast.error('No se pudo subir', { description: String(e.message ?? e) });
     }
     setUploading(false);
+  }
+
+  /** Quita una imagen en cola (creación) y libera su preview. */
+  function removePending(url: string) {
+    setPending((prev) => {
+      const found = prev.find((p) => p.url === url);
+      if (found) URL.revokeObjectURL(found.url);
+      return prev.filter((p) => p.url !== url);
+    });
   }
 
   async function removeAttachment(a: Attachment) {
@@ -517,47 +543,54 @@ export function TaskDialog({
                 </Section>
               )}
 
-              {editing && (
-                <Section
-                  title="Imágenes"
-                  action={
-                    <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-xs" onClick={() => fileRef.current?.click()} disabled={uploading}>
-                      {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />} Agregar
-                    </Button>
-                  }
+              {/* Imágenes: disponible también AL CREAR (se encolan y suben tras crear la tarea). */}
+              <Section
+                title="Imágenes"
+                action={
+                  <Button size="sm" variant="ghost" className="h-7 gap-1.5 px-2 text-xs" onClick={() => fileRef.current?.click()} disabled={uploading}>
+                    {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />} Agregar
+                  </Button>
+                }
+              >
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => { uploadFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }}
+                />
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setDropActive(true); }}
+                  onDragLeave={() => setDropActive(false)}
+                  onDrop={(e) => { e.preventDefault(); setDropActive(false); uploadFiles(Array.from(e.dataTransfer.files ?? [])); }}
+                  className={cn('rounded-lg border-2 border-dashed p-2 transition-colors', dropActive ? 'border-primary bg-primary/5' : 'border-border')}
                 >
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => { uploadFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }}
-                  />
-                  <div
-                    onDragOver={(e) => { e.preventDefault(); setDropActive(true); }}
-                    onDragLeave={() => setDropActive(false)}
-                    onDrop={(e) => { e.preventDefault(); setDropActive(false); uploadFiles(Array.from(e.dataTransfer.files ?? [])); }}
-                    className={cn('rounded-lg border-2 border-dashed p-2 transition-colors', dropActive ? 'border-primary bg-primary/5' : 'border-border')}
-                  >
-                    {attachments.length === 0 ? (
-                      <button type="button" onClick={() => fileRef.current?.click()} className="flex w-full flex-col items-center gap-1 py-4 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                        <ImagePlus className="size-5" />
-                        Arrastra imágenes o haz clic para subir
-                        <span className="text-[10px]">PNG, JPG · máx 4MB</span>
-                      </button>
-                    ) : (
+                  {(() => {
+                    const items = editing
+                      ? attachments.map((a) => ({ key: a.id, url: a.url, name: a.name, remove: () => removeAttachment(a) }))
+                      : pending.map((p) => ({ key: p.url, url: p.url, name: p.file.name, remove: () => removePending(p.url) }));
+                    if (!items.length) {
+                      return (
+                        <button type="button" onClick={() => fileRef.current?.click()} className="flex w-full flex-col items-center gap-1 py-4 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                          <ImagePlus className="size-5" />
+                          Arrastra imágenes o haz clic para subir
+                          <span className="text-[10px]">PNG, JPG · máx 4MB</span>
+                        </button>
+                      );
+                    }
+                    return (
                       <div className="grid grid-cols-3 gap-2">
-                        {attachments.map((a) => (
-                          <div key={a.id} className="group relative aspect-square overflow-hidden rounded-md border bg-muted">
-                            <a href={a.url} target="_blank" rel="noreferrer" title={a.name}>
-                              <img src={a.url} alt={a.name} loading="lazy" className="size-full object-cover transition-transform group-hover:scale-105" />
+                        {items.map((it) => (
+                          <div key={it.key} className="group relative aspect-square overflow-hidden rounded-md border bg-muted">
+                            <a href={it.url} target="_blank" rel="noreferrer" title={it.name}>
+                              <img src={it.url} alt={it.name} loading="lazy" className="size-full object-cover transition-transform group-hover:scale-105" />
                             </a>
                             <button
                               type="button"
-                              onClick={() => removeAttachment(a)}
+                              onClick={it.remove}
                               className="absolute right-1 top-1 grid size-6 place-items-center rounded-full bg-black/60 text-white opacity-0 transition-opacity hover:bg-destructive group-hover:opacity-100"
-                              aria-label={`Eliminar ${a.name}`}
+                              aria-label={`Eliminar ${it.name}`}
                             >
                               <X className="size-3.5" />
                             </button>
@@ -569,10 +602,10 @@ export function TaskDialog({
                           </div>
                         )}
                       </div>
-                    )}
-                  </div>
-                </Section>
-              )}
+                    );
+                  })()}
+                </div>
+              </Section>
             </div>
           </div>
         </div>

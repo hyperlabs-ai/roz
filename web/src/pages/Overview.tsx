@@ -5,20 +5,16 @@ import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { MetricCard } from '@/components/MetricCard';
 import { AreaTrend, RankBars, Donut } from '@/components/charts';
-import { UserAvatar, EmptyState, ProgressBar } from '@/components/bits';
+import { UserAvatar, EmptyState, ProgressBar, ErrorCard } from '@/components/bits';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApi } from '@/lib/useApi';
-import { apiGet, type Overview as OverviewData, type InfraResponse, type InfraService, type ServiceProvider, type ServiceStatus } from '@/lib/api';
+import { apiGet, type Overview as OverviewData, type InfraResponse, type InfraUptimeResponse, type InfraService, type ServiceProvider, type ServiceStatus } from '@/lib/api';
 import { compact, hours, relative } from '@/lib/format';
 import { comparisonRange } from '@/lib/period';
 import { usePeriod } from '@/lib/usePeriod';
 import { cn } from '@/lib/utils';
-
-const STATE_LABEL: Record<string, string> = {
-  backlog: 'Backlog', unstarted: 'Sin empezar', triage: 'Triage', started: 'En curso',
-  in_progress: 'En curso', completed: 'Completado', done: 'Hecho', canceled: 'Cancelado',
-};
+import { PRIO_LABEL, PRIO_COLOR_VAR } from '@/lib/labels';
 
 export default function Overview() {
   const [period, setPeriod] = usePeriod();
@@ -31,7 +27,7 @@ export default function Overview() {
 
   return (
     <Layout title="Resumen" subtitle="El pulso del equipo en un vistazo" actions={<PeriodPicker value={period} onChange={setPeriod} />}>
-      {error && <Card><CardContent className="py-4 text-sm text-destructive">{error}</CardContent></Card>}
+      {error && <ErrorCard message={error} className="mb-4" />}
 
       {loading || !data ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
@@ -108,31 +104,45 @@ export default function Overview() {
               </CardHeader>
               <CardContent>
                 {data.byDeveloper.length ? (
-                  <div className="space-y-2.5">
-                    {data.byDeveloper.slice(0, 8).map((d) => {
-                      const max = Math.max(...data.byDeveloper.map((x) => x.commits + x.ticketsResolved));
-                      const v = d.commits + d.ticketsResolved;
-                      return (
-                        <div key={d.devId} className="row-nudge -mx-2 flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1 hover:bg-accent/50" onClick={() => nav(`/app/developers/${d.devId}`)}>
-                          <UserAvatar url={d.avatarUrl} name={d.name} className="size-7" />
-                          <div className="w-20 shrink-0 truncate text-sm">{d.name}</div>
-                          <ProgressBar pct={(v / max) * 100} className="flex-1" barClassName="bg-chart-3" />
-                          <div className="w-24 shrink-0 text-right text-xs text-muted-foreground">{d.commits}c · {d.ticketsResolved}t</div>
+                  <div className="-mx-2">
+                    {/* Cabecera de columnas: deja claro qué es cada número */}
+                    <div className="flex items-center gap-3 px-2 pb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+                      <span className="w-4 shrink-0" />
+                      <span className="min-w-0 flex-1">Developer</span>
+                      <span className="w-12 text-right">commits</span>
+                      <span className="w-12 text-right">tickets</span>
+                      <span className="w-12 text-right">líneas</span>
+                      <span className="w-4 shrink-0" />
+                    </div>
+                    <div className="space-y-0.5">
+                      {data.byDeveloper.slice(0, 8).map((d, i) => (
+                        <div
+                          key={d.devId}
+                          className="group row-nudge flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-accent/50"
+                          onClick={() => nav(`/app/developers/${d.devId}`)}
+                        >
+                          <span className="w-4 shrink-0 text-center font-mono text-xs tabular-nums text-muted-foreground">{i + 1}</span>
+                          <UserAvatar url={d.avatarUrl} name={d.name} className="size-7 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{d.name}</span>
+                          <span className="w-12 text-right font-mono text-sm tabular-nums">{d.commits}</span>
+                          <span className="w-12 text-right font-mono text-sm tabular-nums">{d.ticketsResolved}</span>
+                          <span className="w-12 text-right font-mono text-sm tabular-nums text-muted-foreground">{compact(d.lines)}</span>
+                          <ChevronRight className="size-4 shrink-0 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
                         </div>
-                      );
-                    })}
+                      ))}
+                    </div>
                   </div>
                 ) : <EmptyState>Sin actividad en este período</EmptyState>}
               </CardContent>
             </Card>
           </div>
 
-          {/* Balance de carga + Tickets por estado */}
+          {/* Tickets completados: por developer (ponderado) + por prioridad */}
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>Balance de carga</CardTitle>
-                <CardDescription>Tickets abiertos asignados, ponderados por prioridad</CardDescription>
+                <CardTitle>Tickets completados</CardTitle>
+                <CardDescription>Completados en el período por developer, ponderados por prioridad</CardDescription>
               </CardHeader>
               <CardContent>
                 <Workload rows={data.workload} onPick={(id) => nav(`/app/developers/${id}`)} />
@@ -141,11 +151,11 @@ export default function Overview() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Pipeline de tickets</CardTitle>
-                <CardDescription>Tickets abiertos por estado</CardDescription>
+                <CardTitle>Completados por prioridad</CardTitle>
+                <CardDescription>Tickets resueltos en el período según su prioridad</CardDescription>
               </CardHeader>
               <CardContent>
-                <RankBars data={data.ticketsByState.map((s) => ({ label: STATE_LABEL[s.state] ?? s.state, value: s.count }))} color="hsl(var(--chart-5))" height={230} />
+                <RankBars data={data.completedByPriority.map((p) => ({ label: PRIO_LABEL[p.priority] ?? p.priority, value: p.count, color: PRIO_COLOR_VAR[p.priority] ?? 'hsl(var(--muted-foreground))' }))} />
               </CardContent>
             </Card>
           </div>
@@ -174,11 +184,20 @@ const INFRA_STATUS: Record<ServiceStatus, { label: string; dot: string }> = {
   unknown: { label: 'sin datos', dot: 'bg-muted-foreground/40' },
 };
 const INFRA_ORDER: ServiceStatus[] = ['down', 'degraded', 'paused', 'healthy', 'unknown'];
+// Color de cada barra del timeline de disponibilidad (status page).
+const UPTIME_BAR: Record<string, string> = {
+  // En light el verde va algo más suave (una pared de verde saturado se ve intensa); en dark, pleno.
+  healthy: 'bg-success/80 dark:bg-success',
+  degraded: 'bg-warning',
+  down: 'bg-destructive',
+  paused: 'bg-muted-foreground/50',
+  unknown: 'bg-muted',
+};
 const INFRA_PROVIDERS: ServiceProvider[] = ['vercel', 'railway', 'supabase'];
 const PROV: Record<ServiceProvider, { Icon: typeof Triangle; accent: string }> = {
   vercel: { Icon: Triangle, accent: 'text-foreground' },
-  railway: { Icon: TrainFront, accent: 'text-violet-500' },
-  supabase: { Icon: Database, accent: 'text-emerald-500' },
+  railway: { Icon: TrainFront, accent: 'text-chart-5' },
+  supabase: { Icon: Database, accent: 'text-chart-3' },
 };
 
 function latestDeploy(services: InfraService[]): InfraService | null {
@@ -207,6 +226,8 @@ function squareLayout(total: number): { cols: number; count: number } {
 // no llena filas completas, se muestran solo los primeros que sí las completan. Lee /infra.
 function InfraHealth({ onOpen }: { onOpen: () => void }) {
   const { data, loading } = useApi<InfraResponse>(() => apiGet('/infra'), []);
+  // Ventana propia del status page (histórico retenido), NO el período del dashboard.
+  const { data: uptime } = useApi<InfraUptimeResponse>(() => apiGet('/infra/uptime'), []);
   const allProjects = (data?.projects ?? []).filter((p) => p.services.length);
   const services = allProjects.flatMap((p) => p.services);
   if (!loading && !services.length) return null; // sin servicios vinculados → no mostrar
@@ -268,29 +289,69 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
             <div className="mb-4 flex flex-col gap-4 rounded-xl border bg-muted/30 p-3.5 sm:flex-row sm:items-center sm:justify-between">
               {/* Salud agregada */}
               <div className="min-w-0 flex-1">
-                <div className="mb-2 flex items-baseline gap-1.5">
-                  <span className="text-xl font-bold tabular-nums">{services.length}</span>
-                  <span className="text-xs text-muted-foreground">servicios monitoreados</span>
+                {/* Cabecera: nº de servicios (izq.) + estado actual agregado (der.), estilo status page. */}
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-1.5">
+                    <span className="text-xl font-bold tabular-nums">{services.length}</span>
+                    <span className="text-xs text-muted-foreground">servicios monitoreados</span>
+                  </div>
+                  {(() => {
+                    const o = counts['down']
+                      ? { t: 'Incidencia', c: 'text-destructive', dot: 'bg-destructive' }
+                      : counts['degraded']
+                        ? { t: 'Degradado', c: 'text-warning', dot: 'bg-warning' }
+                        : { t: 'Operativo', c: 'text-success', dot: 'bg-success' };
+                    return (
+                      <span className={cn('inline-flex shrink-0 items-center gap-1.5 text-sm font-medium', o.c)}>
+                        <span className={cn('size-2 rounded-full', o.dot)} /> {o.t}
+                      </span>
+                    );
+                  })()}
                 </div>
-                <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
-                  {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
-                    <div
-                      key={st}
-                      className={cn('h-full first:rounded-l-full last:rounded-r-full', INFRA_STATUS[st].dot)}
-                      style={{ width: `${(counts[st] / services.length) * 100}%` }}
-                      title={`${counts[st]} ${INFRA_STATUS[st].label}`}
-                    />
-                  ))}
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-                  {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
-                    <span key={st} className="inline-flex items-center gap-1.5 text-xs">
-                      <span className={cn('size-2 rounded-full', INFRA_STATUS[st].dot)} />
-                      <span className="font-semibold tabular-nums">{counts[st]}</span>
-                      <span className="text-muted-foreground">{INFRA_STATUS[st].label}</span>
-                    </span>
-                  ))}
-                </div>
+                {uptime && uptime.buckets.length ? (
+                  /* Timeline estilo status page: muchas barras finas sobre el período con histórico. */
+                  <div>
+                    <div className="flex h-9 items-stretch gap-[2px]">
+                      {uptime.buckets.map((b) => (
+                        <div
+                          key={b.start}
+                          title={`${b.start.slice(0, 10)} ${b.start.slice(11, 16)} · ${INFRA_STATUS[b.status]?.label ?? b.status}${b.total ? ` (${b.up}/${b.total} ok)` : ' · sin datos'}`}
+                          className={cn('min-w-[2px] flex-1 rounded-[1.5px] transition-colors', UPTIME_BAR[b.status] ?? 'bg-muted')}
+                        />
+                      ))}
+                    </div>
+                    <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
+                      <span className="shrink-0">hace {uptime.days} {uptime.days === 1 ? 'día' : 'días'}</span>
+                      <span className="h-px flex-1 bg-border" />
+                      {uptime.uptimePct != null && <span className="shrink-0 font-mono tabular-nums">{uptime.uptimePct}% disponibilidad</span>}
+                      <span className="h-px flex-1 bg-border" />
+                      <span className="shrink-0">hoy</span>
+                    </div>
+                  </div>
+                ) : (
+                  /* Fallback (aún sin histórico de snapshots): proporción por estado actual + leyenda. */
+                  <>
+                    <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
+                      {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
+                        <div
+                          key={st}
+                          className={cn('h-full first:rounded-l-full last:rounded-r-full', INFRA_STATUS[st].dot)}
+                          style={{ width: `${(counts[st] / services.length) * 100}%` }}
+                          title={`${counts[st]} ${INFRA_STATUS[st].label}`}
+                        />
+                      ))}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+                      {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
+                        <span key={st} className="inline-flex items-center gap-1.5 text-xs">
+                          <span className={cn('size-2 rounded-full', INFRA_STATUS[st].dot)} />
+                          <span className="font-semibold tabular-nums">{counts[st]}</span>
+                          <span className="text-muted-foreground">{INFRA_STATUS[st].label}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
 
               {/* Métricas secundarias, ancladas a la derecha */}
@@ -390,7 +451,7 @@ function SplitStat({ icon, label, tickets }: { icon: React.ReactNode; label: str
 }
 
 function Workload({ rows, onPick }: { rows: OverviewData['workload']; onPick: (id: string) => void }) {
-  if (!rows.length) return <EmptyState>Nadie con tickets abiertos asignados</EmptyState>;
+  if (!rows.length) return <EmptyState>Nadie completó tickets en este período</EmptyState>;
   const max = Math.max(...rows.map((r) => r.weighted));
   return (
     <div className="space-y-3">
@@ -399,7 +460,7 @@ function Workload({ rows, onPick }: { rows: OverviewData['workload']; onPick: (i
           <UserAvatar url={r.avatarUrl} name={r.name} className="size-7" />
           <div className="w-20 shrink-0 truncate text-sm">{r.name}</div>
           <ProgressBar pct={(r.weighted / max) * 100} className="flex-1" barClassName="bg-chart-1" />
-          <div className="w-16 shrink-0 text-right text-xs text-muted-foreground">{r.openTickets} abiertos</div>
+          <div className="w-20 shrink-0 text-right text-xs text-muted-foreground">{r.completedTickets} completados</div>
         </div>
       ))}
     </div>
@@ -409,8 +470,8 @@ function Workload({ rows, onPick }: { rows: OverviewData['workload']; onPick: (i
 function SkillCoverage({ coverage }: { coverage: OverviewData['skillsCoverage'] }) {
   if (!coverage.length) return <EmptyState>Sin skills registradas</EmptyState>;
   const risk = coverage.filter((s) => s.busFactorRisk).length;
-  const max = Math.max(...coverage.map((s) => s.devCount), 1);
-  const sorted = [...coverage].sort((a, b) => b.devCount - a.devCount);
+  // En riesgo primero (bus-factor), luego por cobertura desc.
+  const sorted = [...coverage].sort((a, b) => Number(b.busFactorRisk) - Number(a.busFactorRisk) || b.devCount - a.devCount);
 
   return (
     <div>
@@ -428,16 +489,24 @@ function SkillCoverage({ coverage }: { coverage: OverviewData['skillsCoverage'] 
         </div>
       </div>
 
-      {/* Barras de cobertura por skill */}
-      <div className="grid gap-x-6 gap-y-2.5 sm:grid-cols-2">
+      {/* Capacidades como chips: sin barras. El punto marca la cobertura (rojo = en riesgo ≤1 dev,
+          verde = bien cubierta) y el número la magnitud. */}
+      <div className="flex flex-wrap gap-2.5">
         {sorted.map((s) => (
-          <div key={s.skillId} className="flex items-center gap-3">
-            <div className="w-28 shrink-0 truncate text-sm" title={s.tag}>{s.tag}</div>
-            <ProgressBar pct={Math.max((s.devCount / max) * 100, 6)} className="flex-1" barClassName={s.busFactorRisk ? 'bg-warning' : 'bg-success'} />
-            <div className={cn('w-16 shrink-0 text-right text-xs', s.busFactorRisk ? 'font-medium text-warning' : 'text-muted-foreground')}>
-              {s.devCount} {s.devCount === 1 ? 'dev' : 'devs'}
-            </div>
-          </div>
+          <span
+            key={s.skillId}
+            title={`${s.tag} · ${s.devCount} ${s.devCount === 1 ? 'dev' : 'devs'}`}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm transition-colors',
+              s.busFactorRisk ? 'border-destructive/30 bg-destructive/5' : 'border-border hover:bg-muted/50',
+            )}
+          >
+            <span className={cn('size-2 shrink-0 rounded-full', s.busFactorRisk ? 'bg-destructive' : 'bg-success')} />
+            <span className="font-medium text-foreground">{s.tag}</span>
+            <span className={cn('font-mono tabular-nums', s.busFactorRisk ? 'font-semibold text-destructive' : 'text-muted-foreground')}>
+              {s.devCount}
+            </span>
+          </span>
         ))}
       </div>
     </div>

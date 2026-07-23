@@ -5,7 +5,7 @@ import {
   Triangle, TrainFront, Database, Clock, Timer, Globe, Activity, Cpu, Layers,
 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
-import { EmptyState } from '@/components/bits';
+import { EmptyState, ErrorCard } from '@/components/bits';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,8 +33,8 @@ const STATUS: Record<ServiceStatus, { label: string; dot: string; pill: string }
 
 const PROVIDER: Record<ServiceProvider, { name: string; Icon: typeof Triangle; accent: string; chip: string }> = {
   vercel: { name: 'Vercel', Icon: Triangle, accent: 'text-foreground', chip: 'bg-foreground/10 text-foreground' },
-  railway: { name: 'Railway', Icon: TrainFront, accent: 'text-violet-500', chip: 'bg-violet-500/12 text-violet-500' },
-  supabase: { name: 'Supabase', Icon: Database, accent: 'text-emerald-500', chip: 'bg-emerald-500/12 text-emerald-500' },
+  railway: { name: 'Railway', Icon: TrainFront, accent: 'text-chart-5', chip: 'bg-chart-5/15 text-chart-5' },
+  supabase: { name: 'Supabase', Icon: Database, accent: 'text-chart-3', chip: 'bg-chart-3/15 text-chart-3' },
 };
 
 const PROVIDER_ORDER: ServiceProvider[] = ['vercel', 'railway', 'supabase'];
@@ -108,7 +108,7 @@ export default function Infra() {
       subtitle="Estado de deploys, salud y métricas por proyecto"
       actions={<Button variant="outline" size="sm" onClick={reload}><RefreshCw /> Actualizar</Button>}
     >
-      {error && <Card className="mb-4"><CardContent className="py-4 text-sm text-destructive">{error}</CardContent></Card>}
+      {error && <ErrorCard message={error} className="mb-4" />}
 
       {noTokens && (
         <Card className="mb-4 border-warning/30 bg-warning/5">
@@ -131,7 +131,16 @@ export default function Infra() {
         <Card><CardContent className="py-10"><EmptyState icon={<Server className="size-6" />}>No hay proyectos</EmptyState></CardContent></Card>
       ) : (
         <div className="space-y-8">
-          {!!allServices.length && <SummaryBar total={allServices.length} counts={counts} projects={withServices.length} />}
+          {!!allServices.length && (
+            <SummaryBar
+              total={allServices.length}
+              counts={counts}
+              projects={withServices.length}
+              emptyProjects={emptyProjects}
+              isAdmin={isAdmin}
+              onSaved={reload}
+            />
+          )}
 
           {withServices.map((p) => (
             <ProjectSection key={p.projectId} p={p} isAdmin={isAdmin} onChanged={reload} />
@@ -141,7 +150,8 @@ export default function Infra() {
             <Card><CardContent className="py-10"><EmptyState icon={<Server className="size-6" />}>Ningún proyecto tiene servicios vinculados todavía</EmptyState></CardContent></Card>
           )}
 
-          {isAdmin && !!emptyProjects.length && <LinkToEmptyProject projects={emptyProjects} onSaved={reload} />}
+          {/* Sin servicios aún: la barra de resumen no se muestra, así que el selector va aquí de fallback. */}
+          {isAdmin && !allServices.length && !!emptyProjects.length && <LinkToEmptyProject projects={emptyProjects} onSaved={reload} />}
         </div>
       )}
     </Layout>
@@ -203,7 +213,23 @@ function InfraSkeleton() {
 }
 
 // ---- Resumen global ----
-function SummaryBar({ total, counts, projects }: { total: number; counts: Record<ServiceStatus, number>; projects: number }) {
+function SummaryBar({
+  total,
+  counts,
+  projects,
+  emptyProjects,
+  isAdmin,
+  onSaved,
+}: {
+  total: number;
+  counts: Record<ServiceStatus, number>;
+  projects: number;
+  emptyProjects: InfraProject[];
+  isAdmin: boolean;
+  onSaved: () => void;
+}) {
+  const [linkProject, setLinkProject] = useState('');
+  const [linkOpen, setLinkOpen] = useState(false);
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border bg-card px-5 py-3.5">
       <Metric value={projects} label={projects === 1 ? 'proyecto' : 'proyectos'} />
@@ -221,6 +247,20 @@ function SummaryBar({ total, counts, projects }: { total: number; counts: Record
             </div>
           ))}
       </div>
+
+      {/* Agregar servicios a otro proyecto (admin): alineado a la derecha de la barra de resumen. */}
+      {isAdmin && emptyProjects.length > 0 && (
+        <div className="ml-auto flex items-center gap-2">
+          <span className="hidden text-xs text-muted-foreground sm:inline">Agregar a proyecto:</span>
+          <Select value={linkProject} onValueChange={(v) => { setLinkProject(v); setLinkOpen(true); }}>
+            <SelectTrigger className="h-8 w-48"><SelectValue placeholder="Elige un proyecto…" /></SelectTrigger>
+            <SelectContent>
+              {emptyProjects.map((p) => <SelectItem key={p.projectId} value={p.projectId}>{p.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {linkProject && <ServiceDialog projectId={linkProject} open={linkOpen} onOpenChange={setLinkOpen} onSaved={onSaved} />}
+        </div>
+      )}
     </div>
   );
 }

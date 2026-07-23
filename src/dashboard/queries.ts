@@ -498,6 +498,56 @@ async function latestSnapshot(serviceId: string): Promise<SnapshotRow | null> {
 
 /** Estado de infraestructura por proyecto: cada servicio con su último snapshot. Incluye los
  *  proyectos SIN servicios (para poder vincular el primero desde la UI). */
+/**
+ * Historial de disponibilidad agregado (todos los servicios/proyectos) para un timeline estilo
+ * "status page": un bucket por día dentro del período, con el PEOR estado observado ese día
+ * (down > degraded > healthy). Rellena los días sin muestra como 'unknown' para una línea continua.
+ * Nota: `service_snapshot` se poda a 14 días (infra/poll.ts), así que el histórico real no va más
+ * atrás; los días previos del período simplemente no tienen datos.
+ */
+export async function getInfraUptime(period: Period) {
+  const TARGET = 90;
+  // Agregación en la base (roz.infra_uptime): devuelve ~TARGET buckets, así se esquiva el límite de
+  // filas de PostgREST (leer los ~2000 snapshots/día crudos solo traía ~medio día → "hace 1 día").
+  const { data, error } = await db().rpc('infra_uptime', { p_from: period.from, p_to: period.to, p_buckets: TARGET });
+  if (error) throw error;
+  const rows = (data ?? []) as { bucket_start: string; down: number; degraded: number; healthy: number; paused: number; total: number }[];
+  if (!rows.length) return { buckets: [] as { start: string; status: string; up: number; total: number }[], days: 0, uptimePct: null as number | null };
+
+  // Mismo ancho de bucket que usó la función (para alinear y rellenar huecos como 'unknown').
+  const HOUR = 3_600_000;
+  const spanMs = Math.max(new Date(period.to).getTime() - new Date(period.from).getTime(), 1);
+  const bucketMs = Math.max(HOUR, Math.ceil(spanMs / TARGET / HOUR) * HOUR);
+
+  const byStart = new Map<number, (typeof rows)[number]>();
+  let healthy = 0;
+  let total = 0;
+  for (const r of rows) {
+    byStart.set(new Date(r.bucket_start).getTime(), r);
+    healthy += Number(r.healthy);
+    total += Number(r.total);
+  }
+
+  const INCIDENT_FRAC = 0.02; // solo incidentes sostenidos pintan color; un blip aislado es ruido.
+  const firstBucket = Math.floor(new Date(rows[0]!.bucket_start).getTime() / bucketMs) * bucketMs;
+  const lastBucket = Math.floor(new Date(rows[rows.length - 1]!.bucket_start).getTime() / bucketMs) * bucketMs;
+  const buckets: { start: string; status: string; up: number; total: number }[] = [];
+  for (let t = firstBucket; t <= lastBucket && buckets.length < 400; t += bucketMs) {
+    const r = byStart.get(t);
+    let status = 'unknown';
+    if (r && Number(r.total)) {
+      const tot = Number(r.total);
+      const downFrac = Number(r.down) / tot;
+      const badFrac = (Number(r.down) + Number(r.degraded)) / tot;
+      status = downFrac >= INCIDENT_FRAC ? 'down' : badFrac >= INCIDENT_FRAC ? 'degraded' : Number(r.healthy) ? 'healthy' : Number(r.paused) ? 'paused' : 'unknown';
+    }
+    buckets.push({ start: new Date(t).toISOString(), status, up: r ? Number(r.healthy) : 0, total: r ? Number(r.total) : 0 });
+  }
+
+  const days = Math.max(1, Math.round(spanMs / 86_400_000));
+  return { buckets, days, uptimePct: total ? Math.round((healthy / total) * 1000) / 10 : null };
+}
+
 export async function listInfra() {
   const [projects, services] = await Promise.all([allProjects(), allProjectServices()]);
   const snaps = await Promise.all(services.map((s) => latestSnapshot(s.id)));
@@ -623,10 +673,9 @@ function commitSizeDist(commits: CommitRow[]): SizeBucket[] {
 // ---- Overview (landing del CEO) ----
 
 export async function getOverview(period: Period, cmp: Period | null) {
-  const [curCommits, curResolved, open, devs, projects, cmpCommits, cmpResolved] = await Promise.all([
+  const [curCommits, curResolved, devs, projects, cmpCommits, cmpResolved] = await Promise.all([
     commitsInRange(period.from, period.to),
     resolvedInRange(period.from, period.to),
-    openWorkItems(),
     allDevs(),
     allProjects(),
     cmp ? commitsInRange(cmp.from, cmp.to) : Promise.resolve(null),
@@ -670,22 +719,23 @@ export async function getOverview(period: Period, cmp: Period | null) {
   curResolved.forEach((w) => bucketProj(w.project_id).ticketsResolved++);
   const byProject = [...byProjectMap.values()].sort((a, b) => b.commits + b.ticketsResolved - (a.commits + a.ticketsResolved));
 
-  // Balance de carga: tickets abiertos asignados, ponderados por prioridad.
-  const workloadMap = new Map<string, { devId: string; name: string; avatarUrl: string | null; openTickets: number; weighted: number }>();
+  // Tickets completados por developer en el período, ponderados por prioridad. (Antes eran los
+  // ABIERTOS, pero roz auto-documenta trabajo ya completado → casi nunca hay abiertos y salía vacío.)
+  const workloadMap = new Map<string, { devId: string; name: string; avatarUrl: string | null; completedTickets: number; weighted: number }>();
   const devAvatar = new Map(devs.map((d) => [d.id, avatarFor(d.github_login)]));
-  open.forEach((w) => {
+  curResolved.forEach((w) => {
     if (!w.assignee_dev_id) return;
     if (!workloadMap.has(w.assignee_dev_id)) {
       workloadMap.set(w.assignee_dev_id, {
         devId: w.assignee_dev_id,
         name: devName.get(w.assignee_dev_id) ?? '—',
         avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null,
-        openTickets: 0,
+        completedTickets: 0,
         weighted: 0,
       });
     }
     const row = workloadMap.get(w.assignee_dev_id)!;
-    row.openTickets++;
+    row.completedTickets++;
     row.weighted += PRIORITY_WEIGHT[w.priority ?? ''] ?? 1;
   });
   const workload = [...workloadMap.values()].sort((a, b) => b.weighted - a.weighted);
@@ -721,10 +771,14 @@ export async function getOverview(period: Period, cmp: Period | null) {
     else if (k === 'internal') split.internal.ticketsResolved++;
   });
 
-  // Tickets abiertos por estado (salud del pipeline, no atado al período).
-  const stateAgg = new Map<string, number>();
-  open.forEach((w) => stateAgg.set(w.state, (stateAgg.get(w.state) ?? 0) + 1));
-  const ticketsByState = [...stateAgg.entries()].map(([state, count]) => ({ state, count })).sort((a, b) => b.count - a.count);
+  // Tickets completados por prioridad en el período. (Antes era "abiertos por estado", pero casi
+  // nunca hay abiertos → salía vacío; el trabajo completado por prioridad sí es informativo.)
+  const prioAgg = new Map<string, number>();
+  curResolved.forEach((w) => {
+    const p = w.priority ?? 'sin prioridad';
+    prioAgg.set(p, (prioAgg.get(p) ?? 0) + 1);
+  });
+  const completedByPriority = [...prioAgg.entries()].map(([priority, count]) => ({ priority, count })).sort((a, b) => b.count - a.count);
 
   // Tendencia diaria dentro del período.
   const trendMap = new Map<string, { date: string; commits: number; ticketsResolved: number }>();
@@ -736,7 +790,7 @@ export async function getOverview(period: Period, cmp: Period | null) {
   curResolved.forEach((w) => w.completed_at && ensureDay(dayKey(w.completed_at)).ticketsResolved++);
   const trend = [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date));
 
-  return { period, compare: cmp, kpis, byProject, byDeveloper, split, ticketsByState, workload, skillsCoverage, trend };
+  return { period, compare: cmp, kpis, byProject, byDeveloper, split, completedByPriority, workload, skillsCoverage, trend };
 }
 
 // ---- Lista de developers ----
@@ -791,12 +845,42 @@ export async function listDevelopers(period: Period) {
 
 // ---- Perfil de un developer ----
 
+/** Revisión hecha por un dev, con la tarea/PR revisada (para el KPI y el feed de actividad). */
+interface DevReview { ts: string; reviewState: string | null; identifier: string | null; title: string | null; url: string | null; repo: string | null; prNumber: number | null }
+
+/**
+ * Revisiones que HIZO un dev en un rango (rol reviewer en work_item_actor). Se acota por
+ * `created_at` de la fila de atribución ≈ cuándo roz registró la revisión (no hay timestamp de la
+ * review en sí). Incluye la tarea/PR revisada vía embed a work_item. La página individual no
+ * mostraba nada de esto (getDeveloper solo miraba commits/tickets), de ahí que "no aparecieran".
+ */
+async function reviewsByDev(devId: string, from: string, to: string): Promise<DevReview[]> {
+  const { data } = await db()
+    .from('work_item_actor')
+    .select('review_state, created_at, work_item!inner(identifier, title, url, repo, pr_number)')
+    .eq('role', 'reviewer')
+    .eq('dev_id', devId)
+    .gte('created_at', from)
+    .lt('created_at', to)
+    .order('created_at', { ascending: false })
+    .limit(200);
+  return ((data ?? []) as any[]).map((r) => ({
+    ts: r.created_at,
+    reviewState: r.review_state ?? null,
+    identifier: r.work_item?.identifier ?? null,
+    title: r.work_item?.title ?? null,
+    url: r.work_item?.url ?? null,
+    repo: r.work_item?.repo ?? null,
+    prNumber: r.work_item?.pr_number ?? null,
+  }));
+}
+
 export async function getDeveloper(devId: string, period: Period, cmp: Period | null) {
   const dev = await db().from('dev').select('id, name, email, github_login, active, availability').eq('id', devId).maybeSingle();
   const d = dev.data as unknown as DevRow | null;
   if (!d) return null;
 
-  const [curCommits, curResolved, open, projects, skills, cmpCommits, cmpResolved] = await Promise.all([
+  const [curCommits, curResolved, open, projects, skills, cmpCommits, cmpResolved, curReviews, cmpReviews] = await Promise.all([
     commitsInRange(period.from, period.to, { devId }),
     resolvedInRange(period.from, period.to, { devId }),
     openWorkItems(devId),
@@ -804,6 +888,8 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
     devSkills(devId),
     cmp ? commitsInRange(cmp.from, cmp.to, { devId }) : Promise.resolve(null),
     cmp ? resolvedInRange(cmp.from, cmp.to, { devId }) : Promise.resolve(null),
+    reviewsByDev(devId, period.from, period.to),
+    cmp ? reviewsByDev(devId, cmp.from, cmp.to) : Promise.resolve(null),
   ]);
   const projName = new Map(projects.map((p) => [p.id, p.name]));
 
@@ -817,6 +903,7 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
     ticketsResolved: metric(curResolved.length, cmpResolved ? cmpResolved.length : null),
     avgCycleTimeHours: metric(cycleTime(curResolved), cmpResolved ? cycleTime(cmpResolved) : null),
     linesChanged: metric(lines.additions + lines.deletions, cmpCommits ? sumLines(cmpCommits).additions + sumLines(cmpCommits).deletions : null),
+    reviews: metric(curReviews.length, cmpReviews ? cmpReviews.length : null),
   };
 
   const trendMap = new Map<string, number>();
@@ -840,6 +927,7 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
   const activity = [
     ...curCommits.filter((c) => c.committed_at).map((c) => ({ type: 'commit' as const, ts: c.committed_at!, title: (c.message ?? '').split('\n')[0], url: c.url, repo: c.repo, additions: c.additions, deletions: c.deletions })),
     ...curResolved.filter((w) => w.completed_at).map((w) => ({ type: 'ticket_resolved' as const, ts: w.completed_at!, title: `${w.identifier}: ${w.title}`, url: w.url, repo: null, additions: null, deletions: null })),
+    ...curReviews.filter((r) => r.ts).map((r) => ({ type: 'review' as const, ts: r.ts, title: r.identifier ? `${r.identifier}: ${r.title ?? ''}`.trim() : (r.title ?? (r.prNumber ? `PR #${r.prNumber}` : 'Revisión')), url: r.url, repo: r.repo, additions: null, deletions: null })),
   ]
     .filter((a) => a.ts >= activityCutoff)
     .sort((a, b) => b.ts.localeCompare(a.ts));
@@ -927,16 +1015,11 @@ export async function getProject(projectId: string, period: Period) {
   if (!p) return null;
   const color = (await projectColors()).get(projectId) ?? null;
 
-  const [commits, devs, resolved, repoRows, openRows, allItemRows, repoSync] = await Promise.all([
+  const [commits, devs, resolved, repoRows, allItemRows, repoSync] = await Promise.all([
     commitsInRange(period.from, period.to, { projectId }),
     allDevs(),
     resolvedInRange(period.from, period.to, { projectId }),
     db().from('project_repo').select('repo').eq('project_id', projectId),
-    db()
-      .from('work_item')
-      .select('id, identifier, title, state, state_name, priority, assignee_dev_id, url')
-      .eq('project_id', projectId)
-      .in('state', OPEN_STATES),
     // Todos los work_items del proyecto (para el desglose por estado, incluidos cerrados).
     db().from('work_item').select('state, state_name').eq('project_id', projectId),
     projectRepoSync(projectId),
@@ -1002,29 +1085,30 @@ export async function getProject(projectId: string, period: Period) {
   });
   const ticketsByState = [...stateAgg.values()].sort((a, b) => b.count - a.count);
 
-  // Tickets abiertos del proyecto (ordenados por prioridad).
-  const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
-  const openTickets = ((openRows.data ?? []) as any[])
+  // Tickets COMPLETADOS del proyecto en el período (más recientes primero). roz auto-documenta
+  // trabajo ya hecho → los "abiertos" casi siempre salían vacíos; los completados son lo relevante.
+  const resolvedTickets = resolved
+    .slice()
+    .sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? ''))
     .map((w) => ({
       id: w.id,
       identifier: w.identifier,
       title: w.title,
       state: w.state,
-      stateName: w.state_name ?? w.state,
+      stateName: STATE_LABEL[w.state as TaskState] ?? w.state,
       priority: w.priority,
       url: w.url,
       assignee: w.assignee_dev_id ? { name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
-    }))
-    .sort((a, b) => (PRIO_ORDER[a.priority ?? ''] ?? 9) - (PRIO_ORDER[b.priority ?? ''] ?? 9));
+    }));
 
   return {
     project: { id: p.id, name: p.name, key: p.key, kind: p.kind, color },
     repos,
     repoSync,
     period,
-    totals: { commits: commits.length, additions: lines.additions, deletions: lines.deletions, ticketsResolved: resolved.length, contributors: contribMap.size, openTickets: openTickets.length },
+    totals: { commits: commits.length, additions: lines.additions, deletions: lines.deletions, ticketsResolved: resolved.length, contributors: contribMap.size },
     contributors: [...contribMap.values()].sort((a, b) => b.commits - a.commits),
-    openTickets,
+    resolvedTickets,
     byRepo,
     ticketsByState,
     history,
@@ -1182,22 +1266,44 @@ export async function getTickets(f: TicketFilters) {
     })
     .sort((a, b) => (PRIO_ORDER[a.priority ?? ''] ?? 9) - (PRIO_ORDER[b.priority ?? ''] ?? 9));
 
-  // Agregaciones para los KPIs/gráficas (sobre el conjunto filtrado).
-  const byState = countMap(tickets, (t) => t.stateName);
-  const byPriority = countMap(tickets, (t) => t.priority ?? 'sin prioridad');
-  const byProject = countMap(tickets, (t) => t.projectName ?? 'sin proyecto');
-  const bySource = countMap(tickets, (t) => t.source ?? 'linear');
-
-  // Top revisores: quién aparece más como reviewer (no es el assignee; hoy invisible).
+  // Top revisores: se cuenta sobre TODO el trabajo del filtro (rol reviewer en work_item_actor),
+  // NO solo los tickets abiertos visibles. Las revisiones viven en PRs mergeadas → tareas
+  // completadas, que el scope abierto por defecto excluía: por eso el widget salía vacío aunque la
+  // atribución existiera. Se filtra por proyecto vía el embed a work_item (igual que `developers`
+  // se calcula sobre el conjunto completo para no depender del scope).
+  let revQ = db()
+    .from('work_item_actor')
+    .select('github_login, dev_id, work_item!inner(project_id)')
+    .eq('role', 'reviewer');
+  if (f.projectId) revQ = revQ.eq('work_item.project_id', f.projectId);
+  const { data: revRows } = await revQ.limit(5000);
   const revMap = new Map<string, { name: string; avatarUrl: string | null; count: number }>();
-  tickets.forEach((t) =>
-    t.reviewers.forEach((r) => {
-      const k = r.login ?? r.name;
-      if (!revMap.has(k)) revMap.set(k, { name: r.name, avatarUrl: r.avatarUrl, count: 0 });
-      revMap.get(k)!.count++;
-    }),
-  );
+  for (const r of (revRows ?? []) as any[]) {
+    const k = r.dev_id ?? r.github_login;
+    const name = r.dev_id ? devName.get(r.dev_id) ?? r.github_login : r.github_login;
+    const avatarUrl = r.dev_id ? devAvatar.get(r.dev_id) ?? avatarFor(r.github_login) : avatarFor(r.github_login);
+    if (!revMap.has(k)) revMap.set(k, { name, avatarUrl, count: 0 });
+    revMap.get(k)!.count++;
+  }
   const topReviewers = [...revMap.values()].sort((a, b) => b.count - a.count);
+
+  // Top merges: quién integra el trabajo (rol merger). Complementa a los revisores (que en roz
+  // suelen ser pocos) para que la atribución de PRs aporte más señal.
+  let mrgQ = db()
+    .from('work_item_actor')
+    .select('github_login, dev_id, work_item!inner(project_id)')
+    .eq('role', 'merger');
+  if (f.projectId) mrgQ = mrgQ.eq('work_item.project_id', f.projectId);
+  const { data: mrgRows } = await mrgQ.limit(5000);
+  const mrgMap = new Map<string, { name: string; avatarUrl: string | null; count: number }>();
+  for (const r of (mrgRows ?? []) as any[]) {
+    const k = r.dev_id ?? r.github_login;
+    const name = r.dev_id ? devName.get(r.dev_id) ?? r.github_login : r.github_login;
+    const avatarUrl = r.dev_id ? devAvatar.get(r.dev_id) ?? avatarFor(r.github_login) : avatarFor(r.github_login);
+    if (!mrgMap.has(k)) mrgMap.set(k, { name, avatarUrl, count: 0 });
+    mrgMap.get(k)!.count++;
+  }
+  const topMergers = [...mrgMap.values()].sort((a, b) => b.count - a.count);
 
   // Insight de atribución: tickets cuyo merger no es ninguno de los autores (ver squash/merge).
   const attributionMismatch = tickets.filter(
@@ -1208,12 +1314,20 @@ export async function getTickets(f: TicketFilters) {
 
   // Resumen por categoría, SIEMPRE sobre todos los tickets del filtro (ignora el scope), para
   // que los KPIs muestren abiertos / en curso / completados sin importar el toggle.
-  let sq = db().from('work_item').select('state, assignee_dev_id, due_date');
+  let sq = db().from('work_item').select('state, state_name, project_id, priority, source, assignee_dev_id, due_date');
   if (f.projectId) sq = sq.eq('project_id', f.projectId);
   if (f.assigneeDevId) sq = sq.eq('assignee_dev_id', f.assigneeDevId);
   if (f.priority) sq = sq.eq('priority', f.priority);
   const { data: allRows } = await sq.limit(2000);
   const all = (allRows ?? []) as any[];
+
+  // Distribuciones (por estado/proyecto/prioridad/origen) sobre TODO el trabajo del filtro, NO solo
+  // los tickets abiertos visibles: roz auto-documenta trabajo completado, así que el scope abierto
+  // por defecto dejaba estas gráficas vacías aunque hubiera cientos de completados.
+  const byState = countMap(all, (w) => w.state_name ?? STATE_LABEL[w.state as TaskState] ?? w.state);
+  const byPriority = countMap(all, (w) => w.priority ?? 'sin prioridad');
+  const byProject = countMap(all, (w) => (w.project_id ? projName.get(w.project_id) ?? 'sin proyecto' : 'sin proyecto'));
+  const bySource = countMap(all, (w) => w.source ?? 'linear');
 
   // Developers involucrados: sobre el conjunto COMPLETO (no los 500 visibles), para que no
   // dependa del scope/orden. Antes se calculaba sobre `tickets` y devs con tickets viejos
@@ -1246,6 +1360,7 @@ export async function getTickets(f: TicketFilters) {
     bySource,
     developers,
     topReviewers,
+    topMergers,
     attributionMismatch,
     withoutPr,
     tickets,

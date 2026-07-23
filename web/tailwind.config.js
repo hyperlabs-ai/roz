@@ -28,8 +28,22 @@ export default {
           4: 'hsl(var(--chart-4))',
           5: 'hsl(var(--chart-5))',
         },
+        // Dorado de logro (hyper points), theme-aware.
+        hyper: 'hsl(var(--hyper))',
       },
       borderRadius: { lg: 'var(--radius)', md: 'calc(var(--radius) - 2px)', sm: 'calc(var(--radius) - 4px)' },
+      fontFamily: {
+        // Geist = tipografía de marca (variable). Mono para números/código (detalle fino).
+        sans: ['"Geist Variable"', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        mono: ['"Geist Mono Variable"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+      },
+      boxShadow: {
+        // Sombras por token (frías y sutiles en light, casi nulas en dark → elevación por borde).
+        sm: 'var(--shadow-sm)',
+        DEFAULT: 'var(--shadow-sm)',
+        md: 'var(--shadow-md)',
+        lg: 'var(--shadow-lg)',
+      },
       transitionTimingFunction: {
         // "spring suave": overshoot mínimo, sensación fluida. Curva base del sistema de movimiento.
         spring: 'cubic-bezier(.22,1,.36,1)',

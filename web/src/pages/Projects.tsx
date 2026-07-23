@@ -5,7 +5,7 @@ import { FolderGit2, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from 'lu
 import { cn } from '@/lib/utils';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
-import { UserAvatar, EmptyState, LineDelta } from '@/components/bits';
+import { UserAvatar, EmptyState, LineDelta, ErrorCard } from '@/components/bits';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -103,7 +103,7 @@ export default function Projects() {
         </div>
       }
     >
-      {error && <Card><CardContent className="py-4 text-sm text-destructive">{error}</CardContent></Card>}
+      {error && <ErrorCard message={error} className="mb-4" />}
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40" />)}</div>
@@ -153,7 +153,7 @@ function projectHue(seed: string): number {
 
 /** Color del proyecto: el fijado manualmente (hex) o uno generado a partir de la key. */
 function projectColor(p: { color: string | null; key: string; name: string }): string {
-  return p.color || `hsl(${projectHue(p.key || p.name)} 62% 45%)`;
+  return p.color || `hsl(${projectHue(p.key || p.name)} 52% 48%)`;
 }
 
 /** HSL → hex, para previsualizar en el <input type="color"> el color automático generado. */

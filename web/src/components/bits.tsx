@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { CircleAlert } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { initials } from '@/lib/format';
+import { STATE_LABEL, stateBadgeVariant, PRIO_DOT } from '@/lib/labels';
 
 /** Barra de progreso que crece suave desde 0 al montar (y anima cambios de valor). `pct` 0–100. */
 export function ProgressBar({ pct, className, barClassName }: { pct: number; className?: string; barClassName?: string }) {
@@ -56,28 +58,38 @@ export function AvatarStack({
   );
 }
 
-const STATE_LABEL: Record<string, string> = {
-  backlog: 'Backlog', unstarted: 'Sin empezar', triage: 'Triage', started: 'En curso', in_progress: 'En curso',
-  completed: 'Completado', done: 'Hecho', canceled: 'Cancelado',
-};
-
 export function StateBadge({ state }: { state: string }) {
-  const variant = ['completed', 'done'].includes(state) ? 'success' : ['started', 'in_progress'].includes(state) ? 'default' : 'secondary';
-  return <Badge variant={variant as any}>{STATE_LABEL[state] ?? state}</Badge>;
+  return <Badge variant={stateBadgeVariant(state)}>{STATE_LABEL[state] ?? state}</Badge>;
 }
-
-const PRIO_COLOR: Record<string, string> = { urgent: 'bg-destructive', high: 'bg-warning', medium: 'bg-chart-1', low: 'bg-muted-foreground' };
 
 export function PriorityDot({ priority }: { priority: string | null }) {
   if (!priority) return <span className="size-2 rounded-full bg-muted" />;
-  return <span className={cn('size-2 rounded-full', PRIO_COLOR[priority] ?? 'bg-muted')} title={priority} />;
+  return <span className={cn('size-2 rounded-full', PRIO_DOT[priority] ?? 'bg-muted')} title={priority} />;
 }
 
-export function EmptyState({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
+export function EmptyState({ icon, children, action }: { icon?: ReactNode; children: ReactNode; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-10 text-center text-sm text-muted-foreground">
-      {icon}
-      <span>{children}</span>
+    <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
+      {icon && (
+        <div className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground [&_svg]:size-5">{icon}</div>
+      )}
+      <span className="max-w-xs text-sm text-muted-foreground">{children}</span>
+      {action}
+    </div>
+  );
+}
+
+/** Aviso de error consistente (reemplaza las "Card roja suelta" repetidas en cada página). */
+export function ErrorCard({ message, className }: { message: ReactNode; className?: string }) {
+  return (
+    <div
+      className={cn(
+        'flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive',
+        className,
+      )}
+    >
+      <CircleAlert className="mt-0.5 size-4 shrink-0" />
+      <span className="min-w-0">{message}</span>
     </div>
   );
 }

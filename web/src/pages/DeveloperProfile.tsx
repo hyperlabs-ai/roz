@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil, GitBranch, Zap } from 'lucide-react';
+import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil, GitBranch, Zap, Eye } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { DeltaBadge, MetricCard } from '@/components/MetricCard';
-import { FocusRadar, MiniArea } from '@/components/charts';
-import { UserAvatar, EmptyState, StateBadge, LineDelta, SkillMeters } from '@/components/bits';
+import { Donut, MiniArea } from '@/components/charts';
+import { UserAvatar, EmptyState, StateBadge, LineDelta, SkillMeters, ErrorCard } from '@/components/bits';
 import { AvailabilityControl } from '@/components/AvailabilityControl';
 import { DeveloperDialog } from '@/components/DeveloperDialog';
 import { GithubContributions } from '@/components/GithubContributions';
@@ -55,7 +55,7 @@ export default function DeveloperProfile() {
         <Link to="/app/developers"><ArrowLeft /> Developers</Link>
       </Button>
 
-      {error && <Card><CardContent className="py-4 text-sm text-destructive">{error}</CardContent></Card>}
+      {error && <ErrorCard message={error} className="mb-4" />}
       {loading || !data ? (
         <div className="space-y-4">
           <Skeleton className="h-20" />
@@ -83,16 +83,16 @@ export default function DeveloperProfile() {
               {/* Hyper points: panel destacado */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex w-full items-center justify-center gap-3 rounded-xl border border-amber-500/25 bg-gradient-to-b from-amber-500/10 to-amber-500/[0.03] px-5 py-3 sm:w-auto sm:shrink-0">
-                    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-500">
-                      <Zap className="size-5 fill-amber-400" />
+                  <div className="flex w-full items-center justify-center gap-3 rounded-xl border border-hyper/30 bg-hyper/[0.08] px-5 py-3 sm:w-auto sm:shrink-0">
+                    <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-hyper/15 text-hyper">
+                      <Zap className="size-5 fill-hyper/25" />
                     </div>
                     <div>
                       <div className="flex items-baseline gap-2">
-                        <span className="text-2xl font-extrabold leading-none tracking-tight tabular-nums">{data.kpis.hyperPoints.value}</span>
+                        <span className="font-mono text-2xl font-extrabold leading-none tracking-tight tabular-nums">{data.kpis.hyperPoints.value}</span>
                         <DeltaBadge metric={data.kpis.hyperPoints} />
                       </div>
-                      <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-amber-600/80 dark:text-amber-400/80">Hyper points</div>
+                      <div className="mt-1 text-[11px] font-medium uppercase tracking-wide text-hyper">Hyper points</div>
                     </div>
                   </div>
                 </TooltipTrigger>
@@ -106,10 +106,11 @@ export default function DeveloperProfile() {
             </CardContent>
           </Card>
 
-          <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
             <MetricCard label="Commits" value={data.kpis.commits.value} metric={data.kpis.commits} icon={GitCommitHorizontal} colorVar="--chart-1" />
             <MetricCard label="Líneas cambiadas" value={data.kpis.linesChanged.value} metric={data.kpis.linesChanged} icon={Code2} format={compact} colorVar="--chart-4" />
             <MetricCard label="Tickets resueltos" value={data.kpis.ticketsResolved.value} metric={data.kpis.ticketsResolved} icon={CircleCheck} colorVar="--chart-3" />
+            <MetricCard label="Revisiones" value={data.kpis.reviews.value} metric={data.kpis.reviews} icon={Eye} colorVar="--chart-2" />
             <MetricCard label="Cycle time" value={data.kpis.avgCycleTimeHours.value} metric={data.kpis.avgCycleTimeHours} icon={Timer} invert format={hours} colorVar="--chart-5" />
           </div>
 
@@ -135,7 +136,7 @@ export default function DeveloperProfile() {
                 <CardDescription>Dónde se concentra el trabajo (commits)</CardDescription>
               </CardHeader>
               <CardContent>
-                {data.projects.length ? <FocusRadar data={data.projects.map((p) => ({ label: p.name, value: p.commits }))} height={340} /> : <EmptyState>Sin actividad</EmptyState>}
+                {data.projects.length ? <Donut data={projectShare(data.projects)} height={320} /> : <EmptyState>Sin actividad</EmptyState>}
               </CardContent>
             </Card>
             <Card className="min-w-0">
@@ -163,23 +164,6 @@ export default function DeveloperProfile() {
               hace scroll interno; cap compartido para cuando ambas son muy largas. Solo en desktop. */}
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <Card className="min-w-0 lg:flex lg:max-h-[480px] lg:flex-col">
-              <CardHeader>
-                <CardTitle>Tickets</CardTitle>
-                <CardDescription>{data.tickets.inProgress.length} en curso · {data.tickets.open.length} abiertos · {data.tickets.resolved.length} resueltos</CardDescription>
-              </CardHeader>
-              <CardContent className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
-                <Tabs defaultValue="active" className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
-                  <TabsList className="mx-auto flex w-fit lg:shrink-0">
-                    <TabsTrigger value="active">Activos</TabsTrigger>
-                    <TabsTrigger value="resolved">Resueltos</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="active" className="scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1"><TicketList tickets={[...data.tickets.inProgress, ...data.tickets.open]} /></TabsContent>
-                  <TabsContent value="resolved" className="scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1"><TicketList tickets={data.tickets.resolved} /></TabsContent>
-                </Tabs>
-              </CardContent>
-            </Card>
-
-            <Card className="min-w-0 lg:flex lg:max-h-[480px] lg:flex-col">
               <CardHeader><CardTitle>Actividad reciente</CardTitle></CardHeader>
               <CardContent className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
                 {data.activity.length ? (
@@ -187,7 +171,7 @@ export default function DeveloperProfile() {
                     {data.activity.map((a, i) => (
                       <div key={i} className="flex items-center gap-3 border-b py-2 last:border-0">
                         <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">
-                          {a.type === 'commit' ? <GitCommitHorizontal className="size-3.5" /> : <CircleCheck className="size-3.5 text-success" />}
+                          {a.type === 'commit' ? <GitCommitHorizontal className="size-3.5" /> : a.type === 'review' ? <Eye className="size-3.5 text-chart-2" /> : <CircleCheck className="size-3.5 text-success" />}
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm">{a.title}</div>
@@ -208,6 +192,23 @@ export default function DeveloperProfile() {
                 ) : <EmptyState>Sin actividad en este período</EmptyState>}
               </CardContent>
             </Card>
+
+            <Card className="min-w-0 lg:flex lg:max-h-[480px] lg:flex-col">
+              <CardHeader>
+                <CardTitle>Tickets</CardTitle>
+                <CardDescription>{data.tickets.resolved.length} resueltos · {data.tickets.inProgress.length} en curso · {data.tickets.open.length} abiertos</CardDescription>
+              </CardHeader>
+              <CardContent className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+                <Tabs defaultValue="resolved" className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
+                  <TabsList className="mx-auto flex w-fit lg:shrink-0">
+                    <TabsTrigger value="resolved">Resueltos</TabsTrigger>
+                    <TabsTrigger value="active">Activos</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="resolved" className="scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1"><TicketList tickets={data.tickets.resolved} /></TabsContent>
+                  <TabsContent value="active" className="scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1"><TicketList tickets={[...data.tickets.inProgress, ...data.tickets.open]} /></TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
           </div>
         </>
       )}
@@ -215,6 +216,20 @@ export default function DeveloperProfile() {
       <DeveloperDialog devId={id} open={editOpen} onOpenChange={setEditOpen} onSaved={reload} />
     </Layout>
   );
+}
+
+const PROJECT_COLORS = [
+  'hsl(var(--chart-1))', 'hsl(var(--chart-2))', 'hsl(var(--chart-3))',
+  'hsl(var(--chart-4))', 'hsl(var(--chart-5))',
+];
+
+/** Reparto de commits por proyecto para la dona: top 5 con la paleta + resto agrupado en "Otros"
+ *  (regla de paleta categórica: nunca ciclar colores; el excedente se pliega a "Otros"). */
+function projectShare(projects: Profile['projects']): { label: string; value: number; color: string }[] {
+  const sorted = [...projects].filter((p) => p.commits > 0).sort((a, b) => b.commits - a.commits);
+  const top = sorted.slice(0, 5).map((p, i) => ({ label: p.name, value: p.commits, color: PROJECT_COLORS[i]! }));
+  const rest = sorted.slice(5).reduce((s, p) => s + p.commits, 0);
+  return rest > 0 ? [...top, { label: 'Otros', value: rest, color: 'hsl(var(--muted-foreground))' }] : top;
 }
 
 /**

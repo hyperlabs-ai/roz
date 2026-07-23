@@ -31,6 +31,7 @@ import {
   listProjectRepos,
   listActiveSyncs,
   listInfra,
+  getInfraUptime,
   linkService,
   updateService,
   unlinkService,
@@ -363,6 +364,19 @@ dashboardRoutes.delete('/projects/:id', requireAdmin, async (c) => {
 dashboardRoutes.get('/infra', async (c) => {
   try {
     return c.json(await listInfra());
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Timeline de disponibilidad (status page): ventana FIJA propia (todo el histórico retenido, ~14
+// días), independiente del selector de período del dashboard. Acepta ?days para ampliarla.
+dashboardRoutes.get('/infra/uptime', async (c) => {
+  try {
+    const days = Math.min(90, Math.max(1, Number(c.req.query('days')) || 14));
+    const to = new Date().toISOString();
+    const from = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    return c.json(await getInfraUptime({ from, to }));
   } catch (err) {
     return fail(c, err);
   }

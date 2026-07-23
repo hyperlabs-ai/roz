@@ -101,11 +101,17 @@ function SkillCard({ s, isAdmin, onSaved, onDeleted }: { s: SkillCatalogItem; is
           <span className="text-muted-foreground">{s.devCount} {s.devCount === 1 ? 'persona' : 'personas'}</span>
           <span className="text-muted-foreground">nivel prom. <span className="font-semibold text-foreground">{s.avgLevel || '—'}</span></span>
         </div>
-        <div className="h-2 overflow-hidden rounded-full bg-muted">
-          <div
-            className={cn('h-full rounded-full', s.busFactorRisk ? 'bg-warning' : 'bg-success')}
-            style={{ width: `${Math.max((s.devCount / max) * 100, 6)}%` }}
-          />
+        {/* Medidor segmentado (no barra continua): un segmento por dev cubierto, sobre el equipo de referencia. */}
+        <div className="flex items-center gap-1">
+          {Array.from({ length: max }).map((_, i) => (
+            <span
+              key={i}
+              className={cn(
+                'h-1.5 flex-1 rounded-full',
+                i < s.devCount ? (s.busFactorRisk ? 'bg-warning' : 'bg-success') : 'bg-muted',
+              )}
+            />
+          ))}
         </div>
       </div>
     </Card>
