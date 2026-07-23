@@ -65,8 +65,8 @@ export interface Overview {
   byProject: { projectId: string | null; name: string; commits: number; ticketsResolved: number }[];
   byDeveloper: { devId: string; name: string; avatarUrl: string | null; commits: number; ticketsResolved: number; lines: number }[];
   split: { client: { commits: number; ticketsResolved: number }; internal: { commits: number; ticketsResolved: number } };
-  ticketsByState: { state: string; count: number }[];
-  workload: { devId: string; name: string; avatarUrl: string | null; openTickets: number; weighted: number }[];
+  completedByPriority: { priority: string; count: number }[];
+  workload: { devId: string; name: string; avatarUrl: string | null; completedTickets: number; weighted: number }[];
   skillsCoverage: SkillCatalogItem[];
   trend: { date: string; commits: number; ticketsResolved: number }[];
 }
@@ -94,14 +94,14 @@ export interface DeveloperCredentials {
 
 export interface DeveloperProfile {
   dev: { id: string; name: string; email: string | null; githubLogin: string | null; avatarUrl: string | null; active: boolean; availability: number };
-  kpis: { commits: Metric; hyperPoints: Metric; ticketsResolved: Metric; avgCycleTimeHours: Metric; linesChanged: Metric };
+  kpis: { commits: Metric; hyperPoints: Metric; ticketsResolved: Metric; avgCycleTimeHours: Metric; linesChanged: Metric; reviews: Metric };
   commitTrend: { date: string; commits: number }[];
   projects: { projectId: string | null; name: string; commits: number }[];
   repos: { repo: string; commits: number }[];
   sizeDist: SizeBucket[];
   tickets: { open: Ticket[]; inProgress: Ticket[]; resolved: Ticket[] };
   skills: { skillId: string; tag: string; level: number }[];
-  activity: { type: 'commit' | 'ticket_resolved'; ts: string; title: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
+  activity: { type: 'commit' | 'ticket_resolved' | 'review'; ts: string; title: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
 }
 
 /** Cuadrícula de contribuciones de GitHub (la del perfil público), traída vía GraphQL API. */
@@ -143,9 +143,9 @@ export interface ProjectDetail {
   project: { id: string; name: string; key: string; kind: ProjectKind; color: string | null };
   repos: string[];
   repoSync: RepoSyncStatus[];
-  totals: { commits: number; additions: number; deletions: number; ticketsResolved: number; contributors: number; openTickets: number };
+  totals: { commits: number; additions: number; deletions: number; ticketsResolved: number; contributors: number };
   contributors: { name: string; avatarUrl: string | null; commits: number; lines: number }[];
-  openTickets: { id: string; identifier: string; title: string; state: string; stateName: string; priority: string | null; url: string | null; assignee: { name: string; avatarUrl: string | null } | null }[];
+  resolvedTickets: { id: string; identifier: string; title: string; state: string; stateName: string; priority: string | null; url: string | null; assignee: { name: string; avatarUrl: string | null } | null }[];
   byRepo: { repo: string; commits: number }[];
   ticketsByState: { state: string; label: string; count: number }[];
   history: CommitHistoryItem[];
@@ -189,6 +189,7 @@ export interface TicketsResponse {
   bySource: { label: string; value: number }[];
   developers: { name: string; avatarUrl: string | null; count: number }[];
   topReviewers: { name: string; avatarUrl: string | null; count: number }[];
+  topMergers: { name: string; avatarUrl: string | null; count: number }[];
   attributionMismatch: number; // tickets mergeados por alguien distinto al autor
   withoutPr: number;           // tickets cerrados sin PR vinculado
   tickets: Ticket[];
@@ -255,6 +256,13 @@ export interface InfraService {
 }
 export interface InfraProject { projectId: string; name: string; kind: ProjectKind; services: InfraService[]; }
 export interface InfraResponse { projects: InfraProject[]; }
+
+/** Timeline de disponibilidad agregado (status page): un bucket por día, peor estado del día. */
+export interface InfraUptimeResponse {
+  buckets: { start: string; status: ServiceStatus; up: number; total: number }[];
+  days: number;
+  uptimePct: number | null;
+}
 
 export interface SkillCatalogItem { skillId: string; tag: string; description: string | null; devCount: number; avgLevel: number; busFactorRisk: boolean; }
 export interface SkillMatrix {

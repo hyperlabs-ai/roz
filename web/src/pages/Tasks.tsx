@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Plus, ChevronLeft, ChevronRight, ChevronDown, Inbox, Circle, CircleDashed, CircleDot, CircleDotDashed, CircleCheck, CircleSlash } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { TaskDialog } from '@/components/TaskDialog';
-import { AvatarStack, EmptyState } from '@/components/bits';
+import { AvatarStack, EmptyState, ErrorCard } from '@/components/bits';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,7 @@ import {
 } from '@/lib/calendar';
 import { shortDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { PRIO, PRIO_ORDER } from '@/lib/labels';
 
 const ALL = '__all__';
 const START_HOUR = 7;
@@ -29,12 +30,6 @@ const ROW_H = 48; // px por hora
 
 const EMPTY_FILTERS: TicketFilterOptions = { projects: [], allProjects: [], devs: [], states: [], allStates: [], priorities: [] };
 
-const PRIO: Record<string, { label: string; dot: string }> = {
-  urgent: { label: 'Urgente', dot: 'bg-destructive' },
-  high: { label: 'Alta', dot: 'bg-warning' },
-  medium: { label: 'Media', dot: 'bg-chart-1' },
-  low: { label: 'Baja', dot: 'bg-muted-foreground' },
-};
 
 // Estilo del bloque en el calendario: barra izquierda + tinte, por prioridad.
 function prioBlock(priority: string | null): string {
@@ -65,7 +60,6 @@ type View = 'week' | 'month' | 'list';
 
 // Orden de tareas en la vista Lista: abiertas primero, luego por prioridad.
 const OPEN_STATES = ['backlog', 'unstarted', 'triage', 'started', 'in_progress', 'review'];
-const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 function taskSort(a: Ticket, b: Ticket): number {
   const ao = OPEN_STATES.includes(a.state) ? 0 : 1;
   const bo = OPEN_STATES.includes(b.state) ? 0 : 1;
@@ -176,7 +170,7 @@ function layoutDay(dayTasks: Ticket[]): Placed[] {
 export default function Tasks() {
   const [params, setParams] = useSearchParams();
   const viewParam = params.get('view');
-  const view: View = viewParam === 'month' ? 'month' : viewParam === 'list' ? 'list' : 'week';
+  const view: View = viewParam === 'week' ? 'week' : viewParam === 'list' ? 'list' : 'month';
   const setView = (v: View) => {
     const p = new URLSearchParams(params);
     p.set('view', v);
@@ -308,7 +302,7 @@ export default function Tasks() {
         </div>
       }
     >
-      {error && <Card className="mb-4 p-4 text-sm text-destructive">{error}</Card>}
+      {error && <ErrorCard message={error} className="mb-4" />}
 
       {/* Navegación del período (no aplica en Lista) */}
       {view !== 'list' && (
@@ -877,8 +871,8 @@ function BacklogCard({
         <span className={cn('mt-1 size-2 shrink-0 rounded-full', prio?.dot ?? 'bg-muted')} title={prio?.label ?? 'sin prioridad'} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] text-muted-foreground">{t.identifier}</span>
-            <AvatarStack people={assigneesOf(t)} max={3} size="size-4" className="ml-auto shrink-0" />
+            <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground">{t.identifier}</span>
+            <AvatarStack people={assigneesOf(t)} max={3} size="size-4" className="shrink-0" />
           </div>
           <div className="mt-0.5 line-clamp-2 break-words text-xs font-medium leading-snug">{t.title}</div>
           {t.projectName && <div className="mt-1 truncate text-[11px] text-muted-foreground">{t.projectName}</div>}

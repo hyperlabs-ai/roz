@@ -3,35 +3,22 @@ import { Ticket as TicketIcon, CircleAlert, UserX, CircleDot, CircleCheck, GitPu
 import { Layout } from '@/components/Layout';
 import { MetricCard } from '@/components/MetricCard';
 import { RankBars, Donut } from '@/components/charts';
-import { UserAvatar, EmptyState } from '@/components/bits';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { UserAvatar, EmptyState, ErrorCard } from '@/components/bits';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type TicketsResponse, type TicketFilterOptions } from '@/lib/api';
+import {
+  PRIO_COLOR_VAR as PRIO_COLOR,
+  PRIO_LABEL as PRIO_ES,
+  stateColorVar as STATE_COLOR,
+  SOURCE_LABEL,
+  SOURCE_COLOR,
+} from '@/lib/labels';
 
 const ALL = '__all__';
-
-// Colores de la dona de prioridad (semánticos) + etiqueta en español.
-const PRIO_COLOR: Record<string, string> = {
-  urgent: 'hsl(var(--destructive))', high: 'hsl(var(--warning))', medium: 'hsl(var(--chart-1))', low: 'hsl(var(--muted-foreground))',
-};
-const PRIO_ES: Record<string, string> = { urgent: 'Urgente', high: 'Alta', medium: 'Media', low: 'Baja', 'sin prioridad': 'Sin prioridad' };
-
-// Color de barra por estado: verde si terminado, azul si en curso, gris si pendiente.
-function STATE_COLOR(label: string): string {
-  const l = label.toLowerCase();
-  if (/(done|complet|hecho|cerrad)/.test(l)) return 'hsl(var(--success))';
-  if (/(progress|curso|review|revis|sprint)/.test(l)) return 'hsl(var(--chart-1))';
-  return 'hsl(var(--muted-foreground))';
-}
-
-// Origen del ticket: cómo nació el trabajo (migración 0011).
-const SOURCE_LABEL: Record<string, string> = { pr: 'Pull Request', commit: 'Commit', linear: 'Linear' };
-const SOURCE_COLOR: Record<string, string> = {
-  pr: 'hsl(var(--chart-1))', commit: 'hsl(var(--chart-4))', linear: 'hsl(var(--muted-foreground))',
-};
 
 /**
  * Reportes: capa de análisis sobre el trabajo del equipo (mismo `work_item` que Tareas).
@@ -72,7 +59,7 @@ export default function Tickets() {
         </Select>
       }
     >
-      {error && <Card><CardContent className="py-4 text-sm text-destructive">{error}</CardContent></Card>}
+      {error && <ErrorCard message={error} className="mb-4" />}
 
       {/* Filtros: acotan el reporte */}
       <div className="mb-4 flex flex-wrap gap-2">
@@ -165,25 +152,39 @@ export default function Tickets() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle>Top revisores</CardTitle></CardHeader>
-              <CardContent>
-                {data.topReviewers.length ? (
-                  <div className="flex flex-wrap gap-2">
-                    {data.topReviewers.map((r) => (
-                      <div key={r.name} className="flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3">
-                        <UserAvatar url={r.avatarUrl} name={r.name} className="size-6" />
-                        <span className="text-sm">{r.name}</span>
-                        <Badge variant="secondary">{r.count}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                ) : <EmptyState>Aún sin reviews registradas</EmptyState>}
+              <CardHeader>
+                <CardTitle>Atribución de PRs</CardTitle>
+                <CardDescription>Quién revisa y quién integra el trabajo</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <PeopleGroup label="Revisores" people={data.topReviewers} empty="Sin revisiones registradas" />
+                <PeopleGroup label="Merges" people={data.topMergers} empty="Sin merges registrados" />
               </CardContent>
             </Card>
           </div>
         </>
       )}
     </Layout>
+  );
+}
+
+/** Grupo de personas con etiqueta (revisores / merges): chips avatar + nombre + conteo. */
+function PeopleGroup({ label, people, empty }: { label: string; people: TicketsResponse['topReviewers']; empty: string }) {
+  return (
+    <div>
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+      {people.length ? (
+        <div className="flex flex-wrap gap-2">
+          {people.map((r) => (
+            <div key={r.name} className="flex items-center gap-2 rounded-full border bg-card py-1 pl-1 pr-3">
+              <UserAvatar url={r.avatarUrl} name={r.name} className="size-6" />
+              <span className="text-sm">{r.name}</span>
+              <Badge variant="secondary">{r.count}</Badge>
+            </div>
+          ))}
+        </div>
+      ) : <p className="text-sm text-muted-foreground">{empty}</p>}
+    </div>
   );
 }
 

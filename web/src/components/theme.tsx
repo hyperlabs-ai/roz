@@ -14,10 +14,14 @@ function systemPrefersDark() {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  // Default: oscuro (la estética del dashboard está pensada para dark). El usuario puede
-  // cambiarlo y su elección se recuerda en localStorage.
-  const [theme, setThemeState] = useState<Theme>(() => (localStorage.getItem(KEY) as Theme) || 'dark');
-  const [resolved, setResolved] = useState<'light' | 'dark'>('dark');
+  // Default: 'system' — light y dark son ambos first-class, así que se respeta la preferencia del
+  // SO salvo elección explícita del usuario (recordada en localStorage). El flash inicial lo evita
+  // el script anti-FOUC de index.html, que aplica el mismo criterio antes de montar React.
+  const initial = (localStorage.getItem(KEY) as Theme) || 'system';
+  const [theme, setThemeState] = useState<Theme>(initial);
+  const [resolved, setResolved] = useState<'light' | 'dark'>(() =>
+    initial === 'dark' || (initial === 'system' && systemPrefersDark()) ? 'dark' : 'light',
+  );
 
   useEffect(() => {
     const apply = () => {

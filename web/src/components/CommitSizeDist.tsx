@@ -10,11 +10,13 @@ import type { SizeBucket } from '@/lib/api';
  * empaqueta el trabajo en commits no cambia el puntaje.
  */
 
+// Rampa ORDINAL de un solo hue (azul de marca) micro→grande: magnitud creciente = intensidad
+// creciente, coherente con el tema en light y dark (antes eran sky/violet/amber sueltos).
 const META: Record<SizeBucket['key'], { label: string; range: string; bar: string; dot: string }> = {
-  micro: { label: 'Micro', range: '<30 líneas', bar: 'bg-muted-foreground/40', dot: 'bg-muted-foreground/60' },
-  chico: { label: 'Chico', range: '30–300', bar: 'bg-sky-500/75', dot: 'bg-sky-500' },
-  mediano: { label: 'Mediano', range: '300–2k', bar: 'bg-violet-500/75', dot: 'bg-violet-500' },
-  grande: { label: 'Grande', range: '>2k', bar: 'bg-amber-500/80', dot: 'bg-amber-500' },
+  micro: { label: 'Micro', range: '<30 líneas', bar: 'bg-chart-1/30', dot: 'bg-chart-1/40' },
+  chico: { label: 'Chico', range: '30–300', bar: 'bg-chart-1/55', dot: 'bg-chart-1/60' },
+  mediano: { label: 'Mediano', range: '300–2k', bar: 'bg-chart-1/80', dot: 'bg-chart-1/80' },
+  grande: { label: 'Grande', range: '>2k', bar: 'bg-chart-1', dot: 'bg-chart-1' },
 };
 
 /** Barra compacta (para la fila del listado): segmentos = % de líneas por franja de tamaño. */

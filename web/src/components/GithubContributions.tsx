@@ -8,16 +8,17 @@ import { useApi } from '@/lib/useApi';
 import { apiGet, type GithubContributions as Data } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-// Mismos verdes que usa GitHub en su perfil (claro / oscuro), por nivel de intensidad.
+// Verde de contribución por nivel. LIGHT: los verdes reconocibles de GitHub. DARK: rampa derivada
+// del token --success (verde más mate/opaco, coherente con el tema), no los neón de GitHub.
 const LEVEL_CLASS = [
   'bg-muted',
-  'bg-[#9be9a8] dark:bg-[#0e4429]',
-  'bg-[#40c463] dark:bg-[#006d32]',
-  'bg-[#30a14e] dark:bg-[#26a641]',
-  'bg-[#216e39] dark:bg-[#39d353]',
+  'bg-[#9be9a8] dark:bg-success/25',
+  'bg-[#40c463] dark:bg-success/45',
+  'bg-[#30a14e] dark:bg-success/70',
+  'bg-[#216e39] dark:bg-success',
 ] as const;
 
-const CELL = 'aspect-square w-full rounded-[2px] ring-1 ring-inset ring-black/5 dark:ring-white/5';
+const CELL = 'aspect-square w-full rounded-[2px] ring-1 ring-inset ring-foreground/5';
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const WEEKDAYS = ['', 'Lun', '', 'Mié', '', 'Vie', '']; // GitHub solo etiqueta días alternos
 

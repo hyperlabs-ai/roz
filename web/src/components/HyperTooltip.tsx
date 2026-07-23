@@ -7,7 +7,7 @@ export function HyperTooltip({ side }: { side?: 'top' | 'bottom' }) {
   return (
     <TooltipContent side={side} className="max-w-[17rem] rounded-lg border bg-popover p-3 text-left font-normal text-popover-foreground shadow-lg">
       <div className="flex items-center gap-1.5 text-xs font-semibold">
-        <Zap className="size-3.5 text-amber-500" /> ¿Cómo se calculan los hyper points?
+        <Zap className="size-3.5 text-hyper" /> ¿Cómo se calculan los hyper points?
       </div>
       <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
         Media geométrica entre actividad y volumen del período — necesitas ambas: entregar seguido y entregar sustancia.

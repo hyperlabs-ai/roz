@@ -130,6 +130,29 @@ async function reconcileBody(
   // de merge (squash/merge/rebase). El commit ya quedó persistido (y ligado) arriba para las métricas.
   const prs = await commitPullRequests(input.repo, commit.sha).catch(() => []);
   if (prs.length) {
+    // Fallback de ligado: si el commit no se ligó por su mensaje pero pertenece a una PR YA
+    // reconciliada (su work_item tiene pr_number), se liga a esa tarea. Cubre la carrera entre el
+    // evento push (este commit) y pr.merged: si el push llega primero, reconcilePullRequest ligará
+    // el commit después; si llega segundo, lo liga aquí. Idempotente.
+    if (!linkedWorkItemId) {
+      for (const pr of prs) {
+        const { data: wi } = await supabase
+          .from('work_item')
+          .select('id')
+          .ilike('repo', input.repo)
+          .eq('pr_number', pr.number)
+          .limit(1)
+          .maybeSingle();
+        if ((wi as { id: string } | null)?.id) {
+          await supabase
+            .from('commit')
+            .update({ work_item_id: (wi as { id: string }).id })
+            .eq('repo', input.repo.toLowerCase())
+            .eq('sha', commit.sha);
+          break;
+        }
+      }
+    }
     return { action: 'skipped:in-pr', detail: `commit en PR #${prs[0]!.number}; lo documenta el flujo de PR` };
   }
 

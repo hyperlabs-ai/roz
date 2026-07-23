@@ -8,6 +8,9 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { ErrorBoundary, ErrorScreen } from '@/components/ErrorScreen';
 import App from '@/App';
+// Geist (tipografía de marca, variable) — sans para UI, mono para números/código.
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
 import './styles.css';
 
 // Registra el service worker de la PWA (shell offline + web push). Solo en build de producción:
