@@ -10,6 +10,7 @@ import { drainOutbox } from '../events/outbox.js';
 import { brainSweep } from '../brain/sweep.js';
 import { sendWeeklyDigest, sendDevWeeklyDigests } from '../notify/digest.js';
 import { pollInfra } from '../infra/poll.js';
+import { syncOpsTasks } from '../reconcile/ops-tasks.js';
 
 export const internalRoutes = new Hono<RozContext>();
 
@@ -24,6 +25,15 @@ internalRoutes.get('/drain', async (c) => {
   if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
   const result = await drainOutbox();
   c.get('logger')?.info(result, 'outbox drained');
+  return c.json({ ok: true, ...result });
+});
+
+// Baja de HyperOps las tareas asignadas a un dev activo (ver reconcile/ops-tasks.ts). Ops no sabe
+// que esto existe: roz jala. Idempotente, así que la frecuencia solo afecta la latencia.
+internalRoutes.get('/sync-ops-tasks', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  const result = await syncOpsTasks();
+  c.get('logger')?.info(result, 'ops tasks synced');
   return c.json({ ok: true, ...result });
 });
 

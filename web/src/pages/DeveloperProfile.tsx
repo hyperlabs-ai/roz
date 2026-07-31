@@ -171,7 +171,7 @@ export default function DeveloperProfile() {
                     {data.activity.map((a, i) => (
                       <div key={i} className="flex items-center gap-3 border-b py-2 last:border-0">
                         <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">
-                          {a.type === 'commit' ? <GitCommitHorizontal className="size-3.5" /> : a.type === 'review' ? <Eye className="size-3.5 text-chart-2" /> : <CircleCheck className="size-3.5 text-success" />}
+                          {a.type === 'commit' ? <GitCommitHorizontal className="size-3.5" /> : a.type === 'revision' ? <Eye className="size-3.5 text-chart-2" /> : <CircleCheck className="size-3.5 text-success" />}
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm">{a.title}</div>
@@ -267,9 +267,9 @@ function TicketList({ tickets }: { tickets: Profile['tickets']['open'] }) {
         <div key={t.id} className="flex items-center gap-3 border-b py-2 last:border-0">
           <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">{t.identifier}</span>
           <span className="min-w-0 flex-1 truncate text-sm">
-            {t.url && t.url !== '#' ? <a href={t.url} target="_blank" rel="noreferrer" className="hover:underline">{t.title}</a> : t.title}
+            {t.url && t.url !== '#' ? <a href={t.url} target="_blank" rel="noreferrer" className="hover:underline">{t.name}</a> : t.name}
           </span>
-          <StateBadge state={t.state} />
+          <StateBadge state={t.status} />
         </div>
       ))}
     </div>

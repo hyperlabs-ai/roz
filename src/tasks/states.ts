@@ -1,31 +1,47 @@
 // Modelo de estados de las tareas — fuente ÚNICA, reutilizada por la API, la automatización de
-// código y el front (vía el endpoint de filtros). Se mantiene el vocabulario tipo-Linear que ya
-// usaban el espejo y el dashboard, añadiendo `review` ("En revisión") para el ciclo de PR.
+// código y el front (vía el endpoint de filtros).
+//
+// Vocabulario ALINEADO con public.tasks de HyperOps (migración 0020): una tarea que cruza de Ops
+// a roz —o de vuelta— no necesita traducirse. Los seis estados mapean 1:1 con los de Ops, así que
+// `status` se copia tal cual en ambas direcciones.
 //
 // Ciclo natural de una tarea nativa acompañando al código:
-//   backlog/unstarted → (rama creada) started → (PR abierta) review → (PR mergeada) completed
-//                                                                    ↘ canceled (manual)
+//   planificada/pendiente → (rama creada) en_progreso → (PR abierta) revision → (PR mergeada) completada
+//                                                                              ↘ cancelada (manual)
 
-export type TaskState = 'backlog' | 'unstarted' | 'started' | 'review' | 'completed' | 'canceled';
+export type TaskState =
+  | 'planificada'
+  | 'pendiente'
+  | 'en_progreso'
+  | 'revision'
+  | 'completada'
+  | 'cancelada';
 
-/** Etiqueta legible (español) por estado. Se guarda en work_item.state_name. */
+/** Etiqueta legible por estado. Se deriva en presentación; ya no se guarda en la tabla. */
 export const STATE_LABEL: Record<TaskState, string> = {
-  backlog: 'Backlog',
-  unstarted: 'Por hacer',
-  started: 'En curso',
-  review: 'En revisión',
-  completed: 'Completado',
-  canceled: 'Cancelada',
+  planificada: 'Planificada',
+  pendiente: 'Por hacer',
+  en_progreso: 'En curso',
+  revision: 'En revisión',
+  completada: 'Completada',
+  cancelada: 'Cancelada',
 };
 
-/** Orden de columnas (backlog → done) para el tablero/lista. */
-export const STATE_ORDER: TaskState[] = ['backlog', 'unstarted', 'started', 'review', 'completed', 'canceled'];
+/** Orden de columnas (planificada → cerrada) para el tablero/lista. */
+export const STATE_ORDER: TaskState[] = [
+  'planificada',
+  'pendiente',
+  'en_progreso',
+  'revision',
+  'completada',
+  'cancelada',
+];
 
-/** Estados abiertos (trabajo vivo). `triage` se conserva por compat con espejos históricos. */
-export const OPEN_STATES = ['backlog', 'unstarted', 'triage', 'started', 'review'];
+/** Estados abiertos (trabajo vivo). */
+export const OPEN_STATES = ['planificada', 'pendiente', 'en_progreso', 'revision'];
 
-/** Estados cerrados. `done` se conserva por compat con espejos históricos de Linear. */
-export const CLOSED_STATES = ['completed', 'done', 'canceled'];
+/** Estados cerrados. */
+export const CLOSED_STATES = ['completada', 'cancelada'];
 
 export function isOpenState(state: string): boolean {
   return OPEN_STATES.includes(state);
@@ -44,8 +60,8 @@ export const STATE_OPTIONS = STATE_ORDER.map((value) => ({ value, label: STATE_L
  * con coalesce; aquí devolvemos el instante de la transición para la columna correspondiente.
  */
 export function transitionTimestamps(state: string, now = new Date().toISOString()): Record<string, string> {
-  if (state === 'started' || state === 'review') return { started_at: now };
-  if (state === 'completed' || state === 'done') return { completed_at: now };
-  if (state === 'canceled') return { canceled_at: now };
+  if (state === 'en_progreso' || state === 'revision') return { started_at: now };
+  if (state === 'completada') return { completed_at: now };
+  if (state === 'cancelada') return { canceled_at: now };
   return {};
 }

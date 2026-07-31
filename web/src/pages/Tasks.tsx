@@ -43,8 +43,8 @@ function prioBlock(priority: string | null): string {
 }
 
 function stateVariant(state: string): 'success' | 'default' | 'secondary' {
-  if (['completed', 'done'].includes(state)) return 'success';
-  if (['started', 'in_progress', 'review'].includes(state)) return 'default';
+  if (['completada'].includes(state)) return 'success';
+  if (['en_progreso', 'revision'].includes(state)) return 'default';
   return 'secondary';
 }
 
@@ -59,15 +59,15 @@ const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n
 type View = 'week' | 'month' | 'list';
 
 // Orden de tareas en la vista Lista: abiertas primero, luego por prioridad.
-const OPEN_STATES = ['backlog', 'unstarted', 'triage', 'started', 'in_progress', 'review'];
+const OPEN_STATES = ['planificada', 'pendiente', 'en_progreso', 'revision'];
 function taskSort(a: Ticket, b: Ticket): number {
-  const ao = OPEN_STATES.includes(a.state) ? 0 : 1;
-  const bo = OPEN_STATES.includes(b.state) ? 0 : 1;
+  const ao = OPEN_STATES.includes(a.status) ? 0 : 1;
+  const bo = OPEN_STATES.includes(b.status) ? 0 : 1;
   if (ao !== bo) return ao - bo;
   return (PRIO_ORDER[a.priority ?? ''] ?? 4) - (PRIO_ORDER[b.priority ?? ''] ?? 4);
 }
 
-const DONE_STATES = ['completed', 'done'];
+const DONE_STATES = ['completada'];
 
 type GroupMode = 'state' | 'project' | 'assignee' | 'none';
 const GROUP_MODES: GroupMode[] = ['state', 'project', 'assignee', 'none'];
@@ -81,7 +81,7 @@ interface Group { key: string; name: string; tasks: Ticket[] }
 
 /** Trabajo vivo (ni completado ni cancelado) de un grupo — para ordenar proyectos por actividad. */
 function liveCount(tasks: Ticket[]): number {
-  return tasks.filter((t) => !DONE_STATES.includes(t.state) && t.state !== 'canceled').length;
+  return tasks.filter((t) => !DONE_STATES.includes(t.status) && t.status !== 'cancelada').length;
 }
 
 /** Agrupa las tareas según el modo. Multi-responsable: la tarea va bajo su PRIMER responsable
@@ -97,7 +97,7 @@ function buildGroups(tasks: Ticket[], mode: GroupMode): Group[] {
   };
 
   if (mode === 'state') {
-    for (const t of sorted) push(t.state, t.stateName || t.state, t);
+    for (const t of sorted) push(t.status, t.statusLabel || t.status, t);
     return [...map.values()].sort((a, b) => (STATE_RANK[a.key] ?? 9) - (STATE_RANK[b.key] ?? 9) || a.name.localeCompare(b.name));
   }
   if (mode === 'assignee') {
@@ -202,7 +202,7 @@ export default function Tasks() {
 
   const backlog = useMemo(
     () => tasks
-      .filter((t) => !t.scheduledStart && t.state !== 'canceled' && t.state !== 'completed')
+      .filter((t) => !t.scheduledStart && t.status !== 'cancelada' && t.status !== 'completada')
       .filter((t) => fProject === ALL || t.projectId === fProject)
       .filter((t) => fAssignee === ALL || t.assignee?.id === fAssignee)
       .filter((t) => fPriority === ALL || t.priority === fPriority),
@@ -247,7 +247,7 @@ export default function Tasks() {
     setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, scheduledStart: startIso, scheduledEnd: endIso } : t)));
     try {
       await apiSend('PATCH', `/tickets/${task.id}`, { scheduledStart: startIso, scheduledEnd: endIso });
-      toast.success('Tarea agendada', { description: `${task.identifier} · ${task.title}` });
+      toast.success('Tarea agendada', { description: `${task.identifier} · ${task.name}` });
     } catch (e: any) {
       toast.error('No se pudo agendar', { description: String(e.message ?? e) });
     } finally {
@@ -400,12 +400,12 @@ function StatusIcon({ state, className }: { state: string; className?: string })
 /** ¿Se posiciona en el calendario como RESUELTA? completed/canceled con `completedAt` → por su
  *  fecha de resolución (con estilo distinto), aunque tenga scheduledStart (evita duplicar). */
 function isResolvedDisplay(t: Ticket): boolean {
-  return (DONE_STATES.includes(t.state) || t.state === 'canceled') && !!t.completedAt;
+  return (DONE_STATES.includes(t.status) || t.status === 'cancelada') && !!t.completedAt;
 }
 
 // Estilo del chip/bloque de una tarea resuelta en el calendario: verde+check (hecho) o gris+tachado (cancelada).
 function resolvedStyle(state: string): { cls: string; Icon: typeof Circle; iconCls: string } {
-  return state === 'canceled'
+  return state === 'cancelada'
     ? { cls: 'border-l-muted-foreground bg-muted', Icon: CircleSlash, iconCls: 'text-muted-foreground' }
     : { cls: 'border-l-success bg-success/10', Icon: CircleCheck, iconCls: 'text-success' };
 }
@@ -426,7 +426,7 @@ function ListView({ tasks, onOpen }: { tasks: Ticket[]; onOpen: (t: Ticket) => v
   // Apertura por sección. Sin override explícito, al agrupar por ESTADO las secciones resueltas
   // (completado/cancelada) arrancan colapsadas (pero con su conteo visible); el resto, abiertas.
   const [openOverride, setOpenOverride] = useState<Record<string, boolean>>({});
-  const defaultOpen = (key: string) => (group === 'state' ? !['completed', 'done', 'canceled'].includes(key) : true);
+  const defaultOpen = (key: string) => (group === 'state' ? !['completada', 'cancelada'].includes(key) : true);
   const isOpen = (g: Group) => (group === 'none' ? true : openOverride[g.key] ?? defaultOpen(g.key));
   const toggle = (g: Group) => setOpenOverride((o) => ({ ...o, [g.key]: !isOpen(g) }));
   const anyOpen = groups.some((g) => isOpen(g));
@@ -497,7 +497,7 @@ function ListView({ tasks, onOpen }: { tasks: Ticket[]; onOpen: (t: Ticket) => v
  *  etiquetas · avatares · fecha. En móvil oculta etiquetas + fecha. Click → editar. */
 function ListRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
   const prio = t.priority ? PRIO[t.priority] : null;
-  const resolved = t.state === 'completed' || t.state === 'done' || t.state === 'canceled';
+  const resolved = t.status === 'completada' || t.status === 'completada' || t.status === 'cancelada';
   const date = resolved && t.completedAt ? { label: shortDate(t.completedAt), overdue: false } : listDate(t);
   return (
     <button
@@ -505,10 +505,10 @@ function ListRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
       onClick={() => onOpen(t)}
       className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-accent/50"
     >
-      <StatusIcon state={t.state} />
+      <StatusIcon state={t.status} />
       <span className={cn('size-2 shrink-0 rounded-full', prio?.dot ?? 'bg-muted')} title={prio?.label ?? 'sin prioridad'} />
       <span className="w-14 shrink-0 truncate font-mono text-xs text-muted-foreground">{t.identifier}</span>
-      <span className={cn('min-w-0 flex-1 truncate text-sm', resolved && 'text-muted-foreground')}>{t.title}</span>
+      <span className={cn('min-w-0 flex-1 truncate text-sm', resolved && 'text-muted-foreground')}>{t.name}</span>
       {t.labels.length > 0 && (
         <span className="hidden shrink-0 gap-1 lg:flex">
           {t.labels.slice(0, 2).map((l) => <Badge key={l} variant="secondary" className="px-1.5 py-0 text-[10px]">{l}</Badge>)}
@@ -524,13 +524,13 @@ function ListRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
 
 /** Chip de una tarea RESUELTA en el calendario (verde+check / gris+tachado), no arrastrable. */
 function ResolvedChip({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
-  const s = resolvedStyle(t.state);
+  const s = resolvedStyle(t.status);
   return (
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onOpen(t); }}
       className={cn('flex w-full items-center gap-1 rounded border-l-2 px-1 py-0.5 text-left text-[11px] transition hover:brightness-95', s.cls)}
-      title={`${t.identifier} · ${t.title}${t.completedAt ? ` · resuelta ${shortDate(t.completedAt)}` : ''}`}
+      title={`${t.identifier} · ${t.name}${t.completedAt ? ` · resuelta ${shortDate(t.completedAt)}` : ''}`}
     >
       <s.Icon className={cn('size-3 shrink-0', s.iconCls)} />
       <span className="truncate font-mono font-medium">{t.identifier}</span>
@@ -554,10 +554,10 @@ function DayPeekRow({ t, onOpen }: { t: Ticket; onOpen: (t: Ticket) => void }) {
       onClick={(e) => { e.stopPropagation(); onOpen(t); }}
       className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent"
     >
-      <StatusIcon state={t.state} className="size-3.5" />
+      <StatusIcon state={t.status} className="size-3.5" />
       {t.priority && <span className={cn('size-1.5 shrink-0 rounded-full', PRIO[t.priority]?.dot ?? 'bg-muted')} />}
       <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
-      <span className={cn('min-w-0 flex-1 truncate', resolved && 'text-muted-foreground line-through')}>{t.title}</span>
+      <span className={cn('min-w-0 flex-1 truncate', resolved && 'text-muted-foreground line-through')}>{t.name}</span>
       {time && <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{time}</span>}
       <AvatarStack people={assigneesOf(t)} max={2} size="size-4" className="shrink-0" />
     </button>
@@ -725,14 +725,14 @@ function WeekView({
                           prioBlock(t.priority),
                           dragId === t.id && 'opacity-40',
                         )}
-                        title={`${t.identifier} · ${t.title}`}
+                        title={`${t.identifier} · ${t.name}`}
                       >
                         {/* El título tiende a ser largo → en el calendario solo ID + avatares (el título vive en el modal). */}
                         <div className="flex items-center gap-1.5">
                           <span className="truncate font-mono text-sm font-semibold">{t.identifier}</span>
                           <AvatarStack people={people} max={3} size="size-5" className="ml-auto shrink-0" />
                         </div>
-                        {height > 56 && <Badge variant={stateVariant(t.state)} className="mt-auto w-fit px-1 py-0 text-[9px]">{t.stateName}</Badge>}
+                        {height > 56 && <Badge variant={stateVariant(t.status)} className="mt-auto w-fit px-1 py-0 text-[9px]">{t.statusLabel}</Badge>}
                       </button>
                     );
                   })}
@@ -822,7 +822,7 @@ function MonthView({
                         type="button"
                         onClick={(e) => { e.stopPropagation(); onOpen(t); }}
                         className={cn('flex w-full items-center gap-1 rounded border-l-2 px-1 py-0.5 text-left text-[11px] transition hover:brightness-95', prioBlock(t.priority))}
-                        title={`${t.identifier} · ${t.title}`}
+                        title={`${t.identifier} · ${t.name}`}
                       >
                         {/* Solo ID + stack de avatares: el título completo está en el modal. */}
                         <span className="truncate font-mono font-medium">{t.identifier}</span>
@@ -874,7 +874,7 @@ function BacklogCard({
             <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-muted-foreground">{t.identifier}</span>
             <AvatarStack people={assigneesOf(t)} max={3} size="size-4" className="shrink-0" />
           </div>
-          <div className="mt-0.5 line-clamp-2 break-words text-xs font-medium leading-snug">{t.title}</div>
+          <div className="mt-0.5 line-clamp-2 break-words text-xs font-medium leading-snug">{t.name}</div>
           {t.projectName && <div className="mt-1 truncate text-[11px] text-muted-foreground">{t.projectName}</div>}
         </div>
       </div>

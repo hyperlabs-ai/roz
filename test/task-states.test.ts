@@ -20,21 +20,21 @@ describe('referencesLinearIssue (convención ROZ-123)', () => {
 
 describe('estados de tarea', () => {
   it('clasifica abiertos vs cerrados', () => {
-    expect(isOpenState('started')).toBe(true);
-    expect(isOpenState('review')).toBe(true);
-    expect(isClosedState('completed')).toBe(true);
-    expect(isClosedState('canceled')).toBe(true);
-    expect(isClosedState('backlog')).toBe(false);
+    expect(isOpenState('en_progreso')).toBe(true);
+    expect(isOpenState('revision')).toBe(true);
+    expect(isClosedState('completada')).toBe(true);
+    expect(isClosedState('cancelada')).toBe(true);
+    expect(isClosedState('planificada')).toBe(false);
   });
   it('setea el timestamp de transición correcto', () => {
-    expect(transitionTimestamps('started', 'T')).toEqual({ started_at: 'T' });
-    expect(transitionTimestamps('review', 'T')).toEqual({ started_at: 'T' });
-    expect(transitionTimestamps('completed', 'T')).toEqual({ completed_at: 'T' });
-    expect(transitionTimestamps('canceled', 'T')).toEqual({ canceled_at: 'T' });
-    expect(transitionTimestamps('backlog', 'T')).toEqual({});
+    expect(transitionTimestamps('en_progreso', 'T')).toEqual({ started_at: 'T' });
+    expect(transitionTimestamps('revision', 'T')).toEqual({ started_at: 'T' });
+    expect(transitionTimestamps('completada', 'T')).toEqual({ completed_at: 'T' });
+    expect(transitionTimestamps('cancelada', 'T')).toEqual({ canceled_at: 'T' });
+    expect(transitionTimestamps('planificada', 'T')).toEqual({});
   });
   it('tiene etiqueta legible para cada estado', () => {
-    expect(STATE_LABEL.review).toBe('En revisión');
-    expect(STATE_LABEL.completed).toBe('Completado');
+    expect(STATE_LABEL.revision).toBe('En revisión');
+    expect(STATE_LABEL.completada).toBe('Completada');
   });
 });

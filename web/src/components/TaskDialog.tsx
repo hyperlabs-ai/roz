@@ -74,7 +74,7 @@ export function TaskDialog({
   const [spec, setSpec] = useState('');
   const [descMode, setDescMode] = useState<'view' | 'edit'>('edit'); // Vista (render) / Editar (textarea)
   const [projectId, setProjectId] = useState('');
-  const [state, setState] = useState('backlog');
+  const [state, setState] = useState('planificada');
   const [priority, setPriority] = useState(NONE);
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [assigneeOpen, setAssigneeOpen] = useState(false); // popover de responsables
@@ -101,10 +101,10 @@ export function TaskDialog({
   useEffect(() => {
     if (!open) return;
     if (task) {
-      setTitle(task.title ?? '');
-      setSpec(task.spec ?? '');
+      setTitle(task.name ?? '');
+      setSpec(task.description ?? '');
       setProjectId(task.projectId ?? '');
-      setState(task.state || 'backlog');
+      setState(task.status || 'planificada');
       setPriority(task.priority ?? NONE);
       setAssigneeIds(task.assignees?.length ? task.assignees.map((a) => a.id) : task.assignee ? [task.assignee.id] : []);
       if (task.scheduledStart) {
@@ -119,7 +119,7 @@ export function TaskDialog({
       setLabels((task.labels ?? []).join(', '));
     } else {
       setTitle(''); setSpec(''); setProjectId(filters.allProjects[0]?.id ?? '');
-      setState('backlog'); setPriority(NONE); setAssigneeIds([]);
+      setState('planificada'); setPriority(NONE); setAssigneeIds([]);
       setSchedDate(defaultDate ?? ''); setStartTime('09:00'); setEndTime('10:00');
       setDueDate(''); setLabels('');
     }
@@ -128,7 +128,7 @@ export function TaskDialog({
     setAttachments([]);
     setPending((prev) => { prev.forEach((p) => URL.revokeObjectURL(p.url)); return []; });
     // Al abrir en edición con descripción → arranca en Vista; en alta o sin texto → Editar.
-    setDescMode(task && (task.spec ?? '').trim() ? 'view' : 'edit');
+    setDescMode(task && (task.description ?? '').trim() ? 'view' : 'edit');
   }, [open, task, defaultDate, filters.allProjects]);
 
   // Carga de comentarios + adjuntos al abrir en edición.
@@ -196,7 +196,7 @@ export function TaskDialog({
     setBusy(true);
     try {
       await apiSend<{ ok: true }>('DELETE', `/tickets/${task.id}`);
-      toast.success('Tarea eliminada', { description: task.title });
+      toast.success('Tarea eliminada', { description: task.name });
       onOpenChange(false);
       onSaved();
     } catch (e: any) {
@@ -622,7 +622,7 @@ export function TaskDialog({
                 <AlertDialogHeader>
                   <AlertDialogTitle>¿Eliminar esta tarea?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Se eliminará <span className="font-medium">{task!.identifier} · {task!.title}</span>. Esta acción no se puede deshacer.
+                    Se eliminará <span className="font-medium">{task!.identifier} · {task!.name}</span>. Esta acción no se puede deshacer.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

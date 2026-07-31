@@ -83,7 +83,7 @@ export interface DeveloperListItem {
   topSkills: { tag: string; level: number }[];
 }
 
-export interface Ticket { id: string; identifier: string; title: string; state: string; priority: string | null; url: string | null; }
+export interface Ticket { id: string; identifier: string; name: string; status: string; priority: string | null; url: string | null; }
 
 /** Credenciales editables de un developer (formulario de alta/edición). */
 export interface DeveloperCredentials {
@@ -101,7 +101,7 @@ export interface DeveloperProfile {
   sizeDist: SizeBucket[];
   tickets: { open: Ticket[]; inProgress: Ticket[]; resolved: Ticket[] };
   skills: { skillId: string; tag: string; level: number }[];
-  activity: { type: 'commit' | 'ticket_resolved' | 'review'; ts: string; title: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
+  activity: { type: 'commit' | 'ticket_resolved' | 'revision'; ts: string; title: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
 }
 
 /** Cuadrícula de contribuciones de GitHub (la del perfil público), traída vía GraphQL API. */
@@ -126,7 +126,7 @@ export interface CommitHistoryItem {
 
 export interface RepoSyncStatus {
   repo: string;
-  status: 'idle' | 'queued' | 'syncing' | 'done' | 'error' | string;
+  status: 'idle' | 'queued' | 'syncing' | 'completada' | 'error' | string;
   pages: number;
   commits: number;
   totalPages: number | null;
@@ -145,9 +145,9 @@ export interface ProjectDetail {
   repoSync: RepoSyncStatus[];
   totals: { commits: number; additions: number; deletions: number; ticketsResolved: number; contributors: number };
   contributors: { name: string; avatarUrl: string | null; commits: number; lines: number }[];
-  resolvedTickets: { id: string; identifier: string; title: string; state: string; stateName: string; priority: string | null; url: string | null; assignee: { name: string; avatarUrl: string | null } | null }[];
+  resolvedTickets: { id: string; identifier: string; name: string; status: string; statusLabel: string; priority: string | null; url: string | null; assignee: { name: string; avatarUrl: string | null } | null }[];
   byRepo: { repo: string; commits: number }[];
-  ticketsByState: { state: string; label: string; count: number }[];
+  ticketsByStatus: { status: string; label: string; count: number }[];
   history: CommitHistoryItem[];
   trend: { date: string; additions: number; deletions: number }[];
 }
@@ -158,9 +158,9 @@ export interface TicketPerson {
   devId?: string | null; reviewState?: string | null;
 }
 export interface Ticket {
-  id: string; identifier: string; number: number | null; title: string;
-  spec: string | null;
-  state: string; stateName: string; priority: string | null;
+  id: string; identifier: string; number: number | null; name: string;
+  description: string | null;
+  status: string; statusLabel: string; priority: string | null;
   projectId: string | null; projectName: string | null;
   assignee: { id: string; name: string; avatarUrl: string | null } | null; // primary (compat) = primer assignee
   assignees: { id: string; name: string; avatarUrl: string | null }[]; // lista completa de responsables
@@ -216,7 +216,7 @@ export type ServiceProvider = 'vercel' | 'railway' | 'supabase';
 export type ServiceStatus = 'healthy' | 'degraded' | 'down' | 'paused' | 'unknown';
 
 export interface InfraDeploy {
-  state: string;
+  status: string;
   url: string | null;
   sha: string | null;
   createdAt: string | null;

@@ -17,8 +17,8 @@ export const STATE_LABEL: Record<string, string> = {
 
 /** Variante de Badge para un estado (verde = cerrado, azul = en curso, gris = pendiente). */
 export function stateBadgeVariant(state: string): 'success' | 'default' | 'secondary' {
-  if (['completed', 'done'].includes(state)) return 'success';
-  if (['started', 'in_progress'].includes(state)) return 'default';
+  if (['completada'].includes(state)) return 'success';
+  if (['en_progreso'].includes(state)) return 'default';
   return 'secondary';
 }
 

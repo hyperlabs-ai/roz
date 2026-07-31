@@ -31,7 +31,7 @@ export async function autoIngest(input: AutoIngestInput): Promise<AutoIngestResu
   const verdict = await evaluateProposal({
     projectKey: input.projectKey,
     description: input.description,
-    title: input.title,
+    name: input.title,
     attachments: input.attachments,
     requester: input.customer,
     source,
@@ -51,7 +51,7 @@ export async function autoIngest(input: AutoIngestInput): Promise<AutoIngestResu
   return {
     identifier: created.identifier,
     url: created.url,
-    title: verdict.title,
+    title: verdict.name,
     kind: verdict.kind,
     priority: verdict.priority,
     assignedTo: { devId: chosen.devId, name: chosen.name },

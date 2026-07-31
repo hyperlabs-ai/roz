@@ -60,7 +60,7 @@ function RepoRow({ repo, status, live, isAdmin, active, onResync, onRemove }: {
   const name = repo.replace('hyperlabs-ai/', '');
   const pct = syncPct(status);
   const isError = status?.status === 'error';
-  const justDone = status?.status === 'done' && live;
+  const justDone = status?.status === 'completada' && live;
 
   return (
     <div className="group relative flex items-center gap-2 rounded-lg border bg-card px-2.5 py-2 transition-colors hover:border-primary/30 hover:bg-accent/40">
@@ -210,7 +210,7 @@ export default function ProjectDetail() {
   useEffect(() => {
     for (const s of syncs) {
       const key = `${s.repo}:${s.updatedAt}`;
-      if (s.status === 'done' && (data?.repos ?? []).includes(s.repo) && !doneSeen.current.has(key)) {
+      if (s.status === 'completada' && (data?.repos ?? []).includes(s.repo) && !doneSeen.current.has(key)) {
         doneSeen.current.add(key);
         reload();
       }
@@ -376,7 +376,7 @@ export default function ProjectDetail() {
                       >
                         <span className={cn('size-2 shrink-0 rounded-full', PRIO_DOT[t.priority ?? ''] ?? 'bg-muted')} title={t.priority ?? 'sin prioridad'} />
                         <span className="w-14 shrink-0 font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
-                        <span className="min-w-0 flex-1 truncate text-sm">{t.title}</span>
+                        <span className="min-w-0 flex-1 truncate text-sm">{t.name}</span>
                         {t.assignee && <UserAvatar url={t.assignee.avatarUrl} name={t.assignee.name} className="size-5 shrink-0" />}
                       </a>
                     ))
@@ -396,8 +396,8 @@ export default function ProjectDetail() {
               <Card className="min-w-0">
                 <CardHeader><CardTitle>Tickets por estado</CardTitle></CardHeader>
                 <CardContent>
-                  {data.ticketsByState.length ? (
-                    <RankBars data={data.ticketsByState.map((s) => ({ label: s.label, value: s.count }))} color="hsl(var(--chart-5))" height={Math.max(data.ticketsByState.length * 30, 60)} />
+                  {data.ticketsByStatus.length ? (
+                    <RankBars data={data.ticketsByStatus.map((s) => ({ label: s.label, value: s.count }))} color="hsl(var(--chart-5))" height={Math.max(data.ticketsByStatus.length * 30, 60)} />
                   ) : <EmptyState>Sin tickets</EmptyState>}
                 </CardContent>
               </Card>

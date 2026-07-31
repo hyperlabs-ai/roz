@@ -188,7 +188,7 @@ function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof 
         .map(
           (t) =>
             `<tr><td style="padding:6px 0;color:#6b7280;font-size:12px;font-family:ui-monospace,monospace;white-space:nowrap;padding-right:10px;vertical-align:top">${t.identifier}</td>
-             <td style="padding:6px 0;color:#111827;font-size:13px">${t.title}</td></tr>`,
+             <td style="padding:6px 0;color:#111827;font-size:13px">${t.name}</td></tr>`,
         )
         .join('')
     : `<tr><td style="padding:6px 0;color:#9ca3af;font-size:13px">Sin tickets cerrados esta semana</td></tr>`;
@@ -234,7 +234,7 @@ function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof 
     `Commits: ${k.commits.value}\nTickets resueltos: ${k.ticketsResolved.value}\n` +
     `Líneas cambiadas: ${k.linesChanged.value}\nCycle time: ${k.avgCycleTimeHours.value}h\n\n` +
     `En qué trabajaste:\n${projects.map((pr) => `- ${pr.name}: ${pr.commits} commits`).join('\n') || '- Sin commits esta semana'}\n\n` +
-    `Tickets que cerraste:\n${resolved.map((t) => `- ${t.identifier}: ${t.title}`).join('\n') || '- Ninguno'}\n\n` +
+    `Tickets que cerraste:\n${resolved.map((t) => `- ${t.identifier}: ${t.name}`).join('\n') || '- Ninguno'}\n\n` +
     `Tu perfil: ${url}/app/developers/${p.dev.id}\n\n— ROZ`;
 
   return { html, text };

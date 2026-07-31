@@ -1,5 +1,5 @@
 // Intake [fase 1]: propuesta -> evaluación de optimalidad -> (al confirmar) tarea NATIVA en roz.
-// evaluateProposal NO crea nada: valida estrictamente, compone una spec bien documentada (según el
+// evaluateProposal NO crea nada: valida estrictamente, compone una description bien documentada (según el
 // tipo), guarda el borrador, recupera contexto, pide el veredicto de Claude y rankea candidatos.
 // confirmProposal materializa la tarea nativa en roz (asignada + con prioridad).
 import { db } from '../db/supabase.js';
@@ -29,7 +29,7 @@ export interface ProposeInput {
   /** Lo que el usuario quiere o lo que falla, en sus palabras. roz documenta el resto. */
   description: string;
   /** Opcional: si el usuario ya lo dio, se respeta; si no, roz lo genera. */
-  title?: string;
+  name?: string;
   requester?: string;
   /** Opcional: refs de capturas/logs/video (bugs). */
   attachments?: string[];
@@ -39,10 +39,10 @@ export interface ProposeInput {
 
 export interface ProposalVerdict {
   proposalId: string;
-  title: string; // generado por roz si no se dio
+  name: string; // generado por roz si no se dio
   kind: ProposalKind; // resuelto (dado o inferido)
   priority: Priority; // resuelto (dado o inferido)
-  spec: string; // descripción documentada (markdown) de la tarea
+  description: string; // descripción documentada (markdown) de la tarea
   optimality: string;
   missing: string[]; // info crítica que falta — preguntar DESPUÉS, no antes
   suggestedAssignee: AssigneeSuggestion | null;
@@ -76,8 +76,8 @@ export async function evaluateProposal(input: ProposeInput): Promise<ProposalVer
   const supabase = db();
 
   // Único requisito de fondo: una descripción mínima. Lo demás lo redacta roz.
-  const description = (input.description ?? '').trim();
-  if (description.length < 8) {
+  const rawDescription = (input.description ?? '').trim();
+  if (rawDescription.length < 8) {
     throw new ValidationError(
       'Necesito una frase de qué se quiere o qué falla. Pídesela al usuario (no la inventes).',
     );
@@ -96,7 +96,7 @@ export async function evaluateProposal(input: ProposeInput): Promise<ProposalVer
   }
 
   // Contexto del brain.
-  const context = await getProjectContext(input.projectKey, description);
+  const context = await getProjectContext(input.projectKey, rawDescription);
 
   // ¿Hay que inferir tipo/prioridad? (apps de clientes: no hay humano que elija).
   const inferKind = !input.kind;
@@ -120,22 +120,22 @@ export async function evaluateProposal(input: ProposeInput): Promise<ProposalVer
       (inferPriority
         ? '- Decide "priority" ∈ [urgent,high,medium,low]: urgent solo si algo está caído/bloquea.\n'
         : '') +
-      '- Genera un "title" corto y claro (si te dieron uno, respétalo).\n' +
-      '- Escribe "spec" en markdown con las secciones del tipo. ' +
+      '- Genera un "name" corto y claro (si te dieron uno, respétalo).\n' +
+      '- Escribe "description" en markdown con las secciones del tipo. ' +
       kindGuide +
       '\n- Infiere un borrador razonable a partir de la descripción; marca lo que asumes con ' +
       '«(a confirmar)». NO inventes datos como números de versión o nombres específicos.\n' +
       '- "missing": lista CORTA (máx 3) de info crítica que de verdad falta para que un dev ' +
       'arranque. Vacío si está suficiente.\n' +
       '- "verdict": 2-4 líneas: ¿es óptima/debe hacerse?, ¿colisiona?, ¿riesgos?\n' +
-      'Responde SOLO con JSON: {"kind":"","priority":"","title":"","spec":"","missing":[],"verdict":""}.',
+      'Responde SOLO con JSON: {"kind":"","priority":"","name":"","description":"","missing":[],"verdict":""}.',
     cachedContext: context.map((c) => `# ${c.title}\n${c.body}`).join('\n\n'),
     user:
       `Proyecto: ${project.name}\n` +
       (input.kind ? `Tipo: ${input.kind}\n` : '') +
       (input.priority ? `Prioridad: ${input.priority}\n` : '') +
-      (input.title ? `Título sugerido: ${input.title}\n` : '') +
-      `Descripción del usuario:\n${description}${attachmentsBlock}`,
+      (input.name ? `Título sugerido: ${input.name}\n` : '') +
+      `Descripción del usuario:\n${rawDescription}${attachmentsBlock}`,
     maxTokens: 1500,
   });
 
@@ -144,8 +144,8 @@ export async function evaluateProposal(input: ProposeInput): Promise<ProposalVer
     input.kind ?? (KINDS.includes(parsed.kind) ? parsed.kind : 'ticket');
   const priority: Priority =
     input.priority ?? (PRIORITIES.includes(parsed.priority) ? parsed.priority : 'medium');
-  const title: string = (parsed.title || input.title || description.slice(0, 60)).trim();
-  const body: string = (parsed.spec || description).trim();
+  const name: string = (parsed.name || input.name || rawDescription.slice(0, 60)).trim();
+  const body: string = (parsed.description || rawDescription).trim();
   const missing: string[] = Array.isArray(parsed.missing) ? parsed.missing.slice(0, 3) : [];
   const optimality: string = (parsed.verdict || '').trim();
 
@@ -162,15 +162,15 @@ export async function evaluateProposal(input: ProposeInput): Promise<ProposalVer
   const attachMd = input.attachments?.length
     ? `\n\n## Adjuntos\n${input.attachments.map((a) => `- ${a}`).join('\n')}`
     : '';
-  const spec = `${provenance}${header}\n\n${body}${attachMd}`;
+  const description = `${provenance}${header}\n\n${body}${attachMd}`;
 
   // Persistir borrador.
   const { data: proposal, error } = await supabase
     .from('proposal')
     .insert({
       project_id: project.id,
-      title,
-      spec,
+      name,
+      description,
       priority,
       requester: input.requester ?? input.source?.customer ?? null,
       optimality,
@@ -181,20 +181,20 @@ export async function evaluateProposal(input: ProposeInput): Promise<ProposalVer
   if (error) throw error;
 
   // Candidatos (varios) — recomendación, no decisión.
-  const candidates = await rankAssignees(project.id, `${title}\n${spec}`, 3);
+  const candidates = await rankAssignees(project.id, `${name}\n${description}`, 3);
 
   return {
     proposalId: proposal.id,
-    title,
+    name,
     kind,
     priority,
-    spec,
+    description,
     optimality,
     missing,
     suggestedAssignee: candidates[0] ?? null,
     candidates,
     note:
-      'roz ya documentó la propuesta (título + spec). Muestra el borrador al usuario para ' +
+      'roz ya documentó la propuesta (título + description). Muestra el borrador al usuario para ' +
       'confirmar/editar. Si "missing" trae algo, pregúntalo AHORA (breve). "candidates" son ' +
       'sugerencias ordenadas; nada se asigna hasta confirm_proposal con un dev elegido.',
   };
@@ -241,9 +241,9 @@ export async function confirmProposal(
   // asignación (misma clave de idempotencia que el espejo → sin doble notificación).
   const task = await createTask({
     projectId: proposal.project.id,
-    title: proposal.title,
-    spec: proposal.spec,
-    state: 'unstarted',
+    name: proposal.name,
+    description: proposal.description,
+    status: 'pendiente',
     priority: proposal.priority ?? null,
     assigneeDevId: dev.id,
   });
