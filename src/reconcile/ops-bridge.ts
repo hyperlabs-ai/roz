@@ -55,9 +55,34 @@ export async function repairOpsBridge(dryRun = true): Promise<{ dryRun: boolean;
   return { dryRun, total: rows.length, byAction, rows };
 }
 
+// ---- Contenido de la tarea: adjuntos, comentarios, etiquetas (migración 0023) ----
+
+export type ContentIssue =
+  | 'adjunto_falta_en_roz' | 'adjunto_falta_en_ops'
+  | 'comentario_falta_en_roz' | 'comentario_falta_en_ops'
+  | 'etiquetas_distintas';
+
+export async function auditOpsContent(): Promise<{ total: number; byIssue: Record<string, number> }> {
+  const { data, error } = await db().rpc('ops_bridge_content_audit');
+  if (error) throw error;
+  const rows = (data ?? []) as { issue: ContentIssue }[];
+  const byIssue: Record<string, number> = {};
+  for (const r of rows) byIssue[r.issue] = (byIssue[r.issue] ?? 0) + 1;
+  return { total: rows.length, byIssue };
+}
+
+export async function repairOpsContent(dryRun = true): Promise<{ total: number }> {
+  const { data, error } = await db().rpc('ops_bridge_content_repair', { p_dry_run: dryRun });
+  if (error) throw error;
+  return { total: ((data ?? []) as unknown[]).length };
+}
+
 // Lo que corre el cron: audita, repara si hace falta, y vuelve a auditar para confirmar que
 // convergió. La segunda auditoría es la verificación de deduplicación — si algo quedara duplicado
 // o la reparación no fuera idempotente, `remaining` saldría distinto de cero y queda en el log.
+//
+// Cubre las dos capas: la tarea (0022) y su contenido (0023). El orden importa — un adjunto no
+// puede espejarse antes que la tarea que lo cuelga, así que el contenido va después.
 export async function reconcileOpsBridge(): Promise<{
   found: number;
   byIssue: Record<string, number>;
@@ -65,22 +90,32 @@ export async function reconcileOpsBridge(): Promise<{
   byAction: Record<string, number>;
   remaining: number;
   converged: boolean;
+  content: { found: number; byIssue: Record<string, number>; repaired: number; remaining: number };
 }> {
   const before = await auditOpsBridge();
+  let repaired = 0;
+  let byAction: Record<string, number> = {};
 
-  if (before.total === 0) {
-    return { found: 0, byIssue: {}, repaired: 0, byAction: {}, remaining: 0, converged: true };
+  if (before.total > 0) {
+    const repair = await repairOpsBridge(false);
+    repaired = repair.total;
+    byAction = repair.byAction;
   }
-
-  const repair = await repairOpsBridge(false);
   const after = await auditOpsBridge();
+
+  // Contenido, ya con las tareas alineadas.
+  const cBefore = await auditOpsContent();
+  let cRepaired = 0;
+  if (cBefore.total > 0) cRepaired = (await repairOpsContent(false)).total;
+  const cAfter = await auditOpsContent();
 
   return {
     found: before.total,
     byIssue: before.byIssue,
-    repaired: repair.total,
-    byAction: repair.byAction,
+    repaired,
+    byAction,
     remaining: after.total,
-    converged: after.total === 0,
+    converged: after.total === 0 && cAfter.total === 0,
+    content: { found: cBefore.total, byIssue: cBefore.byIssue, repaired: cRepaired, remaining: cAfter.total },
   };
 }

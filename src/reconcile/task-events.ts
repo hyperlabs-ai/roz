@@ -13,7 +13,6 @@ import {
   type PrReview,
 } from '../adapters/github.js';
 import { persistActors } from './pull-request.js';
-import { STATE_LABEL } from '../tasks/states.js';
 
 // Estados desde los que una señal de código puede AVANZAR la tarea (no retrocede desde review/done).
 const CAN_START = ['planificada', 'pendiente'];
@@ -35,8 +34,7 @@ export async function handleBranchCreated(input: { repo: string; ref: string; gi
   const now = new Date().toISOString();
   const upd: Record<string, unknown> = { head_ref: input.ref, updated_at: now };
   if (CAN_START.includes(item.status)) {
-    upd.status = 'en_progreso';
-    upd.status = STATE_LABEL.en_progreso;
+    upd.status = 'en_progreso'; // el valor, no STATE_LABEL: `status` tiene check constraint
     if (!item.started_at) upd.started_at = now;
   }
   await supabase.from('work_item').update(upd).eq('id', item.id);
@@ -66,8 +64,7 @@ export async function handlePrOpened(input: { repo: string; number: number; gith
     updated_at: now,
   };
   if (!CLOSED.includes(item.status)) {
-    upd.status = 'revision';
-    upd.status = STATE_LABEL.revision;
+    upd.status = 'revision'; // idem: valor, no etiqueta
     if (!item.started_at) upd.started_at = now;
   }
   await supabase.from('work_item').update(upd).eq('id', item.id);

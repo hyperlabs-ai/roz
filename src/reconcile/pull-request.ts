@@ -21,7 +21,6 @@ import {
 import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
 import { createDocumentedTask } from '../dashboard/queries.js';
-import { STATE_LABEL } from '../tasks/states.js';
 
 export interface ReconcilePrInput {
   repo: string; // "owner/name"
