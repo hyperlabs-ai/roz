@@ -10,6 +10,7 @@ import { drainOutbox } from '../events/outbox.js';
 import { brainSweep } from '../brain/sweep.js';
 import { sendWeeklyDigest, sendDevWeeklyDigests } from '../notify/digest.js';
 import { pollInfra } from '../infra/poll.js';
+import { reconcileOpsBridge, auditOpsBridge } from '../reconcile/ops-bridge.js';
 
 export const internalRoutes = new Hono<RozContext>();
 
@@ -42,6 +43,24 @@ internalRoutes.get('/infra-poll', async (c) => {
   const result = await pollInfra();
   c.get('logger')?.info(result, 'infra polled');
   return c.json({ ok: true, ...result });
+});
+
+// Respaldo del puente Ops ⇄ roz. El camino normal son los triggers (migración 0021); esto solo
+// recoge lo que ningún evento pudo disparar — sobre todo tareas ya asignadas a un dev que acaba
+// de activarse. Audita, repara y vuelve a auditar: si `converged` sale false, la reparación no
+// alcanzó y hay que mirarlo a mano.
+internalRoutes.get('/ops-bridge', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  const result = await reconcileOpsBridge();
+  if (!result.converged) c.get('logger')?.error(result, 'ops bridge no convergió');
+  else if (result.repaired > 0) c.get('logger')?.warn(result, 'ops bridge reparado');
+  return c.json({ ok: result.converged, ...result });
+});
+
+// Diagnóstico sin efectos, para revisar el puente sin repararlo.
+internalRoutes.get('/ops-bridge/audit', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  return c.json({ ok: true, ...(await auditOpsBridge()) });
 });
 
 // Digest semanal por email: resumen de la semana con botón al dashboard. Lo dispara el cron
