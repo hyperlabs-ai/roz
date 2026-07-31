@@ -174,7 +174,7 @@ export default function DeveloperProfile() {
                           {a.type === 'commit' ? <GitCommitHorizontal className="size-3.5" /> : a.type === 'revision' ? <Eye className="size-3.5 text-chart-2" /> : <CircleCheck className="size-3.5 text-success" />}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm">{a.title}</div>
+                          <div className="truncate text-sm">{a.name}</div>
                           <div className="mt-0.5 flex items-center gap-2">
                             {a.repo && (
                               <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground" title={a.repo}>

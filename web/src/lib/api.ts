@@ -114,7 +114,7 @@ export interface DeveloperProfile {
   sizeDist: SizeBucket[];
   tickets: { open: Ticket[]; inProgress: Ticket[]; resolved: Ticket[] };
   skills: { skillId: string; tag: string; level: number }[];
-  activity: { type: 'commit' | 'ticket_resolved' | 'revision'; ts: string; title: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
+  activity: { type: 'commit' | 'ticket_resolved' | 'revision'; ts: string; name: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
 }
 
 /** Cuadrícula de contribuciones de GitHub (la del perfil público), traída vía GraphQL API. */
