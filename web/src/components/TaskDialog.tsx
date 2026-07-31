@@ -16,6 +16,7 @@ import { UserAvatar } from '@/components/bits';
 import { Markdown } from '@/components/Markdown';
 import { apiGet, apiSend, apiUpload, type Ticket, type TicketFilterOptions, type Attachment } from '@/lib/api';
 import { localDateStr, localTimeStr, toIso } from '@/lib/calendar';
+import { htmlToMarkdown, looksLikeHtml } from '@/lib/rich-text';
 import { relative, compact } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -74,7 +75,7 @@ export function TaskDialog({
   const [spec, setSpec] = useState('');
   const [descMode, setDescMode] = useState<'view' | 'edit'>('edit'); // Vista (render) / Editar (textarea)
   const [projectId, setProjectId] = useState('');
-  const [state, setState] = useState('backlog');
+  const [state, setState] = useState('planificada');
   const [priority, setPriority] = useState(NONE);
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [assigneeOpen, setAssigneeOpen] = useState(false); // popover de responsables
@@ -101,10 +102,10 @@ export function TaskDialog({
   useEffect(() => {
     if (!open) return;
     if (task) {
-      setTitle(task.title ?? '');
-      setSpec(task.spec ?? '');
+      setTitle(task.name ?? '');
+      setSpec(task.description ?? '');
       setProjectId(task.projectId ?? '');
-      setState(task.state || 'backlog');
+      setState(task.status || 'planificada');
       setPriority(task.priority ?? NONE);
       setAssigneeIds(task.assignees?.length ? task.assignees.map((a) => a.id) : task.assignee ? [task.assignee.id] : []);
       if (task.scheduledStart) {
@@ -119,7 +120,7 @@ export function TaskDialog({
       setLabels((task.labels ?? []).join(', '));
     } else {
       setTitle(''); setSpec(''); setProjectId(filters.allProjects[0]?.id ?? '');
-      setState('backlog'); setPriority(NONE); setAssigneeIds([]);
+      setState('planificada'); setPriority(NONE); setAssigneeIds([]);
       setSchedDate(defaultDate ?? ''); setStartTime('09:00'); setEndTime('10:00');
       setDueDate(''); setLabels('');
     }
@@ -128,19 +129,22 @@ export function TaskDialog({
     setAttachments([]);
     setPending((prev) => { prev.forEach((p) => URL.revokeObjectURL(p.url)); return []; });
     // Al abrir en edición con descripción → arranca en Vista; en alta o sin texto → Editar.
-    setDescMode(task && (task.spec ?? '').trim() ? 'view' : 'edit');
+    setDescMode(task && (task.description ?? '').trim() ? 'view' : 'edit');
   }, [open, task, defaultDate, filters.allProjects]);
 
   // Carga de comentarios + adjuntos al abrir en edición.
   useEffect(() => {
     if (!open || !task) return;
     let alive = true;
+    // Se avisa si fallan. Antes eran catch vacíos, y el resultado era que un error del servidor se
+    // veía igual que "no hay nada": las imágenes simplemente no aparecían y no había ninguna pista
+    // de por qué. Un panel secundario puede degradar, pero no callar.
     apiGet<{ comments: TaskComment[] }>(`/tickets/${task.id}/comments`)
       .then((r) => alive && setComments(r.comments))
-      .catch(() => {/* silencioso: panel secundario */});
+      .catch((e) => alive && toast.error('No se pudieron cargar los comentarios', { description: String(e?.message ?? e) }));
     apiGet<{ attachments: Attachment[] }>(`/tickets/${task.id}/attachments`)
       .then((r) => alive && setAttachments(r.attachments))
-      .catch(() => {/* silencioso */});
+      .catch((e) => alive && toast.error('No se pudieron cargar las imágenes', { description: String(e?.message ?? e) }));
     return () => { alive = false; };
   }, [open, task]);
 
@@ -154,10 +158,14 @@ export function TaskDialog({
     const scheduledStart = schedDate ? toIso(schedDate, startTime) : null;
     const scheduledEnd = schedDate ? toIso(schedDate, endTime) : null;
     const labelList = labels.split(',').map((s) => s.trim()).filter(Boolean);
+    // Los nombres deben calzar con el schema del backend (TaskCreateBody / TaskPatchBody). Zod
+    // hace strip de las claves que no reconoce, así que mandar `title`/`spec`/`state` — los
+    // nombres previos a la migración 0020 — no daba error: descartaba nombre, descripción y
+    // estado en silencio, y el guardado parecía funcionar sin cambiar nada.
     const body = {
-      title: title.trim(),
-      spec: spec.trim() || null,
-      state,
+      name: title.trim(),
+      description: spec.trim() || null,
+      status: state,
       priority: priority === NONE ? null : priority,
       assigneeDevIds: assigneeIds,
       scheduledStart,
@@ -196,7 +204,7 @@ export function TaskDialog({
     setBusy(true);
     try {
       await apiSend<{ ok: true }>('DELETE', `/tickets/${task.id}`);
-      toast.success('Tarea eliminada', { description: task.title });
+      toast.success('Tarea eliminada', { description: task.name });
       onOpenChange(false);
       onSaved();
     } catch (e: any) {
@@ -281,7 +289,7 @@ export function TaskDialog({
   const devs = filters.devs ?? [];
 
   // ¿Hay señal de código para mostrar el panel de "Conexión con código"?
-  const codeSignal = !!task && (!!task.pr || task.source === 'commit' || task.reviewers.length > 0 || task.effort.commits > 0);
+  const codeSignal = !!task && (!!task.pr || task.source === 'commit' || !!task.reviewers?.length || !!task.effort?.commits);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -327,7 +335,7 @@ export function TaskDialog({
                 {descMode === 'view' ? (
                   <div className="scroll-thin min-h-[200px] flex-1 overflow-y-auto rounded-md border border-input px-3 py-2">
                     {spec.trim()
-                      ? <Markdown>{spec}</Markdown>
+                      ? <Markdown>{htmlToMarkdown(spec)}</Markdown>
                       : <p className="text-sm text-muted-foreground">Sin descripción</p>}
                   </div>
                 ) : (
@@ -339,7 +347,13 @@ export function TaskDialog({
                       placeholder="Contexto, criterios de aceptación, pasos para reproducir…"
                       className="scroll-thin min-h-[200px] w-full flex-1 resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm leading-relaxed shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     />
-                    <p className="text-[11px] text-muted-foreground">Soporta Markdown.</p>
+                    {/* No se reescribe el HTML que viene de Ops: si el dev no toca la descripción,
+                        su formato original se conserva intacto. Solo se avisa de qué está viendo. */}
+                    <p className="text-[11px] text-muted-foreground">
+                      {looksLikeHtml(spec)
+                        ? 'Esta descripción se escribió en Ops (HTML). En "Vista" se ve con formato; si la editas aquí, se guardará tal cual la dejes.'
+                        : 'Soporta Markdown.'}
+                    </p>
                   </>
                 )}
               </div>
@@ -523,7 +537,7 @@ export function TaskDialog({
                       {task!.headRef && <span className="truncate font-mono text-[11px] text-muted-foreground">{task!.headRef}</span>}
                     </div>
 
-                    {task!.reviewers.length > 0 && (
+                    {!!task!.reviewers?.length && (
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-muted-foreground">Revisores</span>
                         <div className="flex -space-x-1.5">
@@ -535,9 +549,9 @@ export function TaskDialog({
                     )}
 
                     <div className="grid grid-cols-3 gap-2 text-center">
-                      <EffortStat label="commits" value={String(task!.effort.commits)} />
-                      <EffortStat label="líneas" value={compact(task!.effort.lines)} />
-                      <EffortStat label="points" value={compact(task!.effort.points)} accent />
+                      <EffortStat label="commits" value={String(task!.effort?.commits ?? 0)} />
+                      <EffortStat label="líneas" value={compact(task!.effort?.lines ?? 0)} />
+                      <EffortStat label="points" value={compact(task!.effort?.points ?? 0)} accent />
                     </div>
                   </div>
                 </Section>
@@ -622,7 +636,7 @@ export function TaskDialog({
                 <AlertDialogHeader>
                   <AlertDialogTitle>¿Eliminar esta tarea?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Se eliminará <span className="font-medium">{task!.identifier} · {task!.title}</span>. Esta acción no se puede deshacer.
+                    Se eliminará <span className="font-medium">{task!.identifier} · {task!.name}</span>. Esta acción no se puede deshacer.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

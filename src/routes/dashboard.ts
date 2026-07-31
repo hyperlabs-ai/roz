@@ -482,9 +482,13 @@ dashboardRoutes.get('/tickets', async (c) => {
     return c.json(
       await getTickets({
         projectId: c.req.query('projectId'),
-        state: c.req.query('state'),
+        status: c.req.query('status'),
         assigneeDevId: c.req.query('assignee'),
         priority: c.req.query('priority'),
+        // `involved=me` acota a las tareas donde participa QUIEN CONSULTA. El dev sale de la
+        // sesión, nunca de la query: si viniera del cliente, cualquiera podría pedir el trabajo
+        // de otro pasando su id.
+        involvedDevId: c.req.query('involved') === 'me' ? c.get('user')?.devId : undefined,
         scope: c.req.query('scope') === 'all' ? 'all' : 'open',
         from: c.req.query('from'),
         to: c.req.query('to'),
@@ -505,14 +509,14 @@ dashboardRoutes.get('/tickets/filters', async (c) => {
 
 // ---- CRUD de tareas nativas (cualquier usuario autenticado) ----
 
-const TASK_STATE = z.enum(['backlog', 'unstarted', 'started', 'review', 'completed', 'canceled']);
+const TASK_STATE = z.enum(['planificada', 'pendiente', 'en_progreso', 'revision', 'completada', 'cancelada']);
 const TASK_PRIORITY = z.enum(['urgent', 'high', 'medium', 'low']);
 
 const TaskCreateBody = z.object({
   projectId: z.string().uuid(),
-  title: z.string().min(1),
-  spec: z.string().nullish(),
-  state: TASK_STATE.optional(),
+  name: z.string().min(1),
+  description: z.string().nullish(),
+  status: TASK_STATE.optional(),
   priority: TASK_PRIORITY.nullish(),
   assigneeDevId: z.string().uuid().nullish(),
   assigneeDevIds: z.array(z.string().uuid()).optional(),
@@ -528,12 +532,12 @@ dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     // z.infer marca requeridos como opcionales en el build de prod → destructurar + `!`.
-    const { projectId, title, spec, state, priority, assigneeDevId, assigneeDevIds, scheduledStart, scheduledEnd, dueDate, labels, parentId } = parsed.data;
+    const { projectId, name, description, status, priority, assigneeDevId, assigneeDevIds, scheduledStart, scheduledEnd, dueDate, labels, parentId } = parsed.data;
     const task = await createTask({
       projectId: projectId!,
-      title: title!,
-      spec,
-      state,
+      name: name!,
+      description,
+      status,
       priority,
       assigneeDevId,
       assigneeDevIds,
@@ -552,9 +556,9 @@ dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
 
 const TaskPatchBody = z
   .object({
-    title: z.string().min(1).optional(),
-    spec: z.string().nullish(),
-    state: TASK_STATE.optional(),
+    name: z.string().min(1).optional(),
+    description: z.string().nullish(),
+    status: TASK_STATE.optional(),
     priority: TASK_PRIORITY.nullish(),
     assigneeDevId: z.string().uuid().nullish(),
     assigneeDevIds: z.array(z.string().uuid()).optional(),

@@ -7,10 +7,19 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
+/** Error de la API que conserva el status y el código del backend. Sin esto, quien llama solo
+ *  recibe un mensaje suelto y no puede distinguir "no tienes acceso" de "se cayó el servidor". */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string | null) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
+    throw new ApiError(body?.error?.message ?? `HTTP ${res.status}`, res.status, body?.error?.code ?? null);
   }
   return res.json() as Promise<T>;
 }
@@ -58,7 +67,11 @@ export interface Metric {
   changePct: number | null;
   direction: 'up' | 'down' | 'flat' | 'none';
 }
-export interface AuthedUser { id: string; email: string; name: string | null; role: string | null; }
+export interface AuthedUser {
+  id: string; email: string; name: string | null; role: string | null;
+  // Su registro en roz.dev — el backend exige que exista para dejar entrar.
+  devId: string; devName: string; devActive: boolean;
+}
 
 export interface Overview {
   kpis: { commits: Metric; ticketsResolved: Metric; activeContributors: Metric; avgCycleTimeHours: Metric; linesChanged: Metric };
@@ -83,7 +96,7 @@ export interface DeveloperListItem {
   topSkills: { tag: string; level: number }[];
 }
 
-export interface Ticket { id: string; identifier: string; title: string; state: string; priority: string | null; url: string | null; }
+export interface Ticket { id: string; identifier: string; name: string; status: string; priority: string | null; url: string | null; }
 
 /** Credenciales editables de un developer (formulario de alta/edición). */
 export interface DeveloperCredentials {
@@ -101,7 +114,7 @@ export interface DeveloperProfile {
   sizeDist: SizeBucket[];
   tickets: { open: Ticket[]; inProgress: Ticket[]; resolved: Ticket[] };
   skills: { skillId: string; tag: string; level: number }[];
-  activity: { type: 'commit' | 'ticket_resolved' | 'review'; ts: string; title: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
+  activity: { type: 'commit' | 'ticket_resolved' | 'revision'; ts: string; title: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
 }
 
 /** Cuadrícula de contribuciones de GitHub (la del perfil público), traída vía GraphQL API. */
@@ -126,7 +139,7 @@ export interface CommitHistoryItem {
 
 export interface RepoSyncStatus {
   repo: string;
-  status: 'idle' | 'queued' | 'syncing' | 'done' | 'error' | string;
+  status: 'idle' | 'queued' | 'syncing' | 'completada' | 'error' | string;
   pages: number;
   commits: number;
   totalPages: number | null;
@@ -145,9 +158,9 @@ export interface ProjectDetail {
   repoSync: RepoSyncStatus[];
   totals: { commits: number; additions: number; deletions: number; ticketsResolved: number; contributors: number };
   contributors: { name: string; avatarUrl: string | null; commits: number; lines: number }[];
-  resolvedTickets: { id: string; identifier: string; title: string; state: string; stateName: string; priority: string | null; url: string | null; assignee: { name: string; avatarUrl: string | null } | null }[];
+  resolvedTickets: { id: string; identifier: string; name: string; status: string; statusLabel: string; priority: string | null; url: string | null; assignee: { name: string; avatarUrl: string | null } | null }[];
   byRepo: { repo: string; commits: number }[];
-  ticketsByState: { state: string; label: string; count: number }[];
+  ticketsByStatus: { status: string; label: string; count: number }[];
   history: CommitHistoryItem[];
   trend: { date: string; additions: number; deletions: number }[];
 }
@@ -158,9 +171,9 @@ export interface TicketPerson {
   devId?: string | null; reviewState?: string | null;
 }
 export interface Ticket {
-  id: string; identifier: string; number: number | null; title: string;
-  spec: string | null;
-  state: string; stateName: string; priority: string | null;
+  id: string; identifier: string; number: number | null; name: string;
+  description: string | null;
+  status: string; statusLabel: string; priority: string | null;
   projectId: string | null; projectName: string | null;
   assignee: { id: string; name: string; avatarUrl: string | null } | null; // primary (compat) = primer assignee
   assignees: { id: string; name: string; avatarUrl: string | null }[]; // lista completa de responsables
@@ -216,7 +229,7 @@ export type ServiceProvider = 'vercel' | 'railway' | 'supabase';
 export type ServiceStatus = 'healthy' | 'degraded' | 'down' | 'paused' | 'unknown';
 
 export interface InfraDeploy {
-  state: string;
+  status: string;
   url: string | null;
   sha: string | null;
   createdAt: string | null;

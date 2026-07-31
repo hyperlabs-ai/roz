@@ -92,8 +92,8 @@ async function commitsInRange(from: string, to: string, opts?: { devId?: string;
 interface WorkItemRow {
   id: string;
   identifier: string;
-  title: string;
-  state: string;
+  name: string;
+  status: string;
   priority: string | null;
   project_id: string | null;
   assignee_dev_id: string | null;
@@ -104,7 +104,7 @@ interface WorkItemRow {
 }
 
 const WORK_ITEM_COLS =
-  'id, identifier, title, state, priority, project_id, assignee_dev_id, url, started_at, completed_at, updated_at';
+  'id, identifier, name, status, priority, project_id, assignee_dev_id, url, started_at, completed_at, updated_at';
 
 // "Resueltos" cuenta solo trabajo de la ERA ROZ: tareas nativas + auto-documentadas desde PR/commit.
 // Excluye el histórico de Linear (source is null), que no representa gestión de tareas en roz — su
@@ -125,7 +125,7 @@ async function resolvedInRange(from: string, to: string, opts?: { devId?: string
 }
 
 async function openWorkItems(devId?: string): Promise<WorkItemRow[]> {
-  let q = db().from('work_item').select(WORK_ITEM_COLS).not('state', 'in', `(${CLOSED_STATES.join(',')})`);
+  let q = db().from('work_item').select(WORK_ITEM_COLS).not('status', 'in', `(${CLOSED_STATES.join(',')})`);
   if (devId) q = q.eq('assignee_dev_id', devId);
   const { data } = await q;
   return (data ?? []) as unknown as WorkItemRow[];
@@ -846,7 +846,7 @@ export async function listDevelopers(period: Period) {
 // ---- Perfil de un developer ----
 
 /** Revisión hecha por un dev, con la tarea/PR revisada (para el KPI y el feed de actividad). */
-interface DevReview { ts: string; reviewState: string | null; identifier: string | null; title: string | null; url: string | null; repo: string | null; prNumber: number | null }
+interface DevReview { ts: string; reviewState: string | null; identifier: string | null; name: string | null; url: string | null; repo: string | null; prNumber: number | null }
 
 /**
  * Revisiones que HIZO un dev en un rango (rol reviewer en work_item_actor). Se acota por
@@ -857,7 +857,7 @@ interface DevReview { ts: string; reviewState: string | null; identifier: string
 async function reviewsByDev(devId: string, from: string, to: string): Promise<DevReview[]> {
   const { data } = await db()
     .from('work_item_actor')
-    .select('review_state, created_at, work_item!inner(identifier, title, url, repo, pr_number)')
+    .select('review_state, created_at, work_item!inner(identifier, name, url, repo, pr_number)')
     .eq('role', 'reviewer')
     .eq('dev_id', devId)
     .gte('created_at', from)
@@ -868,7 +868,7 @@ async function reviewsByDev(devId: string, from: string, to: string): Promise<De
     ts: r.created_at,
     reviewState: r.review_state ?? null,
     identifier: r.work_item?.identifier ?? null,
-    title: r.work_item?.title ?? null,
+    name: r.work_item?.name ?? null,
     url: r.work_item?.url ?? null,
     repo: r.work_item?.repo ?? null,
     prNumber: r.work_item?.pr_number ?? null,
@@ -918,16 +918,16 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
   });
   const repoAgg = countBy(curCommits, (c) => c.repo);
 
-  const inProgress = open.filter((w) => w.state === 'started' || w.state === 'in_progress');
-  const openOnly = open.filter((w) => !(w.state === 'started' || w.state === 'in_progress'));
+  const inProgress = open.filter((w) => w.status === 'en_progreso' || w.status === 'en_progreso');
+  const openOnly = open.filter((w) => !(w.status === 'en_progreso' || w.status === 'en_progreso'));
 
   // Actividad reciente = últimos 30 días del período (relativo a period.to para que los
   // períodos históricos sigan mostrando su propio "último mes").
   const activityCutoff = new Date(new Date(period.to).getTime() - 30 * 24 * 3600_000).toISOString();
   const activity = [
-    ...curCommits.filter((c) => c.committed_at).map((c) => ({ type: 'commit' as const, ts: c.committed_at!, title: (c.message ?? '').split('\n')[0], url: c.url, repo: c.repo, additions: c.additions, deletions: c.deletions })),
-    ...curResolved.filter((w) => w.completed_at).map((w) => ({ type: 'ticket_resolved' as const, ts: w.completed_at!, title: `${w.identifier}: ${w.title}`, url: w.url, repo: null, additions: null, deletions: null })),
-    ...curReviews.filter((r) => r.ts).map((r) => ({ type: 'review' as const, ts: r.ts, title: r.identifier ? `${r.identifier}: ${r.title ?? ''}`.trim() : (r.title ?? (r.prNumber ? `PR #${r.prNumber}` : 'Revisión')), url: r.url, repo: r.repo, additions: null, deletions: null })),
+    ...curCommits.filter((c) => c.committed_at).map((c) => ({ type: 'commit' as const, ts: c.committed_at!, name: (c.message ?? '').split('\n')[0], url: c.url, repo: c.repo, additions: c.additions, deletions: c.deletions })),
+    ...curResolved.filter((w) => w.completed_at).map((w) => ({ type: 'ticket_resolved' as const, ts: w.completed_at!, name: `${w.identifier}: ${w.name}`, url: w.url, repo: null, additions: null, deletions: null })),
+    ...curReviews.filter((r) => r.ts).map((r) => ({ type: 'revision' as const, ts: r.ts, name: r.identifier ? `${r.identifier}: ${r.name ?? ''}`.trim() : (r.name ?? (r.prNumber ? `PR #${r.prNumber}` : 'Revisión')), url: r.url, repo: r.repo, additions: null, deletions: null })),
   ]
     .filter((a) => a.ts >= activityCutoff)
     .sort((a, b) => b.ts.localeCompare(a.ts));
@@ -948,7 +948,7 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
 }
 
 function slimTicket(w: WorkItemRow) {
-  return { id: w.id, identifier: w.identifier, title: w.title, state: w.state, priority: w.priority, url: w.url };
+  return { id: w.id, identifier: w.identifier, name: w.name, status: w.status, priority: w.priority, url: w.url };
 }
 
 // ---- Proyectos (historial de commits + líneas) ----
@@ -1021,7 +1021,7 @@ export async function getProject(projectId: string, period: Period) {
     resolvedInRange(period.from, period.to, { projectId }),
     db().from('project_repo').select('repo').eq('project_id', projectId),
     // Todos los work_items del proyecto (para el desglose por estado, incluidos cerrados).
-    db().from('work_item').select('state, state_name').eq('project_id', projectId),
+    db().from('work_item').select('status').eq('project_id', projectId),
     projectRepoSync(projectId),
   ]);
   const repos = ((repoRows.data ?? []) as unknown as { repo: string }[]).map((r) => r.repo).sort();
@@ -1077,13 +1077,13 @@ export async function getProject(projectId: string, period: Period) {
     .sort((a, b) => b.commits - a.commits);
 
   // Desglose de TODOS los tickets del proyecto por estado (incluye cerrados).
-  const stateAgg = new Map<string, { state: string; label: string; count: number }>();
+  const stateAgg = new Map<string, { status: string; label: string; count: number }>();
   ((allItemRows.data ?? []) as any[]).forEach((w) => {
-    const key = w.state;
-    if (!stateAgg.has(key)) stateAgg.set(key, { state: key, label: w.state_name ?? key, count: 0 });
+    const key = w.status;
+    if (!stateAgg.has(key)) stateAgg.set(key, { status: key, label: w.status ?? key, count: 0 });
     stateAgg.get(key)!.count++;
   });
-  const ticketsByState = [...stateAgg.values()].sort((a, b) => b.count - a.count);
+  const ticketsByStatus = [...stateAgg.values()].sort((a, b) => b.count - a.count);
 
   // Tickets COMPLETADOS del proyecto en el período (más recientes primero). roz auto-documenta
   // trabajo ya hecho → los "abiertos" casi siempre salían vacíos; los completados son lo relevante.
@@ -1093,9 +1093,9 @@ export async function getProject(projectId: string, period: Period) {
     .map((w) => ({
       id: w.id,
       identifier: w.identifier,
-      title: w.title,
-      state: w.state,
-      stateName: STATE_LABEL[w.state as TaskState] ?? w.state,
+      name: w.name,
+      status: w.status,
+      statusLabel: STATE_LABEL[w.status as TaskState] ?? w.status,
       priority: w.priority,
       url: w.url,
       assignee: w.assignee_dev_id ? { name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
@@ -1110,7 +1110,7 @@ export async function getProject(projectId: string, period: Period) {
     contributors: [...contribMap.values()].sort((a, b) => b.commits - a.commits),
     resolvedTickets,
     byRepo,
-    ticketsByState,
+    ticketsByStatus,
     history,
     trend: [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
   };
@@ -1118,14 +1118,64 @@ export async function getProject(projectId: string, period: Period) {
 
 // ---- Tickets / Tareas (nativas + espejo histórico de Linear) ----
 
+// Zona del equipo. El servidor corre en UTC, así que sin esto "hoy" se adelanta 6 h respecto a
+// quien usa la app: entre las 18:00 y la medianoche de México, UTC ya está en el día siguiente.
+const TEAM_TZ = 'America/Mexico_City';
+
+/** Hoy como YYYY-MM-DD en la zona del equipo. `en-CA` da justo ese formato. */
+function todayLocal(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: TEAM_TZ });
+}
+
+/**
+ * ¿La fecha límite ya pasó?
+ *
+ * `due_date` es una columna `date`: representa un DÍA, no un instante. Compararla con
+ * `new Date(due).getTime() < Date.now()` la interpretaba como medianoche UTC y marcaba vencida una
+ * tarea hasta 6 h antes de que el día terminara en México. Se comparan los días como texto
+ * (YYYY-MM-DD ordena igual que la fecha), que no depende de ninguna zona.
+ */
+function isOverdue(dueDate: string | null, status: string): boolean {
+  if (!dueDate || CLOSED_STATES.includes(status)) return false;
+  return dueDate.slice(0, 10) < todayLocal();
+}
+
 export interface TicketFilters {
   projectId?: string;
-  state?: string; // tipo de estado
+  status?: string; // tipo de estado
   assigneeDevId?: string;
   priority?: string;
   scope?: 'open' | 'all'; // open = no cerrados (default)
   from?: string; // ISO — filtra por scheduled_start >= from (vista calendario)
   to?: string; // ISO — filtra por scheduled_start < to
+  involvedDevId?: string; // solo tareas donde este dev participa (ver involvedWorkItemIds)
+}
+
+// UUID imposible: `in.()` con lista vacía no es sintaxis válida en PostgREST, así que cuando el
+// dev no participa en nada se filtra por un id que jamás existirá en vez de omitir el filtro
+// (omitirlo devolvería TODAS las tareas, justo lo contrario de lo pedido).
+const NO_MATCH = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Work items donde el dev está involucrado "de alguna forma":
+ *   · responsable — directo (`assignee_dev_id`) o en la junction (`work_item_assignee`)
+ *   · atribuido por el PR — autor, revisor o merger (`work_item_actor`, y `merger_dev_id`)
+ *
+ * Son tres tablas distintas, así que no sale de un solo filtro: se recogen los ids y se acota
+ * la consulta principal con ellos.
+ */
+async function involvedWorkItemIds(devId: string): Promise<string[]> {
+  const [assigned, attributed, direct] = await Promise.all([
+    db().from('work_item_assignee').select('work_item_id').eq('dev_id', devId),
+    db().from('work_item_actor').select('work_item_id').eq('dev_id', devId),
+    db().from('work_item').select('id').or(`assignee_dev_id.eq.${devId},merger_dev_id.eq.${devId}`),
+  ]);
+
+  const ids = new Set<string>();
+  for (const r of (assigned.data ?? []) as { work_item_id: string }[]) ids.add(r.work_item_id);
+  for (const r of (attributed.data ?? []) as { work_item_id: string }[]) ids.add(r.work_item_id);
+  for (const r of (direct.data ?? []) as { id: string }[]) ids.add(r.id);
+  return [...ids];
 }
 
 interface TicketActor { name: string; avatarUrl: string | null; login: string | null; devId: string | null; reviewState: string | null }
@@ -1192,15 +1242,19 @@ export async function getTickets(f: TicketFilters) {
   let q = db()
     .from('work_item')
     .select(
-      'id, identifier, number, title, spec, state, state_name, priority, project_id, assignee_dev_id, created_by, estimate, due_date, labels, creator_name, url, source, parent_id, scheduled_start, scheduled_end, head_ref, pr_state, started_at, completed_at, created_at, linear_created_at, linear_updated_at, updated_at, pr_number, repo, merger_dev_id',
+      'id, identifier, number, name, description, status, priority, project_id, assignee_dev_id, created_by, estimate, due_date, labels, creator_name, url, source, parent_id, scheduled_start, scheduled_end, head_ref, pr_state, started_at, completed_at, created_at, linear_created_at, linear_updated_at, updated_at, pr_number, repo, merger_dev_id',
     );
+  if (f.involvedDevId) {
+    const ids = await involvedWorkItemIds(f.involvedDevId);
+    q = q.in('id', ids.length ? ids : [NO_MATCH]);
+  }
   if (f.projectId) q = q.eq('project_id', f.projectId);
   if (f.assigneeDevId) q = q.eq('assignee_dev_id', f.assigneeDevId);
   if (f.priority) q = q.eq('priority', f.priority);
   if (f.from) q = q.gte('scheduled_start', f.from);
   if (f.to) q = q.lt('scheduled_start', f.to);
-  if (f.state) q = q.eq('state', f.state);
-  else if (f.scope !== 'all') q = q.in('state', OPEN_STATES);
+  if (f.status) q = q.eq('status', f.status);
+  else if (f.scope !== 'all') q = q.in('status', OPEN_STATES);
   const { data } = await q.order('updated_at', { ascending: false }).limit(500);
   const rows = (data ?? []) as any[];
 
@@ -1230,10 +1284,12 @@ export async function getTickets(f: TicketFilters) {
         id: w.id,
         identifier: w.identifier,
         number: w.number,
-        title: w.title,
-        spec: w.spec ?? null,
-        state: w.state,
-        stateName: w.state_name ?? STATE_LABEL[w.state as TaskState] ?? w.state,
+        name: w.name,
+        description: w.description ?? null,
+        status: w.status,
+        // El `w.status ?? …` que había aquí cortocircuitaba siempre: devolvía el valor crudo
+        // ("en_progreso") en vez de la etiqueta, dejando el ?? de STATE_LABEL inalcanzable.
+        statusLabel: STATE_LABEL[w.status as TaskState] ?? w.status,
         priority: w.priority,
         projectId: w.project_id,
         projectName: w.project_id ? projName.get(w.project_id) ?? null : null,
@@ -1242,7 +1298,7 @@ export async function getTickets(f: TicketFilters) {
         createdBy: w.created_by ? creatorsById.get(w.created_by) ?? null : null,
         estimate: w.estimate,
         dueDate: w.due_date,
-        overdue: w.due_date ? !CLOSED_STATES.includes(w.state) && new Date(w.due_date).getTime() < now : false,
+        overdue: isOverdue(w.due_date, w.status),
         labels: w.labels ?? [],
         creatorName: w.creator_name,
         url: w.url,
@@ -1310,11 +1366,11 @@ export async function getTickets(f: TicketFilters) {
     (t) => t.merger && t.authors.length > 0 && !t.authors.some((a) => samePerson(a, t.merger!)),
   ).length;
   // Trabajo cerrado sin PR vinculado (no trazable a código).
-  const withoutPr = tickets.filter((t) => ['completed', 'done'].includes(t.state) && !t.pr).length;
+  const withoutPr = tickets.filter((t) => ['completada'].includes(t.status) && !t.pr).length;
 
   // Resumen por categoría, SIEMPRE sobre todos los tickets del filtro (ignora el scope), para
   // que los KPIs muestren abiertos / en curso / completados sin importar el toggle.
-  let sq = db().from('work_item').select('state, state_name, project_id, priority, source, assignee_dev_id, due_date');
+  let sq = db().from('work_item').select('status, project_id, priority, source, assignee_dev_id, due_date');
   if (f.projectId) sq = sq.eq('project_id', f.projectId);
   if (f.assigneeDevId) sq = sq.eq('assignee_dev_id', f.assigneeDevId);
   if (f.priority) sq = sq.eq('priority', f.priority);
@@ -1324,7 +1380,7 @@ export async function getTickets(f: TicketFilters) {
   // Distribuciones (por estado/proyecto/prioridad/origen) sobre TODO el trabajo del filtro, NO solo
   // los tickets abiertos visibles: roz auto-documenta trabajo completado, así que el scope abierto
   // por defecto dejaba estas gráficas vacías aunque hubiera cientos de completados.
-  const byState = countMap(all, (w) => w.state_name ?? STATE_LABEL[w.state as TaskState] ?? w.state);
+  const byState = countMap(all, (w) => STATE_LABEL[w.status as TaskState] ?? w.status);
   const byPriority = countMap(all, (w) => w.priority ?? 'sin prioridad');
   const byProject = countMap(all, (w) => (w.project_id ? projName.get(w.project_id) ?? 'sin proyecto' : 'sin proyecto'));
   const bySource = countMap(all, (w) => w.source ?? 'linear');
@@ -1342,11 +1398,11 @@ export async function getTickets(f: TicketFilters) {
   const developers = [...devMap.values()].sort((a, b) => b.count - a.count);
   const summary = {
     total: all.length,
-    open: all.filter((w) => OPEN_STATES.includes(w.state)).length,
-    inProgress: all.filter((w) => w.state === 'started' || w.state === 'in_progress').length,
-    completed: all.filter((w) => ['completed', 'done'].includes(w.state)).length,
-    unassigned: all.filter((w) => OPEN_STATES.includes(w.state) && !w.assignee_dev_id).length,
-    overdue: all.filter((w) => w.due_date && !['completed', 'done', 'canceled'].includes(w.state) && new Date(w.due_date).getTime() < now).length,
+    open: all.filter((w) => OPEN_STATES.includes(w.status)).length,
+    inProgress: all.filter((w) => w.status === 'en_progreso' || w.status === 'en_progreso').length,
+    completed: all.filter((w) => ['completada'].includes(w.status)).length,
+    unassigned: all.filter((w) => OPEN_STATES.includes(w.status) && !w.assignee_dev_id).length,
+    overdue: all.filter((w) => isOverdue(w.due_date, w.status)).length,
   };
 
   return {
@@ -1370,13 +1426,13 @@ export async function getTickets(f: TicketFilters) {
 /** Opciones para los filtros del front (proyectos con tickets, devs, estados presentes). */
 export async function getTicketFilters() {
   const [{ data: wi }, devs, projects] = await Promise.all([
-    db().from('work_item').select('project_id, assignee_dev_id, state, state_name'),
+    db().from('work_item').select('project_id, assignee_dev_id, status'),
     allDevs(),
     allProjects(),
   ]);
   const rows = (wi ?? []) as any[];
   const projWithTickets = new Set(rows.map((r) => r.project_id).filter(Boolean));
-  const states = [...new Map(rows.filter((r) => r.state).map((r) => [r.state, r.state_name ?? r.state])).entries()].map(([value, label]) => ({ value, label }));
+  const states = [...new Map(rows.filter((r) => r.status).map((r) => [r.status, r.status ?? r.status])).entries()].map(([value, label]) => ({ value, label }));
   const activeProjects = projects.filter((p) => p.active !== false).map((p) => ({ id: p.id, name: p.name }));
   return {
     // Proyectos con tickets (para el filtro) y todos los activos (para crear tarea en cualquiera).
@@ -1451,9 +1507,9 @@ async function loadTicketEffort(ids: string[]): Promise<Map<string, { commits: n
 
 export interface CreateTaskInput {
   projectId: string;
-  title: string;
-  spec?: string | null;
-  state?: TaskState;
+  name: string;
+  description?: string | null;
+  status?: TaskState;
   priority?: string | null;
   /** Responsable único (compat: callers internos como confirmProposal). */
   assigneeDevId?: string | null;
@@ -1498,17 +1554,16 @@ export async function createTask(input: CreateTaskInput): Promise<{ id: string; 
   const assigneeIds = [...new Set((input.assigneeDevIds ?? (input.assigneeDevId ? [input.assigneeDevId] : [])).filter(Boolean))];
   const primary = assigneeIds[0] ?? null;
 
-  const state = (input.state ?? 'backlog') as TaskState;
+  const status = (input.status ?? 'planificada') as TaskState;
   const now = new Date().toISOString();
   const row = {
     linear_id: null,
     identifier,
     number,
     project_id: input.projectId,
-    title: input.title.trim(),
-    spec: input.spec?.trim() || null,
-    state,
-    state_name: STATE_LABEL[state] ?? state,
+    name: input.name.trim(),
+    description: input.description?.trim() || null,
+    status,
     priority: input.priority ?? null,
     assignee_dev_id: primary,
     scheduled_start: input.scheduledStart ?? null,
@@ -1519,7 +1574,7 @@ export async function createTask(input: CreateTaskInput): Promise<{ id: string; 
     created_by: input.createdBy ?? null,
     source: 'native',
     documented: true,
-    ...transitionTimestamps(state, now),
+    ...transitionTimestamps(status, now),
   };
   const { data, error } = await supabase.from('work_item').insert(row).select('id, identifier').single();
   if (error) throw error;
@@ -1538,15 +1593,15 @@ export async function createTask(input: CreateTaskInput): Promise<{ id: string; 
 }
 
 /**
- * Crea una tarea NATIVA ya DOCUMENTADA (estado 'completed') desde código huérfano detectado en la
+ * Crea una tarea NATIVA ya DOCUMENTADA (estado 'completada') desde código huérfano detectado en la
  * reconciliación (commit/PR sin tarea previa). Reemplaza el antiguo createIssue de Linear: con el
  * corte total, el trabajo auto-documentado también es nativo. Nace completada, atribuida y con
  * change_notified=false (pendiente del correo agrupado). Devuelve id + identificador local.
  */
 export async function createDocumentedTask(input: {
   projectId: string;
-  title: string;
-  spec: string;
+  name: string;
+  description: string;
   priority?: string | null;
   assigneeDevId?: string | null;
   mergerDevId?: string | null;
@@ -1579,10 +1634,9 @@ export async function createDocumentedTask(input: {
       identifier,
       number,
       project_id: input.projectId,
-      title: input.title.slice(0, 120),
-      spec: input.spec,
-      state: 'completed',
-      state_name: STATE_LABEL.completed,
+      name: input.name.slice(0, 120),
+      description: input.description,
+      status: 'completada',
       completed_at: completedAt,
       priority: input.priority ?? null,
       assignee_dev_id: input.assigneeDevId ?? null,
@@ -1604,9 +1658,9 @@ export async function createDocumentedTask(input: {
 }
 
 export interface TaskPatch {
-  title?: string;
-  spec?: string | null;
-  state?: TaskState;
+  name?: string;
+  description?: string | null;
+  status?: TaskState;
   priority?: string | null;
   assigneeDevId?: string | null;
   assigneeDevIds?: string[];
@@ -1622,18 +1676,22 @@ export interface TaskPatch {
 export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: string }> {
   const supabase = db();
   const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (patch.title !== undefined) upd.title = patch.title.trim();
-  if (patch.spec !== undefined) upd.spec = patch.spec?.trim() || null;
+  if (patch.name !== undefined) upd.name = patch.name.trim();
+  if (patch.description !== undefined) upd.description = patch.description?.trim() || null;
   if (patch.priority !== undefined) upd.priority = patch.priority;
   if (patch.scheduledStart !== undefined) upd.scheduled_start = patch.scheduledStart;
   if (patch.scheduledEnd !== undefined) upd.scheduled_end = patch.scheduledEnd;
   if (patch.dueDate !== undefined) upd.due_date = patch.dueDate;
   if (patch.labels !== undefined) upd.labels = patch.labels;
   if (patch.parentId !== undefined) upd.parent_id = patch.parentId;
-  if (patch.state !== undefined) {
-    upd.state = patch.state;
-    upd.state_name = STATE_LABEL[patch.state] ?? patch.state;
-    Object.assign(upd, transitionTimestamps(patch.state));
+  if (patch.status !== undefined) {
+    // Se guarda el VALOR, nunca la etiqueta: `status` tiene un check constraint con el dominio
+    // (planificada…cancelada). Aquí había un segundo `upd.status = STATE_LABEL[...]` que pisaba
+    // esta línea y escribía "En curso" → violación del constraint. Viene de cuando existían dos
+    // columnas (`state` + `state_name`); al fusionarse en 0020 la segunda asignación quedó
+    // apuntando a la misma. La etiqueta se deriva al leer (statusLabel).
+    upd.status = patch.status;
+    Object.assign(upd, transitionTimestamps(patch.status));
   }
   // Responsables: `assigneeDevIds` (dashboard, multi) tiene prioridad; `assigneeDevId` (single) es compat.
   const newAssignees =
@@ -1662,9 +1720,10 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: st
 
   // Cierre → dispara los efectos de documentación al brain + aviso al proposer (fase 4).
   // Idempotente por identifier: reprocesar un `done` no crea átomos ni correos duplicados.
-  if (patch.state === 'completed') {
+  if (patch.status === 'completada') {
     await emit('work_item.done', { identifier: w.identifier }, { idempotencyKey: `done:${w.identifier}` }).catch(() => {});
   }
+
   return { id: w.id };
 }
 

@@ -41,18 +41,18 @@ export interface DevSummary {
   id: string;
   name: string;
   availability: number;
-  load: number; // tareas nativas en curso (state='started') asignadas al dev
+  load: number; // tareas nativas en curso (status='en_progreso') asignadas al dev
   skills: { tag: string; level: number }[];
 }
 
-/** Carga = tareas nativas en curso (state='started') asignadas al dev. Reemplaza el conteo de
+/** Carga = tareas nativas en curso (status='en_progreso') asignadas al dev. Reemplaza el conteo de
  *  issues in-progress de Linear tras el corte a tareas nativas. */
 async function inProgressCount(devId: string): Promise<number> {
   const { count } = await db()
     .from('work_item')
     .select('id', { count: 'exact', head: true })
     .eq('assignee_dev_id', devId)
-    .eq('state', 'started');
+    .eq('status', 'en_progreso');
   return count ?? 0;
 }
 
@@ -84,9 +84,9 @@ export interface AssigneeSuggestion {
 }
 
 /**
- * Rankea TODOS los devs para una spec y devuelve los mejores candidatos.
+ * Rankea TODOS los devs para una description y devuelve los mejores candidatos.
  *   score = skillMatch × disponibilidad / (1 + carga)
- * skillMatch = máx. similitud coseno entre el embedding de la spec y el embedding de cada
+ * skillMatch = máx. similitud coseno entre el embedding de la description y el embedding de cada
  * skill del dev, ponderada por nivel (1..5). Un dev sin skills entra con baseline bajo.
  * Devolver varios permite recomendar alternativas cuando más de uno puede hacerlo.
  */

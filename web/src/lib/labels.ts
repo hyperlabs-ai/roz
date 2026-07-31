@@ -2,8 +2,17 @@
 // (Overview, Tickets, Tasks, ProjectDetail) y bits.tsx redefinían estos mapas con variantes
 // ligeramente distintas; centralizarlos evita que se desincronicen.
 
-/** Estado del work_item → etiqueta en español. */
+// Vocabulario de estado: el MISMO que public.tasks de Ops (migración 0020). Los nombres viejos
+// de Linear (backlog/started/completed…) siguen mapeados porque hay work items históricos que
+// nunca se reconvirtieron; sin ellos la UI mostraría el valor crudo.
 export const STATE_LABEL: Record<string, string> = {
+  planificada: 'Planificada',
+  pendiente: 'Por hacer',
+  en_progreso: 'En curso',
+  revision: 'En revisión',
+  completada: 'Completada',
+  cancelada: 'Cancelada',
+  // Heredados de Linear
   backlog: 'Backlog',
   unstarted: 'Sin empezar',
   triage: 'Triage',
@@ -15,12 +24,29 @@ export const STATE_LABEL: Record<string, string> = {
   canceled: 'Cancelado',
 };
 
+/** Orden de estados (planificada → cerrada). Espeja STATE_ORDER del backend. */
+export const STATE_ORDER = ['planificada', 'pendiente', 'en_progreso', 'revision', 'completada', 'cancelada'] as const;
+
+/** Opciones para selects de estado. */
+export const STATE_OPTIONS = STATE_ORDER.map((value) => ({ value, label: STATE_LABEL[value] }));
+
+export const OPEN_STATES: string[] = ['planificada', 'pendiente', 'en_progreso', 'revision'];
+export const CLOSED_STATES: string[] = ['completada', 'cancelada'];
+
 /** Variante de Badge para un estado (verde = cerrado, azul = en curso, gris = pendiente). */
 export function stateBadgeVariant(state: string): 'success' | 'default' | 'secondary' {
-  if (['completed', 'done'].includes(state)) return 'success';
-  if (['started', 'in_progress'].includes(state)) return 'default';
+  if (['completada', 'completed', 'done'].includes(state)) return 'success';
+  if (['en_progreso', 'started', 'in_progress'].includes(state)) return 'default';
   return 'secondary';
 }
+
+/** Opciones para selects de prioridad, de más urgente a menos. */
+export const PRIO_OPTIONS = [
+  { value: 'urgent', label: 'Urgente' },
+  { value: 'high', label: 'Alta' },
+  { value: 'medium', label: 'Media' },
+  { value: 'low', label: 'Baja' },
+];
 
 /** Prioridad → etiqueta en español (incluye el caso "sin prioridad"). */
 export const PRIO_LABEL: Record<string, string> = {

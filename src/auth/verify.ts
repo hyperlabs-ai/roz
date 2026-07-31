@@ -6,7 +6,7 @@
 import { createClient } from '@supabase/supabase-js';
 import type { MiddlewareHandler } from 'hono';
 import { config } from '../config.js';
-import { dbPublic } from '../db/supabase.js';
+import { db, dbPublic } from '../db/supabase.js';
 import type { RozContext } from '../types/hono.js';
 
 // Cliente para validar el JWT del usuario. getUser(token) valida el token contra Supabase;
@@ -26,6 +26,8 @@ function authApi() {
   }
   return authClient;
 }
+
+interface DevRow { id: string; name: string; active: boolean }
 
 /** Valida el JWT del header Authorization, restringe por dominio y carga rol/nombre. */
 export const requireDashboardAuth: MiddlewareHandler<RozContext> = async (c, next) => {
@@ -61,11 +63,49 @@ export const requireDashboardAuth: MiddlewareHandler<RozContext> = async (c, nex
     p = null;
   }
 
+  // Estar en roz.dev es REQUISITO de acceso: el dashboard es del equipo de desarrollo, no de
+  // cualquiera con correo del dominio. Se busca por ops_user_id (el vínculo explícito con Ops) y
+  // se cae al email, que es como se mapearon los devs originalmente.
+  //
+  // A diferencia del lookup de user_profiles de arriba, este NO es best-effort: si la consulta
+  // falla no se puede afirmar que la persona esté registrada, y ante la duda se cierra la puerta.
+  let dev: DevRow | null = null;
+  try {
+    const { data: byOps } = await db()
+      .from('dev')
+      .select('id, name, active')
+      .eq('ops_user_id', data.user.id)
+      .maybeSingle();
+    dev = (byOps as DevRow | null) ?? null;
+
+    if (!dev) {
+      const { data: byEmail } = await db()
+        .from('dev')
+        .select('id, name, active')
+        .ilike('email', email)
+        .maybeSingle();
+      dev = (byEmail as DevRow | null) ?? null;
+    }
+  } catch (err) {
+    c.get('logger')?.error({ err, email }, 'no se pudo resolver el dev');
+    return c.json({ error: { code: 'INTERNAL', message: 'no se pudo verificar el acceso' } }, 500);
+  }
+
+  if (!dev) {
+    return c.json(
+      { error: { code: 'NOT_REGISTERED', message: 'tu cuenta no está registrada en roz' } },
+      403,
+    );
+  }
+
   c.set('user', {
     id: data.user.id,
     email,
-    name: p?.full_name ?? null,
+    name: p?.full_name ?? dev.name,
     role: p?.role ?? null,
+    devId: dev.id,
+    devName: dev.name,
+    devActive: dev.active,
   });
   await next();
 };

@@ -122,7 +122,7 @@ function ProgressBar({ pct, tone }: { pct: number | null; tone: 'primary' | 'suc
 }
 
 function StatusText({ s }: { s: SyncItem }) {
-  if (s.status === 'done') return <span className="shrink-0 text-[11px] font-medium text-success">✓ {s.commits} commits</span>;
+  if (s.status === 'completada') return <span className="shrink-0 text-[11px] font-medium text-success">✓ {s.commits} commits</span>;
   if (s.status === 'queued') return <span className="shrink-0 text-[11px] text-muted-foreground">en cola…</span>;
   const p = pctOf(s);
   return (
@@ -169,7 +169,7 @@ function SyncWidget({
               {s.status === 'error' ? (
                 <p className="text-[11px] leading-snug text-destructive">{s.error ?? 'Error al sincronizar'}</p>
               ) : (
-                <ProgressBar pct={s.status === 'done' ? 100 : pctOf(s)} tone={s.status === 'done' ? 'success' : 'primary'} />
+                <ProgressBar pct={s.status === 'completada' ? 100 : pctOf(s)} tone={s.status === 'completada' ? 'success' : 'primary'} />
               )}
             </div>
           ))}

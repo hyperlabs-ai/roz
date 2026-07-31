@@ -29,11 +29,11 @@ function taskUrl(id?: string | null): string | null {
 function renderEmail(opts: {
   greeting: string;
   identifier: string;
-  title: string;
+  name: string;
   priority?: string | null;
   url?: string | null;
 }): { html: string; text: string } {
-  const { greeting, identifier, title, priority, url } = opts;
+  const { greeting, identifier, name, priority, url } = opts;
   const button = url
     ? `<a href="${url}" style="display:inline-block;background:#5e6ad2;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Abrir tarea →</a>`
     : '';
@@ -53,7 +53,7 @@ function renderEmail(opts: {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:10px;margin-bottom:22px">
           <tr><td style="padding:16px 18px">
             <div style="color:#5e6ad2;font-size:13px;font-weight:700;margin-bottom:4px">${identifier} &nbsp;${prioBadge}</div>
-            <div style="color:#111827;font-size:15px;line-height:1.4">${title}</div>
+            <div style="color:#111827;font-size:15px;line-height:1.4">${name}</div>
           </td></tr>
         </table>
         ${button}
@@ -66,7 +66,7 @@ function renderEmail(opts: {
 </body></html>`;
 
   const text =
-    `${greeting}\nTe asignaron ${identifier}${title ? ` — ${title}` : ''}` +
+    `${greeting}\nTe asignaron ${identifier}${name ? ` — ${name}` : ''}` +
     (priority ? ` (prioridad: ${priority})` : '') +
     (url ? `\n\nAbrir tarea: ${url}` : '') +
     `\n\n— ROZ`;
@@ -77,10 +77,10 @@ function renderEmail(opts: {
 /** Plantilla de cierre: avisa a quien propuso que su cambio quedó cerrado y documentado. */
 function renderDoneEmail(opts: {
   identifier: string;
-  title: string;
+  name: string;
   url?: string | null;
 }): { html: string; text: string } {
-  const { identifier, title, url } = opts;
+  const { identifier, name, url } = opts;
   const button = url
     ? `<a href="${url}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver tarea →</a>`
     : '';
@@ -96,7 +96,7 @@ function renderDoneEmail(opts: {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:10px;margin-bottom:22px">
           <tr><td style="padding:16px 18px">
             <div style="color:#5e6ad2;font-size:13px;font-weight:700;margin-bottom:4px">${identifier}</div>
-            <div style="color:#111827;font-size:15px;line-height:1.4">${title}</div>
+            <div style="color:#111827;font-size:15px;line-height:1.4">${name}</div>
           </td></tr>
         </table>
         ${button}
@@ -108,7 +108,7 @@ function renderDoneEmail(opts: {
   </td></tr></table>
 </body></html>`;
   const text =
-    `✓ Completado\nTu solicitud ${identifier}${title ? ` — ${title}` : ''} quedó cerrada y documentada.` +
+    `✓ Completado\nTu solicitud ${identifier}${name ? ` — ${name}` : ''} quedó cerrada y documentada.` +
     (url ? `\n\nVer tarea: ${url}` : '') +
     `\n\n— ROZ`;
   return { html, text };
@@ -118,11 +118,11 @@ function renderDoneEmail(opts: {
 export async function notifyProposerDone(opts: {
   to: string;
   identifier: string;
-  title: string;
+  name: string;
   url?: string | null;
 }): Promise<void> {
   const supabase = db();
-  const subject = `ROZ · ${opts.identifier} completado${opts.title ? ` — ${opts.title}` : ''}`;
+  const subject = `ROZ · ${opts.identifier} completado${opts.name ? ` — ${opts.name}` : ''}`;
   const { html, text } = renderDoneEmail(opts);
   try {
     const res = await sendEmail({ to: opts.to, subject, html, text });
@@ -136,7 +136,7 @@ export async function notifyProposerDone(opts: {
     });
     await pushToEmail(opts.to, {
       title: `${opts.identifier} completado`,
-      body: opts.title ? `Cerrado y documentado — ${opts.title}` : 'Tu solicitud quedó cerrada y documentada',
+      body: opts.name ? `Cerrado y documentado — ${opts.name}` : 'Tu solicitud quedó cerrada y documentada',
       url: `${config.dashboard.url}/app/tickets`,
       tag: `done:${opts.identifier}`,
     }, 'work_done');
@@ -178,18 +178,18 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
   const { data: wi } = workItemId
     ? await supabase
         .from('work_item')
-        .select('title, url, priority')
+        .select('name, url, priority')
         .eq('id', workItemId)
         .single()
     : { data: null };
 
-  const title = wi?.title ?? '';
+  const name = wi?.name ?? '';
   const greeting = dev?.name ? `Hola ${firstName(dev.name)},` : 'Hola,';
-  const subject = `ROZ · Te asignaron ${identifier}${title ? ` — ${title}` : ''}`;
+  const subject = `ROZ · Te asignaron ${identifier}${name ? ` — ${name}` : ''}`;
   const { html, text } = renderEmail({
     greeting,
     identifier,
-    title,
+    name,
     priority: wi?.priority,
     // Tareas nativas no tienen url externa → deep-link al detalle en roz; cae a la url del ticket si existiera.
     url: taskUrl(workItemId) ?? wi?.url,
@@ -218,7 +218,7 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
     });
     await pushToDev(devId, dev.email, {
       title: `Te asignaron ${identifier}`,
-      body: title || 'Nueva tarea asignada',
+      body: name || 'Nueva tarea asignada',
       url: taskUrl(workItemId) ?? `${config.dashboard.url}/app/tasks`,
       tag: `assign:${identifier}`,
     }, 'assigned');
@@ -236,7 +236,7 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
 }
 
 /** Plantilla: cambios documentados (trabajo ya hecho, auto-creado desde commits). */
-function renderDocumentedEmail(opts: { greeting: string; items: { identifier: string; title: string; url: string | null }[] }): { html: string; text: string } {
+function renderDocumentedEmail(opts: { greeting: string; items: { identifier: string; name: string; url: string | null }[] }): { html: string; text: string } {
   const { greeting, items } = opts;
   const n = items.length;
   const heading = n === 1 ? 'Se documentó tu cambio' : `Se documentaron ${n} de tus cambios`;
@@ -247,7 +247,7 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
            <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
              <td style="vertical-align:top">
                <span style="color:#5e6ad2;font-size:13px;font-weight:700">${i.identifier}</span>
-               <div style="color:#111827;font-size:14px;line-height:1.4;margin-top:2px">${i.title}</div>
+               <div style="color:#111827;font-size:14px;line-height:1.4;margin-top:2px">${i.name}</div>
              </td>
              ${i.url ? `<td align="right" style="vertical-align:middle;white-space:nowrap"><a href="${i.url}" style="color:#5e6ad2;text-decoration:none;font-size:13px;font-weight:600">Abrir →</a></td>` : ''}
            </tr></table>
@@ -281,7 +281,7 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
 
   const text =
     `${heading}\n${greeting} roz registró tu trabajo (ya completado):\n\n` +
-    items.map((i) => `• ${i.identifier} — ${i.title}${i.url ? ` (${i.url})` : ''}`).join('\n') +
+    items.map((i) => `• ${i.identifier} — ${i.name}${i.url ? ` (${i.url})` : ''}`).join('\n') +
     `\n\n— ROZ`;
 
   return { html, text };
@@ -303,14 +303,14 @@ export async function notifyChangesDocumented(devId: string): Promise<void> {
   // push agarra todos; los siguientes ven 0 y no envían.
   const { data: items } = await supabase
     .from('work_item')
-    .select('id, identifier, title, url')
+    .select('id, identifier, name, url')
     .eq('assignee_dev_id', devId)
     .eq('documented', true)
     .eq('change_notified', false)
     .order('completed_at', { ascending: false })
     .limit(50);
 
-  const list = (items ?? []) as { id: string; identifier: string; title: string; url: string | null }[];
+  const list = (items ?? []) as { id: string; identifier: string; name: string; url: string | null }[];
   if (!list.length) return; // nada pendiente (otro evento del mismo push ya notificó)
 
   const ids = list.map((i) => i.id);
@@ -324,7 +324,7 @@ export async function notifyChangesDocumented(devId: string): Promise<void> {
   const greeting = dev.name ? `Hola ${firstName(dev.name)},` : 'Hola,';
   const subject = list.length === 1 ? `ROZ · Cambio documentado — ${list[0]!.identifier}` : `ROZ · ${list.length} cambios documentados`;
   // Deep-link a la tarea nativa (url del work_item es null en nativas) → botón/enlace "Ver tarea".
-  const emailItems = list.map((i) => ({ identifier: i.identifier, title: i.title, url: taskUrl(i.id) ?? i.url }));
+  const emailItems = list.map((i) => ({ identifier: i.identifier, name: i.name, url: taskUrl(i.id) ?? i.url }));
   const { html, text } = renderDocumentedEmail({ greeting, items: emailItems });
 
   const res = await sendEmail({ to: dev.email, subject, html, text }); // si falla, lanza → reintento (pendientes intactos)
@@ -333,7 +333,7 @@ export async function notifyChangesDocumented(devId: string): Promise<void> {
   await supabase.from('notification').insert({ channel: 'email', to_dev_id: devId, to_address: dev.email, template: 'change_documented', body: text, status: 'sent', provider_id: res.id });
   await pushToDev(devId, dev.email, {
     title: list.length === 1 ? 'Cambio documentado' : `${list.length} cambios documentados`,
-    body: list.length === 1 ? `${list[0]!.identifier} — ${list[0]!.title}` : 'roz registró tu trabajo',
+    body: list.length === 1 ? `${list[0]!.identifier} — ${list[0]!.name}` : 'roz registró tu trabajo',
     // Un solo cambio → deep-link directo a esa tarea; varios → la vista de tareas.
     url: (list.length === 1 ? taskUrl(list[0]!.id) : null) ?? `${config.dashboard.url}/app/tasks`,
     tag: `documented:${devId}`,

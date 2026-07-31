@@ -1,7 +1,7 @@
 // Second brain — documentación al cierre [fase 4]. Disparado por `work_item.done` cuando una tarea
 // pasa a Completado (cierre nativo desde el dashboard o PR mergeada). roz:
 //   1. marca el work_item como documentado;
-//   2. crea/actualiza un átomo de conocimiento con el delta del trabajo (título + spec),
+//   2. crea/actualiza un átomo de conocimiento con el delta del trabajo (título + description),
 //      con embedding y procedencia ligada al identifier de la tarea — supersede en vez de
 //      duplicar (si ya hay un átomo para esa tarea con otro contenido, lo marca superseded);
 //   3. avisa por email a quien propuso (si el requester es un correo) que su cambio cerró.
@@ -37,7 +37,7 @@ export async function documentCompletedWork(payload: DoneInput): Promise<Documen
 
   const { data: wi } = await supabase
     .from('work_item')
-    .select('id, identifier, project_id, title, spec, requester, url, documented')
+    .select('id, identifier, project_id, name, description, requester, url, documented')
     .eq('identifier', identifier)
     .maybeSingle();
   if (!wi) return { documented: false, atom: 'skipped', notified: false };
@@ -63,7 +63,7 @@ export async function documentCompletedWork(payload: DoneInput): Promise<Documen
         await notifyProposerDone({
           to: requester,
           identifier: wi.identifier,
-          title: wi.title,
+          name: wi.name,
           url: wi.url,
         });
         notified = true;
@@ -82,13 +82,13 @@ async function upsertAtom(wi: {
   id: string;
   identifier: string;
   project_id: string;
-  title: string;
-  spec: string | null;
+  name: string;
+  description: string | null;
 }): Promise<DocumentResult['atom']> {
   const supabase = db();
-  const title = wi.title;
-  const body = (wi.spec ?? '').trim() || wi.title;
-  const hash = contentHash(`${title}\n${body}`);
+  const name = wi.name;
+  const body = (wi.description ?? '').trim() || wi.name;
+  const hash = contentHash(`${name}\n${body}`);
 
   // ¿Ya hay un átomo activo para este issue (procedencia = identifier)?
   const { data: existing } = await supabase
@@ -106,7 +106,7 @@ async function upsertAtom(wi: {
   // Embedding (best-effort: si falla, se inserta sin vector y lo rellena el brain-sweep).
   let embeddingLiteral: string | null = null;
   try {
-    const v = await embed(`${title}\n${body}`);
+    const v = await embed(`${name}\n${body}`);
     embeddingLiteral = `[${v.join(',')}]`;
   } catch {
     embeddingLiteral = null;
@@ -119,7 +119,7 @@ async function upsertAtom(wi: {
       scope: 'project',
       project_id: wi.project_id,
       status: 'active',
-      title,
+      name,
       body,
       provenance: [wi.identifier],
       embedding: embeddingLiteral,

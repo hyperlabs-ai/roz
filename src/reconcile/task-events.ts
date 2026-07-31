@@ -13,11 +13,10 @@ import {
   type PrReview,
 } from '../adapters/github.js';
 import { persistActors } from './pull-request.js';
-import { STATE_LABEL } from '../tasks/states.js';
 
 // Estados desde los que una señal de código puede AVANZAR la tarea (no retrocede desde review/done).
-const CAN_START = ['backlog', 'unstarted', 'triage'];
-const CLOSED = ['completed', 'canceled', 'done'];
+const CAN_START = ['planificada', 'pendiente'];
+const CLOSED = ['completada', 'cancelada'];
 
 /**
  * Rama creada. Si su nombre referencia una tarea (feat/ROZ-123-...), la tarea entra a "En curso"
@@ -28,19 +27,18 @@ export async function handleBranchCreated(input: { repo: string; ref: string; gi
   const identifier = referencesLinearIssue(input.ref);
   if (!identifier) return { action: 'no-ref' };
   const supabase = db();
-  const { data: wi } = await supabase.from('work_item').select('id, state, started_at').eq('identifier', identifier).maybeSingle();
-  const item = wi as { id: string; state: string; started_at: string | null } | null;
+  const { data: wi } = await supabase.from('work_item').select('id, status, started_at').eq('identifier', identifier).maybeSingle();
+  const item = wi as { id: string; status: string; started_at: string | null } | null;
   if (!item?.id) return { action: 'no-task', identifier };
 
   const now = new Date().toISOString();
   const upd: Record<string, unknown> = { head_ref: input.ref, updated_at: now };
-  if (CAN_START.includes(item.state)) {
-    upd.state = 'started';
-    upd.state_name = STATE_LABEL.started;
+  if (CAN_START.includes(item.status)) {
+    upd.status = 'en_progreso'; // el valor, no STATE_LABEL: `status` tiene check constraint
     if (!item.started_at) upd.started_at = now;
   }
   await supabase.from('work_item').update(upd).eq('id', item.id);
-  return { action: CAN_START.includes(item.state) ? 'started' : 'branch-linked', identifier };
+  return { action: CAN_START.includes(item.status) ? 'en_progreso' : 'branch-linked', identifier };
 }
 
 /**
@@ -53,8 +51,8 @@ export async function handlePrOpened(input: { repo: string; number: number; gith
   const identifier = referencesLinearIssue(`${pr.title}\n${pr.body ?? ''}\n${pr.headRef ?? ''}`);
   if (!identifier) return { action: 'no-ref' };
   const supabase = db();
-  const { data: wi } = await supabase.from('work_item').select('id, state, started_at').eq('identifier', identifier).maybeSingle();
-  const item = wi as { id: string; state: string; started_at: string | null } | null;
+  const { data: wi } = await supabase.from('work_item').select('id, status, started_at').eq('identifier', identifier).maybeSingle();
+  const item = wi as { id: string; status: string; started_at: string | null } | null;
   if (!item?.id) return { action: 'no-task', identifier };
 
   const now = new Date().toISOString();
@@ -65,9 +63,8 @@ export async function handlePrOpened(input: { repo: string; number: number; gith
     head_ref: pr.headRef ?? null,
     updated_at: now,
   };
-  if (!CLOSED.includes(item.state)) {
-    upd.state = 'review';
-    upd.state_name = STATE_LABEL.review;
+  if (!CLOSED.includes(item.status)) {
+    upd.status = 'revision'; // idem: valor, no etiqueta
     if (!item.started_at) upd.started_at = now;
   }
   await supabase.from('work_item').update(upd).eq('id', item.id);
@@ -79,7 +76,7 @@ export async function handlePrOpened(input: { repo: string; number: number; gith
   ]);
   await persistActors(supabase, item.id, { authors, reviews, mergerLogin: null });
 
-  return { action: CLOSED.includes(item.state) ? 'pr-linked' : 'review', identifier };
+  return { action: CLOSED.includes(item.status) ? 'pr-linked' : 'revision', identifier };
 }
 
 /**
