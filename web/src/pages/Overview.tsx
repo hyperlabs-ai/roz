@@ -9,6 +9,7 @@ import { UserAvatar, EmptyState, ProgressBar, ErrorCard } from '@/components/bit
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApi } from '@/lib/useApi';
+import { useIsMobile } from '@/lib/useIsMobile';
 import { apiGet, type Overview as OverviewData, type InfraResponse, type InfraUptimeResponse, type InfraService, type ServiceProvider, type ServiceStatus } from '@/lib/api';
 import { compact, hours, relative } from '@/lib/format';
 import { comparisonRange } from '@/lib/period';
@@ -225,6 +226,7 @@ function squareLayout(total: number): { cols: number; count: number } {
 // La grilla se mantiene "cuadrada" (3–4 por línea, sin celdas vacías): si el total de proyectos
 // no llena filas completas, se muestran solo los primeros que sí las completan. Lee /infra.
 function InfraHealth({ onOpen }: { onOpen: () => void }) {
+  const isMobile = useIsMobile();
   const { data, loading } = useApi<InfraResponse>(() => apiGet('/infra'), []);
   // Ventana propia del status page (histórico retenido), NO el período del dashboard.
   const { data: uptime } = useApi<InfraUptimeResponse>(() => apiGet('/infra/uptime'), []);
@@ -241,6 +243,16 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
   const { cols, count } = squareLayout(allProjects.length);
   const projects = allProjects.slice(0, count);
   const hidden = allProjects.length - projects.length;
+
+  // En móvil el timeline lleva un 30% menos de barras: con el ancho de un teléfono, tantas líneas
+  // quedaban de menos de 1px y la gráfica era una mancha. Se recorta por el extremo ANTIGUO, así
+  // que lo que se pierde es historia lejana y se conserva lo reciente, que es lo que se mira.
+  const bars = uptime?.buckets ?? [];
+  const shown = isMobile ? bars.slice(Math.floor(bars.length * 0.3)) : bars;
+  // Los días se derivan de lo que se ve: si no, la etiqueta diría "hace 90 días" mostrando 63.
+  const shownDays = uptime && shown.length
+    ? Math.max(1, Math.round((Date.now() - new Date(shown[0]!.start).getTime()) / 86_400_000))
+    : (uptime?.days ?? 0);
 
   return (
     <Card className="mt-4">
@@ -310,18 +322,22 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                 </div>
                 {uptime && uptime.buckets.length ? (
                   /* Timeline estilo status page: muchas barras finas sobre el período con histórico. */
-                  <div>
-                    <div className="flex h-9 items-stretch gap-[2px]">
-                      {uptime.buckets.map((b) => (
+                  <div className="min-w-0">
+                    {/* ~90 barras a 2px de ancho mínimo + 2px de hueco pedían ~358px, más de lo que
+                        hay en un móvil de 360px con los paddings: la barra desbordaba la tarjeta.
+                        En pantallas chicas van a 1px (y el hueco también), y `overflow-hidden`
+                        garantiza que no se salga aunque el backend devuelva más buckets. */}
+                    <div className="flex h-9 items-stretch gap-px overflow-hidden sm:gap-[2px]">
+                      {shown.map((b) => (
                         <div
                           key={b.start}
                           title={`${b.start.slice(0, 10)} ${b.start.slice(11, 16)} · ${INFRA_STATUS[b.status]?.label ?? b.status}${b.total ? ` (${b.up}/${b.total} ok)` : ' · sin datos'}`}
-                          className={cn('min-w-[2px] flex-1 rounded-[1.5px] transition-colors', UPTIME_BAR[b.status] ?? 'bg-muted')}
+                          className={cn('min-w-px flex-1 rounded-[1.5px] transition-colors sm:min-w-[2px]', UPTIME_BAR[b.status] ?? 'bg-muted')}
                         />
                       ))}
                     </div>
                     <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
-                      <span className="shrink-0">hace {uptime.days} {uptime.days === 1 ? 'día' : 'días'}</span>
+                      <span className="shrink-0">hace {shownDays} {shownDays === 1 ? 'día' : 'días'}</span>
                       <span className="h-px flex-1 bg-border" />
                       {uptime.uptimePct != null && <span className="shrink-0 font-mono tabular-nums">{uptime.uptimePct}% disponibilidad</span>}
                       <span className="h-px flex-1 bg-border" />

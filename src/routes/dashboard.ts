@@ -485,6 +485,10 @@ dashboardRoutes.get('/tickets', async (c) => {
         status: c.req.query('status'),
         assigneeDevId: c.req.query('assignee'),
         priority: c.req.query('priority'),
+        // `involved=me` acota a las tareas donde participa QUIEN CONSULTA. El dev sale de la
+        // sesión, nunca de la query: si viniera del cliente, cualquiera podría pedir el trabajo
+        // de otro pasando su id.
+        involvedDevId: c.req.query('involved') === 'me' ? c.get('user')?.devId : undefined,
         scope: c.req.query('scope') === 'all' ? 'all' : 'open',
         from: c.req.query('from'),
         to: c.req.query('to'),

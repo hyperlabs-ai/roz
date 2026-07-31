@@ -1083,7 +1083,7 @@ export async function getProject(projectId: string, period: Period) {
     if (!stateAgg.has(key)) stateAgg.set(key, { status: key, label: w.status ?? key, count: 0 });
     stateAgg.get(key)!.count++;
   });
-  const ticketsByState = [...stateAgg.values()].sort((a, b) => b.count - a.count);
+  const ticketsByStatus = [...stateAgg.values()].sort((a, b) => b.count - a.count);
 
   // Tickets COMPLETADOS del proyecto en el período (más recientes primero). roz auto-documenta
   // trabajo ya hecho → los "abiertos" casi siempre salían vacíos; los completados son lo relevante.
@@ -1095,7 +1095,7 @@ export async function getProject(projectId: string, period: Period) {
       identifier: w.identifier,
       name: w.name,
       status: w.status,
-      stateName: STATE_LABEL[w.status as TaskState] ?? w.status,
+      statusLabel: STATE_LABEL[w.status as TaskState] ?? w.status,
       priority: w.priority,
       url: w.url,
       assignee: w.assignee_dev_id ? { name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
@@ -1110,13 +1110,35 @@ export async function getProject(projectId: string, period: Period) {
     contributors: [...contribMap.values()].sort((a, b) => b.commits - a.commits),
     resolvedTickets,
     byRepo,
-    ticketsByState,
+    ticketsByStatus,
     history,
     trend: [...trendMap.values()].sort((a, b) => a.date.localeCompare(b.date)),
   };
 }
 
 // ---- Tickets / Tareas (nativas + espejo histórico de Linear) ----
+
+// Zona del equipo. El servidor corre en UTC, así que sin esto "hoy" se adelanta 6 h respecto a
+// quien usa la app: entre las 18:00 y la medianoche de México, UTC ya está en el día siguiente.
+const TEAM_TZ = 'America/Mexico_City';
+
+/** Hoy como YYYY-MM-DD en la zona del equipo. `en-CA` da justo ese formato. */
+function todayLocal(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: TEAM_TZ });
+}
+
+/**
+ * ¿La fecha límite ya pasó?
+ *
+ * `due_date` es una columna `date`: representa un DÍA, no un instante. Compararla con
+ * `new Date(due).getTime() < Date.now()` la interpretaba como medianoche UTC y marcaba vencida una
+ * tarea hasta 6 h antes de que el día terminara en México. Se comparan los días como texto
+ * (YYYY-MM-DD ordena igual que la fecha), que no depende de ninguna zona.
+ */
+function isOverdue(dueDate: string | null, status: string): boolean {
+  if (!dueDate || CLOSED_STATES.includes(status)) return false;
+  return dueDate.slice(0, 10) < todayLocal();
+}
 
 export interface TicketFilters {
   projectId?: string;
@@ -1126,6 +1148,34 @@ export interface TicketFilters {
   scope?: 'open' | 'all'; // open = no cerrados (default)
   from?: string; // ISO — filtra por scheduled_start >= from (vista calendario)
   to?: string; // ISO — filtra por scheduled_start < to
+  involvedDevId?: string; // solo tareas donde este dev participa (ver involvedWorkItemIds)
+}
+
+// UUID imposible: `in.()` con lista vacía no es sintaxis válida en PostgREST, así que cuando el
+// dev no participa en nada se filtra por un id que jamás existirá en vez de omitir el filtro
+// (omitirlo devolvería TODAS las tareas, justo lo contrario de lo pedido).
+const NO_MATCH = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Work items donde el dev está involucrado "de alguna forma":
+ *   · responsable — directo (`assignee_dev_id`) o en la junction (`work_item_assignee`)
+ *   · atribuido por el PR — autor, revisor o merger (`work_item_actor`, y `merger_dev_id`)
+ *
+ * Son tres tablas distintas, así que no sale de un solo filtro: se recogen los ids y se acota
+ * la consulta principal con ellos.
+ */
+async function involvedWorkItemIds(devId: string): Promise<string[]> {
+  const [assigned, attributed, direct] = await Promise.all([
+    db().from('work_item_assignee').select('work_item_id').eq('dev_id', devId),
+    db().from('work_item_actor').select('work_item_id').eq('dev_id', devId),
+    db().from('work_item').select('id').or(`assignee_dev_id.eq.${devId},merger_dev_id.eq.${devId}`),
+  ]);
+
+  const ids = new Set<string>();
+  for (const r of (assigned.data ?? []) as { work_item_id: string }[]) ids.add(r.work_item_id);
+  for (const r of (attributed.data ?? []) as { work_item_id: string }[]) ids.add(r.work_item_id);
+  for (const r of (direct.data ?? []) as { id: string }[]) ids.add(r.id);
+  return [...ids];
 }
 
 interface TicketActor { name: string; avatarUrl: string | null; login: string | null; devId: string | null; reviewState: string | null }
@@ -1194,6 +1244,10 @@ export async function getTickets(f: TicketFilters) {
     .select(
       'id, identifier, number, name, description, status, priority, project_id, assignee_dev_id, created_by, estimate, due_date, labels, creator_name, url, source, parent_id, scheduled_start, scheduled_end, head_ref, pr_state, started_at, completed_at, created_at, linear_created_at, linear_updated_at, updated_at, pr_number, repo, merger_dev_id',
     );
+  if (f.involvedDevId) {
+    const ids = await involvedWorkItemIds(f.involvedDevId);
+    q = q.in('id', ids.length ? ids : [NO_MATCH]);
+  }
   if (f.projectId) q = q.eq('project_id', f.projectId);
   if (f.assigneeDevId) q = q.eq('assignee_dev_id', f.assigneeDevId);
   if (f.priority) q = q.eq('priority', f.priority);
@@ -1233,7 +1287,9 @@ export async function getTickets(f: TicketFilters) {
         name: w.name,
         description: w.description ?? null,
         status: w.status,
-        stateName: w.status ?? STATE_LABEL[w.status as TaskState] ?? w.status,
+        // El `w.status ?? …` que había aquí cortocircuitaba siempre: devolvía el valor crudo
+        // ("en_progreso") en vez de la etiqueta, dejando el ?? de STATE_LABEL inalcanzable.
+        statusLabel: STATE_LABEL[w.status as TaskState] ?? w.status,
         priority: w.priority,
         projectId: w.project_id,
         projectName: w.project_id ? projName.get(w.project_id) ?? null : null,
@@ -1242,7 +1298,7 @@ export async function getTickets(f: TicketFilters) {
         createdBy: w.created_by ? creatorsById.get(w.created_by) ?? null : null,
         estimate: w.estimate,
         dueDate: w.due_date,
-        overdue: w.due_date ? !CLOSED_STATES.includes(w.status) && new Date(w.due_date).getTime() < now : false,
+        overdue: isOverdue(w.due_date, w.status),
         labels: w.labels ?? [],
         creatorName: w.creator_name,
         url: w.url,
@@ -1324,7 +1380,7 @@ export async function getTickets(f: TicketFilters) {
   // Distribuciones (por estado/proyecto/prioridad/origen) sobre TODO el trabajo del filtro, NO solo
   // los tickets abiertos visibles: roz auto-documenta trabajo completado, así que el scope abierto
   // por defecto dejaba estas gráficas vacías aunque hubiera cientos de completados.
-  const byState = countMap(all, (w) => w.status ?? STATE_LABEL[w.status as TaskState] ?? w.status);
+  const byState = countMap(all, (w) => STATE_LABEL[w.status as TaskState] ?? w.status);
   const byPriority = countMap(all, (w) => w.priority ?? 'sin prioridad');
   const byProject = countMap(all, (w) => (w.project_id ? projName.get(w.project_id) ?? 'sin proyecto' : 'sin proyecto'));
   const bySource = countMap(all, (w) => w.source ?? 'linear');
@@ -1346,7 +1402,7 @@ export async function getTickets(f: TicketFilters) {
     inProgress: all.filter((w) => w.status === 'en_progreso' || w.status === 'en_progreso').length,
     completed: all.filter((w) => ['completada'].includes(w.status)).length,
     unassigned: all.filter((w) => OPEN_STATES.includes(w.status) && !w.assignee_dev_id).length,
-    overdue: all.filter((w) => w.due_date && !['completada', 'cancelada'].includes(w.status) && new Date(w.due_date).getTime() < now).length,
+    overdue: all.filter((w) => isOverdue(w.due_date, w.status)).length,
   };
 
   return {
@@ -1629,8 +1685,12 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: st
   if (patch.labels !== undefined) upd.labels = patch.labels;
   if (patch.parentId !== undefined) upd.parent_id = patch.parentId;
   if (patch.status !== undefined) {
+    // Se guarda el VALOR, nunca la etiqueta: `status` tiene un check constraint con el dominio
+    // (planificada…cancelada). Aquí había un segundo `upd.status = STATE_LABEL[...]` que pisaba
+    // esta línea y escribía "En curso" → violación del constraint. Viene de cuando existían dos
+    // columnas (`state` + `state_name`); al fusionarse en 0020 la segunda asignación quedó
+    // apuntando a la misma. La etiqueta se deriva al leer (statusLabel).
     upd.status = patch.status;
-    upd.status = STATE_LABEL[patch.status] ?? patch.status;
     Object.assign(upd, transitionTimestamps(patch.status));
   }
   // Responsables: `assigneeDevIds` (dashboard, multi) tiene prioridad; `assigneeDevId` (single) es compat.

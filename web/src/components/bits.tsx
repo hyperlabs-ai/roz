@@ -36,12 +36,14 @@ export function UserAvatar({ url, name, className, title }: { url: string | null
 export function AvatarStack({
   people, max = 3, size = 'size-5', className,
 }: {
-  people: { name: string; avatarUrl: string | null }[];
+  people: { name: string; avatarUrl: string | null }[] | null | undefined;
   max?: number;
   size?: string;
   className?: string;
 }) {
-  if (!people.length) return null;
+  // Tolera null/undefined a propósito: lo alimentan respuestas de la API desde muchas páginas, y
+  // un campo ausente no debe tumbar el render entero (el ErrorBoundary es global).
+  if (!people?.length) return null;
   const shown = people.slice(0, max);
   const extra = people.length - shown.length;
   return (

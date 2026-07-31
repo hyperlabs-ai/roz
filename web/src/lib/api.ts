@@ -7,10 +7,19 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
 
+/** Error de la API que conserva el status y el código del backend. Sin esto, quien llama solo
+ *  recibe un mensaje suelto y no puede distinguir "no tienes acceso" de "se cayó el servidor". */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly code: string | null) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
+    throw new ApiError(body?.error?.message ?? `HTTP ${res.status}`, res.status, body?.error?.code ?? null);
   }
   return res.json() as Promise<T>;
 }
@@ -58,7 +67,11 @@ export interface Metric {
   changePct: number | null;
   direction: 'up' | 'down' | 'flat' | 'none';
 }
-export interface AuthedUser { id: string; email: string; name: string | null; role: string | null; }
+export interface AuthedUser {
+  id: string; email: string; name: string | null; role: string | null;
+  // Su registro en roz.dev — el backend exige que exista para dejar entrar.
+  devId: string; devName: string; devActive: boolean;
+}
 
 export interface Overview {
   kpis: { commits: Metric; ticketsResolved: Metric; activeContributors: Metric; avgCycleTimeHours: Metric; linesChanged: Metric };
