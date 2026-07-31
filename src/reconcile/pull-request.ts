@@ -22,7 +22,6 @@ import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
 import { createDocumentedTask } from '../dashboard/queries.js';
 import { STATE_LABEL } from '../tasks/states.js';
-import { pushStatusToOps } from './ops-tasks.js';
 
 export interface ReconcilePrInput {
   repo: string; // "owner/name"
@@ -325,11 +324,6 @@ async function completeLinkedIssue(supabase: ReturnType<typeof db>, identifier: 
     .from('work_item')
     .update({ status: 'completada', completed_at: new Date().toISOString() })
     .eq('id', wi.id);
-
-  // Si la tarea nació en HyperOps, el merge la cierra también allá. Best-effort.
-  await pushStatusToOps(wi.id).catch((e) => {
-    console.error('[ops-tasks] no se pudo cerrar la tarea en Ops:', e?.message ?? e);
-  });
 
   await emit('work_item.done', { identifier }, { idempotencyKey: `done:${identifier}` }).catch(() => {});
 }

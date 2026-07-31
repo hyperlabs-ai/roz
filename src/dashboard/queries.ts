@@ -9,7 +9,6 @@ import { db, dbPublic } from '../db/supabase.js';
 import { embed } from '../adapters/embeddings.js';
 import { slugKey } from '../projects/resolve.js';
 import { emit } from '../events/outbox.js';
-import { pushStatusToOps } from '../reconcile/ops-tasks.js';
 import { OPEN_STATES, CLOSED_STATES, STATE_LABEL, STATE_OPTIONS, transitionTimestamps, type TaskState } from '../tasks/states.js';
 
 export interface Period {
@@ -1663,14 +1662,6 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: st
   // Idempotente por identifier: reprocesar un `done` no crea átomos ni correos duplicados.
   if (patch.status === 'completada') {
     await emit('work_item.done', { identifier: w.identifier }, { idempotencyKey: `done:${w.identifier}` }).catch(() => {});
-  }
-
-  // Si la tarea vino de HyperOps, devolverle el avance para que quien vive en Ops lo vea sin
-  // entrar a roz. Best-effort: un fallo aquí no debe tumbar la edición local.
-  if (patch.status !== undefined) {
-    await pushStatusToOps(w.id).catch((e) => {
-      console.error('[ops-tasks] no se pudo devolver el estado a Ops:', e?.message ?? e);
-    });
   }
 
   return { id: w.id };
