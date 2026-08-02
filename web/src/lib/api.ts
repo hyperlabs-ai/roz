@@ -216,6 +216,72 @@ export interface Attachment {
   size: number | null;
   createdAt: string;
 }
+// ---- Ideas ----
+// Espejo manual de src/dashboard/ideas.ts. Los nombres deben calzar EXACTO: TypeScript no compara
+// las dos declaraciones, así que un campo renombrado compila igual y llega vacío en runtime.
+
+/** Una idea con los agregados que necesita el medidor de definición (mustCount) y la tarjeta. */
+export interface Idea {
+  id: string;
+  title: string;
+  pitch: string | null;
+  status: string;
+  tags: string[];
+  shared: boolean;
+  createdBy: string;
+  createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+  problem: string | null;
+  audience: string | null;
+  value: string | null;
+  success: string | null;
+  outOfScope: string | null;
+  risks: string | null;
+  nextStep: string | null;
+  featureCount: number;
+  mustCount: number;
+  blockCount: number;
+  openQuestions: number;
+  /** false = de alguien más, compartida en solo lectura. La puerta real está en el backend. */
+  canEdit: boolean;
+}
+
+export interface IdeaFeature {
+  id: string;
+  title: string;
+  detail: string | null;
+  priority: string;
+  position: number;
+  createdAt: string;
+}
+
+export interface IdeaBlock {
+  id: string;
+  kind: string;
+  title: string | null;
+  body: string | null;
+  source: string | null;
+  url: string | null;
+  resolved: boolean;
+  position: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IdeaDetail {
+  idea: Idea;
+  features: IdeaFeature[];
+  blocks: IdeaBlock[];
+  attachments: Attachment[];
+}
+
+export interface IdeaFilterOptions {
+  statuses: { value: string; label: string }[];
+  priorities: { value: string; label: string }[];
+  kinds: { value: string; label: string }[];
+}
+
 export interface TicketFilterOptions {
   projects: { id: string; name: string }[];
   allProjects: { id: string; name: string }[];

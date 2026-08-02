@@ -93,6 +93,21 @@ function block(el: Element, depth = 0): string {
 }
 
 /**
+ * Markdown de lo que hay en el portapapeles, o null si no venía con formato.
+ *
+ * Copiar una respuesta de Claude o ChatGPT deja HTML rico en el portapapeles además del texto
+ * plano. Pegar el texto plano pierde encabezados, listas y bloques de código — justo la estructura
+ * por la que uno pega la conversación. Se reutiliza el mismo parseo del árbol que el HTML de Ops:
+ * nunca se inyecta el HTML en el documento, así que tampoco hay riesgo de XSS por lo pegado.
+ */
+export function markdownFromPaste(e: { clipboardData: DataTransfer | null }): string | null {
+  const html = e.clipboardData?.getData('text/html');
+  if (!html || !looksLikeHtml(html)) return null;
+  const md = htmlToMarkdown(html).trim();
+  return md || null;
+}
+
+/**
  * HTML (de TipTap) → Markdown. Si el texto no parece HTML se devuelve sin tocar, así una
  * descripción escrita en roz en markdown sigue funcionando igual.
  */

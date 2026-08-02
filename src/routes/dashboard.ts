@@ -6,7 +6,30 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { RozContext } from '../types/hono.js';
 import { config } from '../config.js';
+import { AppError } from '../utils/errors.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
+import {
+  IDEA_STATUS_OPTIONS,
+  FEATURE_PRIORITY_OPTIONS,
+  BLOCK_KIND_OPTIONS,
+} from '../ideas/model.js';
+import {
+  listIdeas,
+  getIdea,
+  createIdea,
+  updateIdea,
+  deleteIdea,
+  addFeature,
+  updateFeature,
+  deleteFeature,
+  reorderFeatures,
+  addBlock,
+  updateBlock,
+  deleteBlock,
+  listIdeaAttachments,
+  addIdeaAttachment,
+  deleteIdeaAttachment,
+} from '../dashboard/ideas.js';
 import { pushEnabled } from '../adapters/web-push.js';
 import { savePushSubscription, deletePushSubscription } from '../notify/push.js';
 import { getContributionCalendar, getRepo, listOrgRepos } from '../adapters/github.js';
@@ -94,6 +117,12 @@ function errMessage(err: unknown): string {
 }
 
 function fail(c: any, err: unknown) {
+  // Un AppError es una decisión deliberada del dominio (403 de una idea ajena, 404 de algo que no
+  // existe), no una falla: devolverlo como 500 haría que el front lo tratara como "se cayó roz".
+  if (err instanceof AppError) {
+    c.get('logger')?.warn({ code: err.code, err: err.message }, 'dashboard app error');
+    return c.json({ error: { code: err.code, message: err.message } }, err.status as 400);
+  }
   c.get('logger')?.error({ err }, 'dashboard error');
   return c.json({ error: { code: 'INTERNAL', message: errMessage(err) } }, 500);
 }
@@ -653,6 +682,250 @@ dashboardRoutes.post('/tickets/:id/attachments', requireAdmin, async (c) => {
 dashboardRoutes.delete('/tickets/:id/attachments/:attachmentId', requireAdmin, async (c) => {
   try {
     await deleteAttachment(c.req.param('attachmentId'));
+    return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// ---- Ideas (captura y definición de proyectos) ----
+//
+// Las ideas son PRIVADAS de su autor salvo que las comparta, y compartir es de solo lectura. Quién
+// pregunta sale SIEMPRE de la sesión, nunca del body: si viniera del cliente, mandar el uuid de
+// otro bastaría para leer o editar sus ideas. La autorización real vive en assertIdeaAccess
+// (src/dashboard/ideas.ts), que cada función de escritura invoca antes de tocar nada.
+
+/** Id de auth del solicitante. requireDashboardAuth ya garantizó que hay sesión. */
+function uid(c: any): string {
+  return c.get('user').id as string;
+}
+
+const IDEA_STATUS = z.enum(['semilla', 'explorando', 'definida', 'en_pausa', 'descartada']);
+const FEATURE_PRIORITY = z.enum(['imprescindible', 'deseable', 'opcional', 'descartada']);
+const BLOCK_KIND = z.enum(['nota', 'chat', 'link', 'referencia', 'pregunta']);
+
+dashboardRoutes.get('/ideas', async (c) => {
+  try {
+    const ideas = await listIdeas({
+      userId: uid(c),
+      status: c.req.query('status'),
+      q: c.req.query('q'),
+      onlyMine: c.req.query('mine') === '1',
+    });
+    return c.json({ ideas });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Vocabulario para los selects del SPA: sale del modelo, no se hardcodea en el front (donde se
+// desincronizaría del check de la tabla sin que TypeScript dijera nada).
+dashboardRoutes.get('/ideas/filters', (c) =>
+  c.json({ statuses: IDEA_STATUS_OPTIONS, priorities: FEATURE_PRIORITY_OPTIONS, kinds: BLOCK_KIND_OPTIONS }),
+);
+
+const IdeaCreateBody = z.object({
+  title: z.string().min(1),
+  pitch: z.string().nullish(),
+});
+
+dashboardRoutes.post('/ideas', requireAdmin, async (c) => {
+  const parsed = IdeaCreateBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    // z.infer marca requeridos como opcionales en el build de prod → destructurar + `!`.
+    const { title, pitch } = parsed.data;
+    const user = c.get('user');
+    const idea = await createIdea({ userId: uid(c), userName: user?.name ?? user?.devName ?? null, title: title!, pitch });
+    return c.json({ idea }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.get('/ideas/:id', async (c) => {
+  try {
+    return c.json(await getIdea(c.req.param('id'), uid(c)));
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Los nombres deben calzar EXACTO con los que manda el front: zod hace strip de las claves que no
+// reconoce, así que un campo mal nombrado se descartaría en silencio y el guardado parecería ok.
+const IdeaPatchBody = z.object({
+  title: z.string().min(1).optional(),
+  pitch: z.string().nullish(),
+  status: IDEA_STATUS.optional(),
+  problem: z.string().nullish(),
+  audience: z.string().nullish(),
+  value: z.string().nullish(),
+  success: z.string().nullish(),
+  outOfScope: z.string().nullish(),
+  risks: z.string().nullish(),
+  nextStep: z.string().nullish(),
+  tags: z.array(z.string()).optional(),
+  shared: z.boolean().optional(),
+});
+
+dashboardRoutes.patch('/ideas/:id', requireAdmin, async (c) => {
+  const parsed = IdeaPatchBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    return c.json({ idea: await updateIdea(c.req.param('id'), uid(c), parsed.data) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.delete('/ideas/:id', requireAdmin, async (c) => {
+  try {
+    await deleteIdea(c.req.param('id'), uid(c));
+    return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Features (el alcance de la idea, con MoSCoW).
+const FeatureCreateBody = z.object({
+  title: z.string().min(1),
+  detail: z.string().nullish(),
+  priority: FEATURE_PRIORITY.optional(),
+});
+
+dashboardRoutes.post('/ideas/:id/features', requireAdmin, async (c) => {
+  const parsed = FeatureCreateBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    const { title, detail, priority } = parsed.data;
+    const feature = await addFeature(c.req.param('id'), uid(c), { title: title!, detail, priority });
+    return c.json({ feature }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const FeaturePatchBody = z.object({
+  title: z.string().min(1).optional(),
+  detail: z.string().nullish(),
+  priority: FEATURE_PRIORITY.optional(),
+});
+
+dashboardRoutes.patch('/ideas/:id/features/:featureId', requireAdmin, async (c) => {
+  const parsed = FeaturePatchBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    const feature = await updateFeature(c.req.param('id'), c.req.param('featureId'), uid(c), parsed.data);
+    return c.json({ feature });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.delete('/ideas/:id/features/:featureId', requireAdmin, async (c) => {
+  try {
+    await deleteFeature(c.req.param('id'), c.req.param('featureId'), uid(c));
+    return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const ReorderBody = z.object({ ids: z.array(z.string().uuid()) });
+
+dashboardRoutes.post('/ideas/:id/features/reorder', requireAdmin, async (c) => {
+  const parsed = ReorderBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    const { ids } = parsed.data;
+    return c.json({ features: await reorderFeatures(c.req.param('id'), uid(c), ids!) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Bloques libres: notas, conversaciones pegadas de un LLM, links, referencias y preguntas abiertas.
+const BlockCreateBody = z.object({
+  kind: BLOCK_KIND,
+  title: z.string().nullish(),
+  body: z.string().nullish(),
+  source: z.string().nullish(),
+  url: z.string().nullish(),
+});
+
+dashboardRoutes.post('/ideas/:id/blocks', requireAdmin, async (c) => {
+  const parsed = BlockCreateBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    const { kind, title, body, source, url } = parsed.data;
+    const block = await addBlock(c.req.param('id'), uid(c), { kind: kind!, title, body, source, url });
+    return c.json({ block }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const BlockPatchBody = z.object({
+  title: z.string().nullish(),
+  body: z.string().nullish(),
+  source: z.string().nullish(),
+  url: z.string().nullish(),
+  resolved: z.boolean().optional(),
+});
+
+dashboardRoutes.patch('/ideas/:id/blocks/:blockId', requireAdmin, async (c) => {
+  const parsed = BlockPatchBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    const block = await updateBlock(c.req.param('id'), c.req.param('blockId'), uid(c), parsed.data);
+    return c.json({ block });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.delete('/ideas/:id/blocks/:blockId', requireAdmin, async (c) => {
+  try {
+    await deleteBlock(c.req.param('id'), c.req.param('blockId'), uid(c));
+    return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Adjuntos (mockups, capturas). Mismo mecanismo que los de tareas: multipart → Storage.
+dashboardRoutes.get('/ideas/:id/attachments', async (c) => {
+  try {
+    return c.json({ attachments: await listIdeaAttachments(c.req.param('id')) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.post('/ideas/:id/attachments', requireAdmin, async (c) => {
+  try {
+    const body = await c.req.parseBody();
+    const file = body['file'];
+    if (!(file instanceof File)) return c.json({ error: { code: 'VALIDATION_ERROR', message: 'falta el archivo' } }, 400);
+    if (!file.type.startsWith('image/')) return c.json({ error: { code: 'VALIDATION_ERROR', message: 'solo se aceptan imágenes' } }, 400);
+    if (file.size > MAX_ATTACH_BYTES) return c.json({ error: { code: 'VALIDATION_ERROR', message: 'la imagen supera 4MB' } }, 400);
+    const buf = Buffer.from(await file.arrayBuffer());
+    const attachment = await addIdeaAttachment(c.req.param('id'), uid(c), {
+      body: buf,
+      name: file.name || 'imagen',
+      contentType: file.type,
+      size: file.size,
+    });
+    return c.json({ attachment }, 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.delete('/ideas/:id/attachments/:attachmentId', requireAdmin, async (c) => {
+  try {
+    await deleteIdeaAttachment(c.req.param('id'), c.req.param('attachmentId'), uid(c));
     return c.json({ ok: true });
   } catch (err) {
     return fail(c, err);
