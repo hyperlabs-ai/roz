@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil, GitBranch, Zap, Eye } from 'lucide-react';
+import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil, Zap, Eye } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { DeltaBadge, MetricCard } from '@/components/MetricCard';
 import { Donut, MiniArea } from '@/components/charts';
-import { UserAvatar, EmptyState, StateBadge, LineDelta, SkillMeters, ErrorCard } from '@/components/bits';
+import { UserAvatar, EmptyState, StateBadge, SkillMeters, ErrorCard } from '@/components/bits';
 import { AvailabilityControl } from '@/components/AvailabilityControl';
 import { DeveloperDialog } from '@/components/DeveloperDialog';
 import { GithubContributions } from '@/components/GithubContributions';
+import { DevActivity } from '@/components/DevActivity';
 import { SizeDistPanel } from '@/components/CommitSizeDist';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,7 +21,7 @@ import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip';
 import { HyperTooltip } from '@/components/HyperTooltip';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperProfile as Profile } from '@/lib/api';
-import { compact, hours, relative } from '@/lib/format';
+import { compact, hours } from '@/lib/format';
 import { comparisonRange } from '@/lib/period';
 import { usePeriod } from '@/lib/usePeriod';
 
@@ -163,35 +164,7 @@ export default function DeveloperProfile() {
           {/* Fila a dos columnas: ambas cards se estiran a la misma altura (grid) y su contenido
               hace scroll interno; cap compartido para cuando ambas son muy largas. Solo en desktop. */}
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <Card className="min-w-0 lg:flex lg:max-h-[480px] lg:flex-col">
-              <CardHeader><CardTitle>Actividad reciente</CardTitle></CardHeader>
-              <CardContent className="lg:flex lg:min-h-0 lg:flex-1 lg:flex-col">
-                {data.activity.length ? (
-                  <div className="space-y-0.5 scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
-                    {data.activity.map((a, i) => (
-                      <div key={i} className="flex items-center gap-3 border-b py-2 last:border-0">
-                        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">
-                          {a.type === 'commit' ? <GitCommitHorizontal className="size-3.5" /> : a.type === 'revision' ? <Eye className="size-3.5 text-chart-2" /> : <CircleCheck className="size-3.5 text-success" />}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm">{a.name}</div>
-                          <div className="mt-0.5 flex items-center gap-2">
-                            {a.repo && (
-                              <span className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground" title={a.repo}>
-                                <GitBranch className="size-3 shrink-0" />
-                                <span className="truncate font-mono">{a.repo.replace('hyperlabs-ai/', '')}</span>
-                              </span>
-                            )}
-                            {a.type === 'commit' && <LineDelta additions={a.additions} deletions={a.deletions} />}
-                          </div>
-                        </div>
-                        <span className="shrink-0 text-xs text-muted-foreground">{relative(a.ts)}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : <EmptyState>Sin actividad en este período</EmptyState>}
-              </CardContent>
-            </Card>
+            <DevActivity devId={data.dev.id} to={period.range.to} />
 
             <Card className="min-w-0 lg:flex lg:max-h-[480px] lg:flex-col">
               <CardHeader>
