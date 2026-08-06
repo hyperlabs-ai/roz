@@ -114,7 +114,19 @@ export interface DeveloperProfile {
   sizeDist: SizeBucket[];
   tickets: { open: Ticket[]; inProgress: Ticket[]; resolved: Ticket[] };
   skills: { skillId: string; tag: string; level: number }[];
-  activity: { type: 'commit' | 'ticket_resolved' | 'revision'; ts: string; name: string; url: string | null; repo: string | null; additions: number | null; deletions: number | null }[];
+}
+
+export interface ActivityItem {
+  type: 'commit' | 'ticket_resolved' | 'revision';
+  ts: string; name: string; url: string | null; repo: string | null;
+  additions: number | null; deletions: number | null;
+}
+
+/** Feed de actividad del perfil: ventana propia (days) anclada al fin del período visto. */
+export interface DeveloperActivity {
+  days: number; from: string; to: string;
+  truncated: boolean;
+  activity: ActivityItem[];
 }
 
 /** Cuadrícula de contribuciones de GitHub (la del perfil público), traída vía GraphQL API. */

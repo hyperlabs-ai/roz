@@ -40,6 +40,8 @@ import {
   getOverview,
   listDevelopers,
   getDeveloper,
+  getDeveloperActivity,
+  ACTIVITY_WINDOWS,
   listProjects,
   getProject,
   createProject,
@@ -90,6 +92,9 @@ function period(c: { req: { query: (k: string) => string | undefined } }): Perio
   if (from && to) return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
   return currentMonthPeriod();
 }
+
+/** Tope de la ventana de actividad: el mayor preset que ofrece el front. */
+const MAX_ACTIVITY_DAYS = Math.max(...ACTIVITY_WINDOWS);
 
 /** Período de comparación desde ?compareFrom=&compareTo=. Ausente → sin comparación (null). */
 function comparePeriod(c: { req: { query: (k: string) => string | undefined } }): Period | null {
@@ -215,6 +220,19 @@ dashboardRoutes.get('/developers/:id', async (c) => {
     const data = await getDeveloper(c.req.param('id'), period(c), comparePeriod(c));
     if (!data) return c.json({ error: { code: 'NOT_FOUND', message: 'developer no existe' } }, 404);
     return c.json(data);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Feed de actividad reciente del developer. Va aparte del perfil porque tiene su propia ventana
+// (?days=, hasta 90) para poder mirar más atrás que el período seleccionado sin recargar la
+// página entera; ?to= la ancla al fin de ese período.
+dashboardRoutes.get('/developers/:id/activity', async (c) => {
+  try {
+    const raw = Number(c.req.query('days'));
+    const days = Number.isFinite(raw) && raw > 0 ? Math.min(MAX_ACTIVITY_DAYS, Math.trunc(raw)) : 30;
+    return c.json(await getDeveloperActivity(c.req.param('id'), days, c.req.query('to')));
   } catch (err) {
     return fail(c, err);
   }

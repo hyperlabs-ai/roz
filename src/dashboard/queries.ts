@@ -921,17 +921,6 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
   const inProgress = open.filter((w) => w.status === 'en_progreso' || w.status === 'en_progreso');
   const openOnly = open.filter((w) => !(w.status === 'en_progreso' || w.status === 'en_progreso'));
 
-  // Actividad reciente = últimos 30 días del período (relativo a period.to para que los
-  // períodos históricos sigan mostrando su propio "último mes").
-  const activityCutoff = new Date(new Date(period.to).getTime() - 30 * 24 * 3600_000).toISOString();
-  const activity = [
-    ...curCommits.filter((c) => c.committed_at).map((c) => ({ type: 'commit' as const, ts: c.committed_at!, name: (c.message ?? '').split('\n')[0], url: c.url, repo: c.repo, additions: c.additions, deletions: c.deletions })),
-    ...curResolved.filter((w) => w.completed_at).map((w) => ({ type: 'ticket_resolved' as const, ts: w.completed_at!, name: `${w.identifier}: ${w.name}`, url: w.url, repo: null, additions: null, deletions: null })),
-    ...curReviews.filter((r) => r.ts).map((r) => ({ type: 'revision' as const, ts: r.ts, name: r.identifier ? `${r.identifier}: ${r.name ?? ''}`.trim() : (r.name ?? (r.prNumber ? `PR #${r.prNumber}` : 'Revisión')), url: r.url, repo: r.repo, additions: null, deletions: null })),
-  ]
-    .filter((a) => a.ts >= activityCutoff)
-    .sort((a, b) => b.ts.localeCompare(a.ts));
-
   return {
     dev: { id: d.id, name: d.name, email: d.email, githubLogin: d.github_login, avatarUrl: avatarFor(d.github_login), active: d.active, availability: d.availability },
     period,
@@ -943,8 +932,56 @@ export async function getDeveloper(devId: string, period: Period, cmp: Period | 
     sizeDist: commitSizeDist(curCommits),
     tickets: { open: openOnly.map(slimTicket), inProgress: inProgress.map(slimTicket), resolved: curResolved.map(slimTicket).slice(0, 20) },
     skills: skills.map((s) => ({ skillId: s.skill_id, tag: s.tag, level: s.level })),
-    activity,
   };
+}
+
+// ---- Actividad reciente de un developer ----
+
+export interface ActivityItem {
+  type: 'commit' | 'ticket_resolved' | 'revision';
+  ts: string;
+  name: string;
+  url: string | null;
+  repo: string | null;
+  additions: number | null;
+  deletions: number | null;
+}
+
+/** Tope del feed: una ventana larga de un dev muy activo puede traer miles de commits y el card
+ *  solo hace scroll sobre lo reciente. Se corta después de ordenar, así el recorte se lleva
+ *  siempre lo más viejo. */
+const ACTIVITY_MAX = 400;
+
+/** Mezcla commits, tickets resueltos y revisiones en una sola línea de tiempo descendente. */
+function activityFeed(commits: CommitRow[], resolved: WorkItemRow[], reviews: DevReview[]): ActivityItem[] {
+  return [
+    ...commits.filter((c) => c.committed_at).map((c) => ({ type: 'commit' as const, ts: c.committed_at!, name: (c.message ?? '').split('\n')[0]!, url: c.url, repo: c.repo, additions: c.additions, deletions: c.deletions })),
+    ...resolved.filter((w) => w.completed_at).map((w) => ({ type: 'ticket_resolved' as const, ts: w.completed_at!, name: `${w.identifier}: ${w.name}`, url: w.url, repo: null, additions: null, deletions: null })),
+    ...reviews.filter((r) => r.ts).map((r) => ({ type: 'revision' as const, ts: r.ts, name: r.identifier ? `${r.identifier}: ${r.name ?? ''}`.trim() : (r.name ?? (r.prNumber ? `PR #${r.prNumber}` : 'Revisión')), url: r.url, repo: r.repo, additions: null, deletions: null })),
+  ]
+    .sort((a, b) => b.ts.localeCompare(a.ts))
+    .slice(0, ACTIVITY_MAX);
+}
+
+export const ACTIVITY_WINDOWS = [7, 14, 30, 90] as const;
+
+/**
+ * Feed de actividad con ventana PROPIA, desacoplada del período del dashboard: con "este mes"
+ * seleccionado a día 3 el perfil mostraba tres días de historial, que es demasiado poco para leer
+ * a un dev. `to` ancla el final de la ventana al fin del período que se está viendo (así un
+ * período histórico sigue mostrando su propia cola en vez de saltar a hoy) y `days` cuánto se
+ * retrocede desde ahí, hasta 90 días.
+ */
+export async function getDeveloperActivity(devId: string, days: number, to?: string) {
+  const end = to ? new Date(to) : new Date();
+  const from = new Date(end.getTime() - days * 24 * 3600_000);
+  const [commits, resolved, reviews] = await Promise.all([
+    commitsInRange(from.toISOString(), end.toISOString(), { devId }),
+    resolvedInRange(from.toISOString(), end.toISOString(), { devId }),
+    reviewsByDev(devId, from.toISOString(), end.toISOString()),
+  ]);
+  const activity = activityFeed(commits, resolved, reviews);
+  return { days, from: from.toISOString(), to: end.toISOString(), truncated: activity.length === ACTIVITY_MAX, activity };
 }
 
 function slimTicket(w: WorkItemRow) {
