@@ -355,6 +355,76 @@ export interface InfraUptimeResponse {
   uptimePct: number | null;
 }
 
+// ---- Cola de procesamiento (outbox) ----
+// Espejo manual de src/dashboard/queue.ts. Los nombres deben calzar EXACTO: TypeScript no compara
+// las dos declaraciones, así que un campo renombrado compila igual y llega vacío en runtime.
+
+export type QueueStatus = 'pending' | 'processing' | 'done' | 'failed' | 'dead';
+export type QueuePhase = 'inflight' | 'resolved' | 'failed';
+/** `unknown` lo produce SOLO el cliente, tras varios sondeos fallidos. El backend nunca lo manda. */
+export type QueueHealth = 'idle' | 'working' | 'delayed' | 'failing' | 'unknown';
+
+/** Persona de un evento. `devId` solo si el login está mapeado a un dev de roz. */
+export interface QueuePerson { login: string | null; name: string; avatarUrl: string | null; devId: string | null }
+export interface QueueTask { identifier: string; title: string | null; url: string | null }
+
+export interface QueueEvent {
+  id: string;
+  /** `string` a propósito: un tipo nuevo en el backend no debe romper la fila. */
+  type: string;
+  status: QueueStatus | string;
+  phase: QueuePhase;
+  attempts: number;
+  maxAttempts: number;
+  error: string | null;
+  createdAt: string;
+  /** Cuándo terminó. null mientras sigue en vuelo. */
+  resolvedAt: string | null;
+  nextAttemptAt: string | null;
+  latencyMs: number | null;
+  // Contexto derivado del payload
+  repo: string | null;
+  sha: string | null;
+  prNumber: number | null;
+  page: number | null;
+  subject: string | null;
+  url: string | null;
+  projectName: string | null;
+  // Las dos personas de un evento: quién lo originó y a quién se le acreditó. Pueden diferir.
+  actor: QueuePerson | null;
+  dev: QueuePerson | null;
+  // Resultado
+  additions: number | null;
+  deletions: number | null;
+  task: QueueTask | null;
+}
+
+export interface QueueCounts {
+  pending: number; processing: number; failed: number; dead: number;
+  ready: number; scheduled: number; stuck: number;
+  doneLastHour: number;
+}
+
+/** Un bucket por minuto (más viejo primero) para el latido del cron. */
+export interface QueueBeat { minute: string; done: number; failed: number }
+
+/** Sondeo ligero: alimenta el indicador del header. */
+export interface QueuePulse {
+  health: QueueHealth;
+  counts: QueueCounts;
+  lastDrainAt: string | null;
+  drainStale: boolean;
+  oldestPendingSec: number | null;
+  inflight: QueueEvent[];
+}
+
+/** Snapshot completo de la sección. */
+export interface QueueResponse extends QueuePulse {
+  beat: QueueBeat[];
+  events: QueueEvent[];
+  truncated: boolean;
+}
+
 export interface SkillCatalogItem { skillId: string; tag: string; description: string | null; devCount: number; avgLevel: number; busFactorRisk: boolean; }
 export interface SkillMatrix {
   devs: { id: string; name: string; avatarUrl: string | null }[];

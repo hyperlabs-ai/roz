@@ -47,7 +47,9 @@ function metric(value: number, compare: number | null): Metric {
 
 const PRIORITY_WEIGHT: Record<string, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
 
-function avatarFor(login: string | null): string | null {
+/** Avatar de GitHub derivado del login (sin tocar la base). Exportado: lo reusa dashboard/queue.ts,
+ *  y duplicarlo haría que las dos copias derivaran. */
+export function avatarFor(login: string | null): string | null {
   return login ? `https://github.com/${login}.png?size=96` : null;
 }
 

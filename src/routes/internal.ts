@@ -7,6 +7,7 @@ import type { RozContext } from '../types/hono.js';
 import { config } from '../config.js';
 import { secureEqual, bearerToken } from '../utils/secure-compare.js';
 import { drainOutbox } from '../events/outbox.js';
+import { recordJobRun } from '../events/job-run.js';
 import { brainSweep } from '../brain/sweep.js';
 import { sendWeeklyDigest, sendDevWeeklyDigests } from '../notify/digest.js';
 import { pollInfra } from '../infra/poll.js';
@@ -23,9 +24,18 @@ function requireCron(c: { req: { header: (k: string) => string | undefined } }):
 // los fallidos cuyo backoff ya venció. Corre cada minuto (vercel.json).
 internalRoutes.get('/drain', async (c) => {
   if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
-  const result = await drainOutbox();
-  c.get('logger')?.info(result, 'outbox drained');
-  return c.json({ ok: true, ...result });
+  // Se registra cada corrida (éxito o fallo) para que el dashboard pueda decir "último ciclo hace
+  // 40s". Con la cola vacía —el caso normal— es la ÚNICA señal de que el cron sigue vivo.
+  const t0 = Date.now();
+  try {
+    const result = await drainOutbox();
+    await recordJobRun('drain', { durationMs: Date.now() - t0, result });
+    c.get('logger')?.info(result, 'outbox drained');
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    await recordJobRun('drain', { durationMs: Date.now() - t0, error: String(err) });
+    throw err;
+  }
 });
 
 // Barrida diaria de consistencia del brain: rellena embeddings faltantes (skills/átomos).

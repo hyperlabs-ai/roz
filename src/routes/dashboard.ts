@@ -79,6 +79,7 @@ import {
   removeDevSkill,
   setDevAvailability,
 } from '../dashboard/queries.js';
+import { queuePulse, listQueue, retryQueueEvent } from '../dashboard/queue.js';
 
 export const dashboardRoutes = new Hono<RozContext>();
 
@@ -363,6 +364,42 @@ dashboardRoutes.post('/projects/:id/resync', requireAdmin, async (c) => {
 dashboardRoutes.get('/sync-status', requireAdmin, async (c) => {
   try {
     return c.json({ syncs: await listActiveSyncs() });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// ---- Cola de procesamiento (outbox) ----
+// SIN requireAdmin a propósito: el pipeline es del equipo entero. requireDashboardAuth (arriba, en
+// el use('*')) ya limita a devs dados de alta, que es el alcance correcto para mirar.
+
+// Sondeo ligero para el indicador del header: vive en todas las pantallas, así que tiene que ser
+// barato. Devuelve salud + lo que está en vuelo, sin historial.
+dashboardRoutes.get('/queue/pulse', async (c) => {
+  try {
+    c.header('Cache-Control', 'no-store');
+    return c.json(await queuePulse());
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Snapshot completo para la sección: cola viva, muertos, historial acreditado y latido del cron.
+dashboardRoutes.get('/queue', async (c) => {
+  try {
+    c.header('Cache-Control', 'no-store');
+    return c.json(await listQueue({ limit: Number(c.req.query('limit')) || undefined }));
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Revivir un evento muerto. Mutación → sí exige admin.
+dashboardRoutes.post('/queue/:id/retry', requireAdmin, async (c) => {
+  try {
+    const ev = await retryQueueEvent(c.req.param('id'));
+    if (!ev) return c.json({ error: { code: 'NOT_FOUND', message: 'el evento no existe o no es reintentable' } }, 404);
+    return c.json({ event: ev });
   } catch (err) {
     return fail(c, err);
   }

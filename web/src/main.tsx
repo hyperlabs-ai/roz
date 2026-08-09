@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from '@/auth/AuthContext';
 import { SyncProvider } from '@/sync/SyncContext';
+import { QueueProvider } from '@/queue/QueueContext';
 import { ThemeProvider } from '@/components/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -43,9 +44,11 @@ root.render(
           <TooltipProvider delayDuration={200}>
             <BrowserRouter>
               <AuthProvider>
-                <SyncProvider>
-                  <App />
-                </SyncProvider>
+                <QueueProvider>
+                  <SyncProvider>
+                    <App />
+                  </SyncProvider>
+                </QueueProvider>
               </AuthProvider>
             </BrowserRouter>
             <Toaster />

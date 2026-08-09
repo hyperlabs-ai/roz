@@ -29,11 +29,27 @@ export type OutboxEventType =
   | 'repo.notify'
   | 'notification.requested';
 
-const MAX_ATTEMPTS = 5;
+/** Intentos antes del dead-letter. Exportado: el dashboard lo muestra como "intento 3/5". */
+export const MAX_ATTEMPTS = 5;
 const BACKOFF_BASE_SEC = 60; // 1er reintento ~2min, luego 4, 8, 16... tope 1h
 // Un evento que lleva más de esto en `processing` se considera huérfano (la función
 // serverless murió a media ejecución; maxDuration son 120s). El reaper lo devuelve a `failed`.
 const STUCK_PROCESSING_SEC = 300;
+
+/**
+ * Mensaje legible de un error cualquiera. `String(err)` sobre un objeto plano —lo que lanzan las
+ * respuestas de error de Supabase y de varias APIs— produce "[object Object]", que es exactamente
+ * lo que quedaba guardado en los eventos muertos: un registro de fallo que no dice qué falló.
+ */
+function errorText(err: unknown): string {
+  if (err instanceof Error) return String(err);
+  if (typeof err === 'string') return err;
+  try {
+    return JSON.stringify(err) ?? String(err);
+  } catch {
+    return String(err);
+  }
+}
 
 export interface EmitOptions {
   /** Llave de deduplicación a nivel de evento (única). */
@@ -129,7 +145,8 @@ async function processEvent(ev: any): Promise<boolean | null> {
   const supabase = db();
 
   // Reclamar: pasar a `processing` solo si sigue pending/failed. Sella `updated_at` para que
-  // el reaper pueda medir cuánto lleva un evento atascado (no hay trigger que lo bumpee).
+  // el reaper pueda medir cuánto lleva un evento atascado (no hay trigger que lo bumpee). En una
+  // fila `processing`, ese `updated_at` ES la hora del claim.
   const { data: claimed } = await supabase
     .from('outbox_event')
     .update({ status: 'processing', updated_at: new Date().toISOString() })
@@ -141,7 +158,12 @@ async function processEvent(ev: any): Promise<boolean | null> {
 
   try {
     await dispatch(ev.type as OutboxEventType, ev.payload as Record<string, unknown>);
-    await supabase.from('outbox_event').update({ status: 'done', error: null }).eq('id', ev.id);
+    // `updated_at` en las transiciones TERMINALES es lo que hace consultable la cola: sin él, un
+    // evento resuelto conserva la marca del claim y el feed de "qué acaba de pasar" se ordena mal.
+    await supabase
+      .from('outbox_event')
+      .update({ status: 'done', error: null, updated_at: new Date().toISOString() })
+      .eq('id', ev.id);
     return true;
   } catch (err) {
     const attempts = (ev.attempts ?? 0) + 1;
@@ -152,14 +174,15 @@ async function processEvent(ev: any): Promise<boolean | null> {
       .update({
         status: dead ? 'dead' : 'failed',
         attempts,
-        error: String(err),
+        error: errorText(err),
         next_attempt_at: new Date(Date.now() + backoffSec * 1000).toISOString(),
+        updated_at: new Date().toISOString(),
       })
       .eq('id', ev.id);
     // Backfill agotado: refleja el fallo en el estado de sync del repo (badge rojo + reintento en UI).
     // Solo al morir, para no parpadear en fallos transitorios que aún se reintentan.
     if (dead && ev.type === 'repo.backfill' && ev.payload?.repo) {
-      await markRepoSyncError(String(ev.payload.repo), String(err)).catch(() => {});
+      await markRepoSyncError(String(ev.payload.repo), errorText(err)).catch(() => {});
     }
     return false;
   }

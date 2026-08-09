@@ -92,6 +92,62 @@ export function stateColorVar(label: string): string {
   return 'hsl(var(--muted-foreground))';
 }
 
+// ---- Cola de procesamiento (outbox) ----
+// Los tipos crudos ('commit.received') no significan nada para quien mira. Cada uno lleva DOS
+// textos: el gerundio de lo que está pasando y el resultado de lo que pasó. El sufijo con la
+// persona ("de Sebas" / "a Sebastián") lo concatena la fila, solo si hay persona.
+
+export type QueueFamily = 'commit' | 'pr' | 'task' | 'doc' | 'repo';
+
+export interface QueueEventLabel {
+  /** Mientras está en cola o ejecutándose. */
+  doing: string;
+  /** Ya resuelto (lo que quedó hecho). */
+  done: string;
+  family: QueueFamily;
+}
+
+export const QUEUE_EVENT: Record<string, QueueEventLabel> = {
+  'commit.received': { doing: 'Procesando commit', done: 'Commit acreditado', family: 'commit' },
+  'commits.backfill': { doing: 'Enumerando commits del push', done: 'Push enumerado', family: 'commit' },
+  'repo.backfill': { doing: 'Importando historial', done: 'Historial importado', family: 'repo' },
+  'branch.created': { doing: 'Ligando la rama a su tarea', done: 'Rama ligada', family: 'pr' },
+  'pr.opened': { doing: 'Ligando la PR a su tarea', done: 'PR abierta y ligada', family: 'pr' },
+  'pr.reviewed': { doing: 'Registrando la revisión', done: 'Revisión registrada', family: 'pr' },
+  'pr.merged': { doing: 'Documentando la PR', done: 'PR integrada', family: 'pr' },
+  'work_item.created': { doing: 'Avisando al responsable', done: 'Tarea creada', family: 'task' },
+  'work_item.assigned': { doing: 'Avisando al responsable', done: 'Tarea asignada', family: 'task' },
+  'work_item.done': { doing: 'Documentando el trabajo', done: 'Tarea documentada', family: 'task' },
+  'change.documented': { doing: 'Notificando los cambios', done: 'Cambios documentados', family: 'doc' },
+  'repo.detected': { doing: 'Vinculando el repo', done: 'Repo vinculado', family: 'repo' },
+  'repo.renamed': { doing: 'Moviendo el historial', done: 'Repo renombrado', family: 'repo' },
+  'repo.notify': { doing: 'Avisando al equipo', done: 'Aviso enviado', family: 'repo' },
+  'notification.requested': { doing: 'Enviando la notificación', done: 'Notificación enviada', family: 'doc' },
+  // Heredados de Linear (previos al teardown). Ya no se emiten, pero el histórico del outbox tiene
+  // cientos y sin esto se leerían como el string crudo. Mismo criterio que STATE_LABEL.
+  'linear.issue_upserted': { doing: 'Sincronizando ticket', done: 'Ticket sincronizado (Linear)', family: 'task' },
+  'linear.issue_removed': { doing: 'Quitando ticket', done: 'Ticket eliminado (Linear)', family: 'task' },
+  'linear.project_upserted': { doing: 'Sincronizando proyecto', done: 'Proyecto sincronizado (Linear)', family: 'repo' },
+};
+
+/** Clases COMPLETAS y estáticas: Tailwind no detecta las construidas en runtime. */
+export const QUEUE_FAMILY: Record<QueueFamily, string> = {
+  commit: 'bg-chart-1/12 text-chart-1',
+  pr: 'bg-chart-3/12 text-chart-3',
+  task: 'bg-chart-4/12 text-chart-4',
+  doc: 'bg-chart-2/12 text-chart-2',
+  repo: 'bg-muted text-muted-foreground',
+};
+
+/** Salud de la cola. Mismo shape que el STATUS de Infra, para que las dos vistas se lean igual. */
+export const QUEUE_HEALTH: Record<string, { label: string; dot: string; pill: string }> = {
+  idle: { label: 'Al día', dot: 'bg-success', pill: 'bg-success/12 text-success' },
+  working: { label: 'Procesando', dot: 'bg-primary', pill: 'bg-primary/12 text-primary' },
+  delayed: { label: 'Retrasada', dot: 'bg-warning', pill: 'bg-warning/12 text-warning' },
+  failing: { label: 'Con fallas', dot: 'bg-destructive', pill: 'bg-destructive/12 text-destructive' },
+  unknown: { label: 'Sin contacto', dot: 'bg-muted-foreground/40', pill: 'bg-muted text-muted-foreground' },
+};
+
 /** Origen del ticket (cómo nació el trabajo). */
 export const SOURCE_LABEL: Record<string, string> = { pr: 'Pull Request', commit: 'Commit', native: 'Nativa', linear: 'Linear' };
 export const SOURCE_COLOR: Record<string, string> = {
