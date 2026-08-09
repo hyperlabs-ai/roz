@@ -139,6 +139,21 @@ export const QUEUE_FAMILY: Record<QueueFamily, string> = {
   repo: 'bg-muted text-muted-foreground',
 };
 
+/**
+ * Cómo se nombra un evento que NO llegó a completarse (fallido o muerto).
+ *
+ * Sin esto, un evento muerto mostraba su etiqueta de éxito —"Commit acreditado", "Tarea
+ * documentada"— afirmando exactamente lo contrario de lo que pasó, y justo en la lista que existe
+ * para diagnosticar fallos. Se agrupa por familia porque el detalle real lo da el error de abajo.
+ */
+export const QUEUE_FAMILY_FAILED: Record<QueueFamily, string> = {
+  commit: 'Commit sin procesar',
+  pr: 'PR sin procesar',
+  task: 'Tarea sin documentar',
+  doc: 'Aviso sin enviar',
+  repo: 'Repo sin sincronizar',
+};
+
 /** Salud de la cola. Mismo shape que el STATUS de Infra, para que las dos vistas se lean igual. */
 export const QUEUE_HEALTH: Record<string, { label: string; dot: string; pill: string }> = {
   idle: { label: 'Al día', dot: 'bg-success', pill: 'bg-success/12 text-success' },

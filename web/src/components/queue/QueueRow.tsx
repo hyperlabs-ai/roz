@@ -5,7 +5,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { UserAvatar, LineDelta } from '@/components/bits';
-import { QUEUE_EVENT, QUEUE_FAMILY, type QueueFamily } from '@/lib/labels';
+import { QUEUE_EVENT, QUEUE_FAMILY, QUEUE_FAMILY_FAILED, type QueueFamily } from '@/lib/labels';
 import { relative } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { QueueEvent } from '@/lib/api';
@@ -107,7 +107,14 @@ export function QueueRow({ ev, isNew }: { ev: QueueEvent; isNew?: boolean }) {
   const family = familyOf(ev.type);
   const person = personOf(ev);
   const inflight = ev.phase === 'inflight';
-  const text = inflight ? label?.doing ?? ev.type : label?.done ?? ev.type;
+  // Tres estados, no dos: un evento fallido NO puede mostrar la etiqueta de éxito. Decir "Commit
+  // acreditado" sobre algo que agotó sus reintentos afirma lo contrario de lo que pasó.
+  const text =
+    ev.phase === 'failed'
+      ? QUEUE_FAMILY_FAILED[family]
+      : inflight
+        ? label?.doing ?? ev.type
+        : label?.done ?? ev.type;
 
   // Quien lo empujó no siempre es a quien se le acredita (un squash-merge es el caso típico).
   // Decirlo explícitamente es justo el punto ciego de atribución que esta vista viene a cerrar.
@@ -153,7 +160,7 @@ export function QueueRow({ ev, isNew }: { ev: QueueEvent; isNew?: boolean }) {
           {person && <span className="truncate">{person.name}</span>}
           {reattributed && <span className="truncate">· lo empujó {reattributed.name}</span>}
         </div>
-        {ev.status === 'dead' && ev.error && (
+        {ev.phase === 'failed' && ev.error && (
           <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-destructive">{ev.error}</p>
         )}
       </div>

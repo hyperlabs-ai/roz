@@ -119,7 +119,11 @@ async function upsertAtom(wi: {
       scope: 'project',
       project_id: wi.project_id,
       status: 'active',
-      name,
+      // OJO: la columna es `title`. La migración 0020 renombró work_item.title→name, y el
+      // renombrado se coló también aquí — pero knowledge_atom NUNCA se renombró (sigue con
+      // `title`, igual que la leen retrieval.ts y sweep.ts). El insert fallaba siempre, así que
+      // ninguna tarea documentada por primera vez llegaba al brain.
+      title: name,
       body,
       provenance: [wi.identifier],
       embedding: embeddingLiteral,
