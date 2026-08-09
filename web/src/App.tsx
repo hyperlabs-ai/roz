@@ -11,6 +11,7 @@ import DeveloperProfile from '@/pages/DeveloperProfile';
 import Projects from '@/pages/Projects';
 import ProjectDetail from '@/pages/ProjectDetail';
 import Infra from '@/pages/Infra';
+import Activity from '@/pages/Activity';
 import Ideas from '@/pages/Ideas';
 import Tasks from '@/pages/Tasks';
 import Tickets from '@/pages/Tickets';
@@ -113,6 +114,8 @@ export default function App() {
           <Route path="projects" element={<Projects />} />
           <Route path="projects/:id" element={<ProjectDetail />} />
           <Route path="infra" element={<Infra />} />
+          {/* A propósito FUERA del nav lateral: se llega desde el pulso del header. */}
+          <Route path="activity" element={<Activity />} />
           <Route path="ideas" element={<Ideas />} />
           <Route path="tasks" element={<Tasks />} />
           <Route path="tickets" element={<Tickets />} />

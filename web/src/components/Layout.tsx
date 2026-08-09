@@ -6,6 +6,7 @@ import { usePush } from '@/lib/usePush';
 import { useTheme } from '@/components/theme';
 import { UserAvatar } from '@/components/bits';
 import { RozLogo } from '@/components/RozLogo';
+import { QueuePill } from '@/components/QueuePill';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -177,13 +178,15 @@ export function Layout({ title, subtitle, actions, children }: { title: string; 
               <h1 className="truncate text-base font-semibold leading-tight tracking-tight md:text-lg">{title}</h1>
               {subtitle && <p className="truncate text-xs text-muted-foreground md:text-[13px]">{subtitle}</p>}
             </div>
-            {/* Desktop: acciones + tema en línea */}
+            {/* Desktop: acciones + pulso de la cola + tema en línea */}
             <div className="hidden shrink-0 items-center gap-2 sm:flex">
               {actions}
+              <QueuePill />
               <ThemeToggle />
             </div>
-            {/* Móvil: solo el toggle de tema aquí */}
-            <div className="shrink-0 sm:hidden">
+            {/* Móvil: el pulso (colapsado a solo el avatar) y el toggle de tema */}
+            <div className="flex shrink-0 items-center gap-1 sm:hidden">
+              <QueuePill />
               <ThemeToggle />
             </div>
           </div>
