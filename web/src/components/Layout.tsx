@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb } from 'lucide-react';
+import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb, SquareActivity, SquareActivityIcon, Activity } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { usePush } from '@/lib/usePush';
 import { useTheme } from '@/components/theme';
@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 const NAV = [
   { to: '/app', label: 'Resumen', icon: LayoutDashboard, end: true },
   { to: '/app/developers', label: 'Developers', icon: Users, end: false },
+  { to: '/app/activity', label: 'Actividad', icon: Activity, end: false },
   { to: '/app/projects', label: 'Proyectos', icon: FolderGit2, end: false },
   { to: '/app/infra', label: 'Infraestructura', icon: Server, end: false },
   { to: '/app/ideas', label: 'Ideas', icon: Lightbulb, end: false },
