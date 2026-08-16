@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb, SquareActivity, SquareActivityIcon, Activity } from 'lucide-react';
+import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb, Activity } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { usePush } from '@/lib/usePush';
 import { useTheme } from '@/components/theme';
