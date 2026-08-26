@@ -431,3 +431,49 @@ export interface SkillMatrix {
   skills: { id: string; tag: string }[];
   cells: { devId: string; skillId: string; level: number }[];
 }
+
+// ---- Presencia desde Google Calendar (espejo manual de src/calendar/presence.ts) ----
+// Los nombres deben calzar EXACTO con lo que devuelve el backend: TypeScript no compara las dos
+// declaraciones, así que un campo mal escrito compila igual y llega `undefined` en runtime.
+
+export type PresenceStatus = 'busy' | 'free' | 'unknown';
+
+/** Un bloque de la agenda para el desglose al pasar el mouse. */
+export interface UpcomingBlock {
+  title: string | null;
+  startsAt: string;
+  endsAt: string;
+  /** En curso ahora mismo. */
+  current: boolean;
+}
+
+export interface DevPresence {
+  devId: string;
+  status: PresenceStatus;
+  /** Título del evento en curso (o del próximo, si está libre). */
+  title: string | null;
+  /** Fin de la racha de ocupación, con las juntas pegadas ya colapsadas. */
+  busyUntil: string | null;
+  nextStartsAt: string | null;
+  nextTitle: string | null;
+  /**
+   * Lo que queda del día. El resumen colapsa juntas pegadas a propósito, así que por sí solo no
+   * responde "¿a qué horas exactamente?" — esta lista sí, y es la que alimenta el hover.
+   */
+  upcoming: UpcomingBlock[];
+  /** El sondeo lleva demasiado sin correr: el indicador se apaga en vez de mentir. */
+  stale: boolean;
+}
+
+export interface PresenceResponse { devs: DevPresence[] }
+
+/** Estado de MI conexión con Google (tarjeta de Configuración). */
+export interface CalendarConnection {
+  /** Si este deploy tiene credenciales de Google. Sin esto no hay nada que conectar. */
+  available: boolean;
+  connected: boolean;
+  googleEmail: string | null;
+  /** 'active' | 'revoked' | 'error' — `revoked` es el que pide reconectar. */
+  status: string | null;
+  lastSyncedAt: string | null;
+}

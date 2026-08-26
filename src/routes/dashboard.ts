@@ -30,6 +30,13 @@ import {
   addIdeaAttachment,
   deleteIdeaAttachment,
 } from '../dashboard/ideas.js';
+import { authorizeUrl, googleConfigured } from '../adapters/google-calendar.js';
+import {
+  createOAuthState,
+  disconnectAccount,
+  getAccount as getCalendarAccount,
+} from '../calendar/accounts.js';
+import { getTeamPresence } from '../calendar/presence.js';
 import { pushEnabled } from '../adapters/web-push.js';
 import { savePushSubscription, deletePushSubscription } from '../notify/push.js';
 import { getContributionCalendar, getRepo, listOrgRepos } from '../adapters/github.js';
@@ -364,6 +371,66 @@ dashboardRoutes.post('/projects/:id/resync', requireAdmin, async (c) => {
 dashboardRoutes.get('/sync-status', requireAdmin, async (c) => {
   try {
     return c.json({ syncs: await listActiveSyncs() });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// ---- Presencia desde Google Calendar ----
+// SIN requireAdmin, como la cola: saber quién está en junta es del equipo entero.
+
+// Estado de todos los devs con calendario conectado. Lo sondea el dashboard cada minuto, así que
+// no toca Google: se resuelve contra los bloques que cacheó el cron.
+dashboardRoutes.get('/presence', async (c) => {
+  try {
+    c.header('Cache-Control', 'no-store');
+    return c.json({ devs: await getTeamPresence() });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Estado de MI conexión (para la tarjeta de Configuración).
+dashboardRoutes.get('/calendar/status', async (c) => {
+  try {
+    const user = c.get('user')!;
+    const account = await getCalendarAccount(user.devId);
+    return c.json({
+      available: googleConfigured(),
+      connected: !!account,
+      googleEmail: account?.google_email ?? null,
+      status: account?.status ?? null,
+      lastSyncedAt: account?.last_synced_at ?? null,
+    });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Arranca el flujo: crea el `state` de un solo uso y devuelve la URL de Google. El SPA navega ahí.
+// Es POST y no GET porque crea estado en la base, y solo puede conectar SU propio calendario: el
+// dev sale del JWT, nunca del body.
+dashboardRoutes.post('/calendar/connect', async (c) => {
+  try {
+    if (!googleConfigured()) {
+      return c.json(
+        { error: { code: 'NOT_CONFIGURED', message: 'Google Calendar no está configurado en este deploy' } },
+        503,
+      );
+    }
+    const user = c.get('user')!;
+    const state = await createOAuthState(user.devId, user.id);
+    return c.json({ url: authorizeUrl(state) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Desconectar: revoca en Google y borra la cuenta junto con sus bloques.
+dashboardRoutes.delete('/calendar', async (c) => {
+  try {
+    const user = c.get('user')!;
+    return c.json({ disconnected: await disconnectAccount(user.devId) });
   } catch (err) {
     return fail(c, err);
   }

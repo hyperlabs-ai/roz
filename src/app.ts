@@ -10,6 +10,7 @@ import { webhookRoutes } from './routes/webhooks.js';
 import { intakeRoutes } from './routes/intake.js';
 import { internalRoutes } from './routes/internal.js';
 import { dashboardRoutes } from './routes/dashboard.js';
+import { calendarOauthRoutes } from './routes/calendar-oauth.js';
 
 const app = new Hono<RozContext>();
 
@@ -28,6 +29,9 @@ app.route('/webhooks', webhookRoutes);
 app.route('/v1/intake', intakeRoutes);
 // Dashboard de visibilidad de ingeniería (auth de OpsHyper). Lo consume el SPA en web/.
 app.route('/api/dashboard', dashboardRoutes);
+// Callback de OAuth de Google (calendario). Va aparte de /api/dashboard porque ese router exige
+// Bearer en TODO, y esto llega como navegación del browser: se autentica con el `state` de un solo uso.
+app.route('/api/calendar', calendarOauthRoutes);
 // Drenado de la cola (outbox) y barridas — disparado por Vercel Cron.
 app.route('/v1/internal', internalRoutes);
 

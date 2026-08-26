@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from '@/auth/AuthContext';
 import { SyncProvider } from '@/sync/SyncContext';
 import { QueueProvider } from '@/queue/QueueContext';
+import { PresenceProvider } from '@/presence/PresenceContext';
 import { ThemeProvider } from '@/components/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -45,9 +46,11 @@ root.render(
             <BrowserRouter>
               <AuthProvider>
                 <QueueProvider>
-                  <SyncProvider>
-                    <App />
-                  </SyncProvider>
+                  <PresenceProvider>
+                    <SyncProvider>
+                      <App />
+                    </SyncProvider>
+                  </PresenceProvider>
                 </QueueProvider>
               </AuthProvider>
             </BrowserRouter>
