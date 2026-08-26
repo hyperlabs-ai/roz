@@ -196,14 +196,28 @@ export function stateRejection(row: OAuthStateRow | null, now = new Date()): str
 }
 
 /**
+ * Resultado de consumir un `state`.
+ *
+ * Un objeto plano con campos anulables en vez de una unión discriminada: el compilador con el que
+ * Vercel construye la función no estrecha `{ok:true}|{ok:false}` igual que el tsc local, y el deploy
+ * se caía por un tipo que aquí compilaba limpio. El llamador comprueba `row` de todos modos, que es
+ * la garantía que de verdad importa.
+ */
+export interface ConsumedState {
+  ok: boolean;
+  /** La fila reclamada, solo cuando `ok`. */
+  row: OAuthStateRow | null;
+  /** Por qué se rechazó, solo cuando no `ok`. */
+  reason: string | null;
+}
+
+/**
  * Consume el `state`: lo valida y lo marca usado en un solo paso.
  *
  * El `update ... is('used_at', null)` es lo que hace atómico el consumo: si dos callbacks llegan a
  * la vez con el mismo state (un doble clic, un reintento del browser), solo uno actualiza la fila.
  */
-export async function consumeOAuthState(
-  state: string,
-): Promise<{ ok: true; row: OAuthStateRow } | { ok: false; reason: string }> {
+export async function consumeOAuthState(state: string): Promise<ConsumedState> {
   const { data } = await db()
     .from('oauth_state')
     .select('state, dev_id, auth_user_id, expires_at, used_at')
@@ -212,7 +226,7 @@ export async function consumeOAuthState(
 
   const row = (data as OAuthStateRow | null) ?? null;
   const rejection = stateRejection(row);
-  if (rejection || !row) return { ok: false, reason: rejection ?? 'desconocido' };
+  if (rejection || !row) return { ok: false, row: null, reason: rejection ?? 'desconocido' };
 
   const { data: claimed } = await db()
     .from('oauth_state')
@@ -221,9 +235,9 @@ export async function consumeOAuthState(
     .is('used_at', null)
     .select('state')
     .maybeSingle();
-  if (!claimed) return { ok: false, reason: 'ya usado' };
+  if (!claimed) return { ok: false, row: null, reason: 'ya usado' };
 
-  return { ok: true, row };
+  return { ok: true, row, reason: null };
 }
 
 /** Limpia los states vencidos. Lo llama el mismo cron del sondeo; no merece un cron propio. */

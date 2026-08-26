@@ -35,29 +35,32 @@ calendarOauthRoutes.get('/callback', async (c) => {
   if (!code || !state) return c.redirect(back('state'), 302);
 
   const claimed = await consumeOAuthState(state);
-  if (!claimed.ok) {
+  // Se comprueba `row` además de `ok`: es lo que de verdad hace falta abajo, y no depende de que el
+  // compilador sepa estrechar el tipo.
+  if (!claimed.ok || !claimed.row) {
     logger?.warn({ reason: claimed.reason }, 'state de OAuth rechazado');
     return c.redirect(back('state'), 302);
   }
+  const claim = claimed.row;
 
   try {
     const tokens = await exchangeCode(code);
     const email = await primaryEmail(tokens.accessToken);
     await saveAccount({
-      devId: claimed.row.dev_id,
-      authUserId: claimed.row.auth_user_id,
+      devId: claim.dev_id,
+      authUserId: claim.auth_user_id,
       googleEmail: email,
       tokens,
     });
 
     // Primer sondeo inmediato: sin esto, quien acaba de conectar mira un dashboard sin su estado
     // hasta que corra el cron. Best-effort — si falla, el cron lo recoge en la siguiente pasada.
-    const account = await getAccount(claimed.row.dev_id);
+    const account = await getAccount(claim.dev_id);
     if (account) await syncDevCalendar(account);
 
     return c.redirect(back('ok'), 302);
   } catch (err) {
-    logger?.error({ err, devId: claimed.row.dev_id }, 'no se pudo completar el OAuth de Google');
+    logger?.error({ err, devId: claim.dev_id }, 'no se pudo completar el OAuth de Google');
     return c.redirect(back('error'), 302);
   }
 });
