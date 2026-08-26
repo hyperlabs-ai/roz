@@ -5,7 +5,7 @@
 import { db } from '../db/supabase.js';
 import { notifyAssignment, notifyChangesDocumented, notifyRepoDetected } from '../notify/notifications.js';
 import { reconcileCommit, backfillPushCommits } from '../reconcile/commits.js';
-import { backfillRepoCommits, markRepoSyncError } from '../reconcile/backfill.js';
+import { backfillRepoCommits, markRepoSyncError, projectIdForRepo } from '../reconcile/backfill.js';
 import { reconcilePullRequest } from '../reconcile/pull-request.js';
 import { handleBranchCreated, handlePrOpened, handlePrReviewed } from '../reconcile/task-events.js';
 import { handleRepoDetected, handleRepoRenamed } from '../reconcile/repos.js';
@@ -222,7 +222,9 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
     // procesa una página por evento; si vino llena, se re-encola la siguiente (chunking acotado).
     case 'repo.backfill': {
       const repo = String(payload.repo ?? '');
-      const projectId = (payload.projectId as string | null) ?? null;
+      // Sin proyecto en el payload (backfill disparado por webhook, que solo conoce el repo) se
+      // resuelve aquí; si no, los commits entrarían sin proyecto y no sumarían a ninguno.
+      const projectId = ((payload.projectId as string | null) ?? null) || (await projectIdForRepo(repo));
       const sinceISO = String(payload.sinceISO ?? '');
       const page = Number(payload.page ?? 1);
       const runKey = String(payload.runKey ?? '1');

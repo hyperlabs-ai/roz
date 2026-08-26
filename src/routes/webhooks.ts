@@ -6,6 +6,7 @@ import type { RozContext } from '../types/hono.js';
 import { config } from '../config.js';
 import { verifyGithub } from '../utils/webhooks.js';
 import { emit } from '../events/outbox.js';
+import { BACKFILL_DAYS } from '../reconcile/backfill.js';
 
 export const webhookRoutes = new Hono<RozContext>();
 
@@ -140,6 +141,29 @@ webhookRoutes.post('/github', async (c) => {
       { repo, ref: payload.ref, githubId: repoId, actor: actorOf(payload.sender?.login), subject: payload.ref },
       { idempotencyKey: `branch:${repo}:${payload.ref}` },
     );
+
+    // Creación de la rama POR DEFECTO = el repo acaba de recibir su primer contenido. Vale la pena
+    // un backfill aquí porque es el punto ciego del flujo en vivo: un repo se vincula vacío (que es
+    // el momento natural de vincularlo, antes de que exista el código), su backfill inicial no
+    // encuentra nada, y el primer push no siempre deja `commit.received` — pasó con vision-180, cuyo
+    // primer commit no quedó registrado pese a que sí llegó el `create`.
+    //
+    // No se conoce el proyecto aquí; lo resuelve el drain desde roz.project_repo. Idempotente por
+    // llave (una vez por repo) y por (repo, sha) al persistir, así que no duplica nada.
+    const defBranch = payload.repository?.default_branch;
+    if (defBranch && payload.ref === defBranch) {
+      await emit(
+        'repo.backfill',
+        {
+          repo,
+          projectId: null,
+          sinceISO: new Date(Date.now() - BACKFILL_DAYS * 86_400_000).toISOString(),
+          page: 1,
+          runKey: 'first-push',
+        },
+        { idempotencyKey: `repo-backfill:${repo}:first-push:1` },
+      );
+    }
   }
 
   // PR abierta/reabierta/lista-para-review: si referencia una tarea, ésta pasa a "En revisión" y se

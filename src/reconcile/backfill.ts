@@ -56,6 +56,21 @@ export interface BackfillRepoResult {
   nextPage: number;
 }
 
+/**
+ * Proyecto al que está vinculado un repo, o null.
+ *
+ * Lo necesita el backfill disparado desde un webhook: ahí solo se conoce el repo, no el proyecto, y
+ * sin esto los commits entrarían con `project_id` null y no sumarían a ningún proyecto.
+ */
+export async function projectIdForRepo(repo: string): Promise<string | null> {
+  const { data } = await db()
+    .from('project_repo')
+    .select('project_id')
+    .eq('repo', repo.toLowerCase())
+    .maybeSingle();
+  return (data as { project_id: string | null } | null)?.project_id ?? null;
+}
+
 /** Actualiza el estado de sync del repo (best-effort: si las columnas no existen, no rompe). */
 async function updateRepoSync(repo: string, patch: Record<string, unknown>): Promise<void> {
   await db()
@@ -94,6 +109,9 @@ export async function backfillRepoCommits(input: BackfillRepoInput): Promise<Bac
     await updateRepoSync(input.repo, {
       sync_status: 'syncing',
       sync_pages: page,
+      // Limpiar el error al reanudar: sin esto una corrida exitosa dejaba el repo en `done` pero
+      // arrastrando el mensaje del fallo anterior, y la UI seguía mostrando un problema resuelto.
+      sync_error: null,
       ...(page === 1 ? { sync_total_pages: lastPage } : {}),
     });
   }
