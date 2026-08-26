@@ -243,6 +243,11 @@ export async function listRepoCommits(repo: string, sinceISO: string, page = 1):
     );
   } catch (e) {
     if (String(e).includes('404')) return { items: [], lastPage: page }; // repo sin acceso
+    // 409 en este endpoint solo significa "Git Repository is empty": un repo recién creado al que
+    // nadie ha hecho push. No hay historial que traer, y no es un fallo transitorio — reintentarlo
+    // con backoff hasta agotar los intentos deja un evento muerto por algo que no está roto. El
+    // primer push llega por webhook, así que no se pierde nada.
+    if (String(e).includes('409')) return { items: [], lastPage: page }; // repo vacío
     throw e;
   }
   const items = res.data.map((d) => ({

@@ -7,6 +7,7 @@ import { DeltaBadge, MetricCard } from '@/components/MetricCard';
 import { Donut, MiniArea } from '@/components/charts';
 import { UserAvatar, EmptyState, StateBadge, SkillMeters, ErrorCard } from '@/components/bits';
 import { AvailabilityControl } from '@/components/AvailabilityControl';
+import { PresencePanel } from '@/components/PresencePanel';
 import { DeveloperDialog } from '@/components/DeveloperDialog';
 import { GithubContributions } from '@/components/GithubContributions';
 import { DevActivity } from '@/components/DevActivity';
@@ -24,12 +25,14 @@ import { apiGet, type DeveloperProfile as Profile } from '@/lib/api';
 import { compact, hours } from '@/lib/format';
 import { comparisonRange } from '@/lib/period';
 import { usePeriod } from '@/lib/usePeriod';
+import { useDevPresence } from '@/presence/PresenceContext';
 
 export default function DeveloperProfile() {
   const { id } = useParams();
   const [period, setPeriod] = usePeriod();
   const [editOpen, setEditOpen] = useState(false);
   const { user } = useAuth();
+  const presence = useDevPresence(id);
   const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const compare = useMemo(() => comparisonRange(period.range, period.compare, period.preset), [period.range, period.compare, period.preset]);
   const { data, loading, error, reload } = useApi<Profile>(
@@ -68,14 +71,25 @@ export default function DeveloperProfile() {
             <CardContent className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center sm:gap-6">
               {/* Identidad */}
               <div className="flex min-w-0 items-center gap-4 sm:w-56 sm:shrink-0">
-                <UserAvatar url={data.dev.avatarUrl} name={data.dev.name} className="size-14 shrink-0 ring-2 ring-border" />
+                <UserAvatar
+                  url={data.dev.avatarUrl}
+                  name={data.dev.name}
+                  className="size-14 shrink-0 ring-2 ring-border"
+                  presence={presence?.status}
+                  presenceTitle={presence?.title ?? undefined}
+                />
                 <div className="min-w-0">
                   <div className="truncate text-lg font-semibold">{data.dev.name}</div>
                   <div className="truncate text-sm text-muted-foreground">{data.dev.email ?? '—'}</div>
                 </div>
               </div>
 
-              {/* Commits por día, compacto: contexto rápido sin robar espacio */}
+              {/* Módulo propio, a la altura del de hyper points y el de disponibilidad. La agenda
+                  real y la carga declarada son hermanas: una la reporta el calendario, la otra la
+                  declara la persona. */}
+              <PresencePanel devId={data.dev.id} className="w-full sm:w-60 sm:shrink-0" />
+
+              {/* Commits por día: contexto de apoyo, toma el ancho que sobre. */}
               <div className="min-w-0 sm:flex-1">
                 <MiniArea data={data.commitTrend} height={52} />
                 <div className="mt-0.5 text-center text-[10px] text-muted-foreground">commits por día</div>

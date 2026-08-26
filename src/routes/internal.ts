@@ -11,6 +11,7 @@ import { recordJobRun } from '../events/job-run.js';
 import { brainSweep } from '../brain/sweep.js';
 import { sendWeeklyDigest, sendDevWeeklyDigests } from '../notify/digest.js';
 import { pollInfra } from '../infra/poll.js';
+import { pollCalendars } from '../calendar/poll.js';
 import { reconcileOpsBridge, auditOpsBridge } from '../reconcile/ops-bridge.js';
 
 export const internalRoutes = new Hono<RozContext>();
@@ -53,6 +54,25 @@ internalRoutes.get('/infra-poll', async (c) => {
   const result = await pollInfra();
   c.get('logger')?.info(result, 'infra polled');
   return c.json({ ok: true, ...result });
+});
+
+// Sondeo de Google Calendar: cachea la agenda de cada dev conectado en roz.calendar_block, para que
+// el dashboard derive "ocupado hasta las 11:30" sin pegarle a Google.
+//
+// Se registra la corrida por la misma razón que el drain: un calendario que dejó de sincronizarse
+// se ve idéntico a un equipo que no tiene juntas, y solo el latido distingue los dos casos.
+internalRoutes.get('/calendar-poll', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  const t0 = Date.now();
+  try {
+    const result = await pollCalendars();
+    await recordJobRun('calendar-poll', { durationMs: Date.now() - t0, result });
+    c.get('logger')?.info(result, 'calendars polled');
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    await recordJobRun('calendar-poll', { durationMs: Date.now() - t0, error: String(err) });
+    throw err;
+  }
 });
 
 // Respaldo del puente Ops ⇄ roz. El camino normal son los triggers (migración 0021); esto solo

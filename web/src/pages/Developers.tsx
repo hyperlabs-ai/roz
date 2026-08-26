@@ -5,6 +5,7 @@ import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { UserAvatar, EmptyState, SkillChip, ErrorCard } from '@/components/bits';
 import { DeveloperDialog } from '@/components/DeveloperDialog';
+import { PresencePanel } from '@/components/PresencePanel';
 import { useAuth } from '@/auth/AuthContext';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -18,6 +19,7 @@ import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperListItem } from '@/lib/api';
 import { compact } from '@/lib/format';
 import { usePeriod } from '@/lib/usePeriod';
+import { useDevPresence } from '@/presence/PresenceContext';
 import { cn } from '@/lib/utils';
 
 type RankMetric = 'hyper' | 'commits' | 'lines';
@@ -236,16 +238,25 @@ function TopCard({ d, rank, metric, onClick }: { d: DeveloperListItem; rank: num
 }
 
 function DevRow({ d, onClick }: { d: DeveloperListItem; onClick: () => void }) {
+  const presence = useDevPresence(d.id);
   return (
     <Card className="group flex cursor-pointer flex-col gap-4 p-4 transition-shadow hover:shadow-md lg:flex-row lg:items-center" onClick={onClick}>
       {/* Identidad (izquierda) */}
+      {/* Identidad tal como estaba. El punto del avatar da la señal de un vistazo; el detalle del
+          calendario vive en la columna derecha, donde hay ancho horizontal libre. */}
       <div className="flex items-center gap-3 lg:w-56 lg:shrink-0">
-        <UserAvatar url={d.avatarUrl} name={d.name} className="size-11 shrink-0" />
+        <UserAvatar url={d.avatarUrl} name={d.name} className="size-11 shrink-0" presence={presence?.status} presenceTitle={presence?.title ?? undefined} />
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold">{d.name}</div>
           {d.githubLogin && <div className="truncate text-xs text-muted-foreground">@{d.githubLogin}</div>}
         </div>
       </div>
+
+      {/* Calendario: pegado a la identidad, antes de las métricas. Columna propia y de ancho fijo —
+          metido dentro de otra columna se comprimía y el motivo (un título de calendario, que es
+          largo) se recortaba a nada. Fija además la posición entre filas, que es lo que hace
+          escaneable una lista. */}
+      <PresencePanel devId={d.id} className="lg:w-56 lg:shrink-0" />
 
       {/* Contribuciones destacadas (centro) */}
       <div className="lg:w-[27rem] lg:shrink-0">
@@ -265,9 +276,11 @@ function DevRow({ d, onClick }: { d: DeveloperListItem; onClick: () => void }) {
 
       {/* Skills + secundarios (derecha, ocupa el resto) */}
       <div className="min-w-0 flex-1">
+        {/* Top 4, no 5: el calendario se llevó una columna y las cinco skills desbordaban. El
+            perfil del dev tiene la lista completa. */}
         {d.topSkills.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            {d.topSkills.slice(0, 5).map((s) => <SkillChip key={s.tag} tag={s.tag} level={s.level} />)}
+            {d.topSkills.slice(0, 4).map((s) => <SkillChip key={s.tag} tag={s.tag} level={s.level} />)}
           </div>
         )}
         <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">

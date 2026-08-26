@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { initials } from '@/lib/format';
-import { STATE_LABEL, stateBadgeVariant, PRIO_DOT } from '@/lib/labels';
+import { STATE_LABEL, stateBadgeVariant, PRIO_DOT, DEV_PRESENCE } from '@/lib/labels';
 
 /** Barra de progreso que crece suave desde 0 al montar (y anima cambios de valor). `pct` 0–100. */
 export function ProgressBar({ pct, className, barClassName }: { pct: number; className?: string; barClassName?: string }) {
@@ -23,12 +23,54 @@ export function ProgressBar({ pct, className, barClassName }: { pct: number; cla
   );
 }
 
-export function UserAvatar({ url, name, className, title }: { url: string | null; name: string; className?: string; title?: string }) {
+/**
+ * Avatar con indicador opcional de presencia (calendario conectado).
+ *
+ * El punto necesita un contenedor `relative`, pero varios llamadores le pasan a este componente
+ * clases que asumen que el avatar ES el elemento (el `-space-x-1.5` de `AvatarStack`, los `ring-2`
+ * de las tarjetas). Por eso solo se envuelve cuando de verdad hay algo que indicar: sin `presence`
+ * el render queda idéntico al de siempre y ninguna vista existente se mueve.
+ */
+export function UserAvatar({
+  url, name, className, title, presence, presenceTitle,
+}: {
+  url: string | null;
+  name: string;
+  className?: string;
+  title?: string;
+  presence?: 'busy' | 'free' | 'unknown';
+  presenceTitle?: string;
+}) {
+  // Sin presencia: exactamente el render de siempre.
+  if (!presence) {
+    return (
+      <Avatar className={className} title={title}>
+        {url && <AvatarImage src={url} alt={name} />}
+        <AvatarFallback>{initials(name)}</AvatarFallback>
+      </Avatar>
+    );
+  }
+
+  // Con presencia, `className` va SOLO al envoltorio y el avatar lo llena. Pasarlo a los dos
+  // duplicaba el `ring-2` que mandan varias vistas (se veía un doble borde) y dejaba dos reglas de
+  // tamaño peleando. El envoltorio lleva `rounded-full` para que ese anillo salga redondo.
   return (
-    <Avatar className={className} title={title}>
-      {url && <AvatarImage src={url} alt={name} />}
-      <AvatarFallback>{initials(name)}</AvatarFallback>
-    </Avatar>
+    <span className={cn('relative inline-flex shrink-0 rounded-full', className)}>
+      <Avatar className="size-full" title={title}>
+        {url && <AvatarImage src={url} alt={name} />}
+        <AvatarFallback>{initials(name)}</AvatarFallback>
+      </Avatar>
+      {/* `bottom-0 right-0`, no offsets negativos: el avatar es un círculo, y en la esquina de su
+          caja el borde ya se curvó hacia dentro — un punto ahí flota separado, fuera del círculo.
+          Pegado a la caja cae justo sobre el filo y se lee como insignia de estado. */}
+      <span
+        title={presenceTitle ?? DEV_PRESENCE[presence]?.label}
+        className={cn(
+          'absolute bottom-0 right-0 size-3 rounded-full ring-2 ring-background',
+          DEV_PRESENCE[presence]?.dot ?? DEV_PRESENCE.unknown!.dot,
+        )}
+      />
+    </span>
   );
 }
 

@@ -3,6 +3,7 @@ import { Layout } from '@/components/Layout';
 import { useAuth } from '@/auth/AuthContext';
 import { useTheme } from '@/components/theme';
 import { usePush } from '@/lib/usePush';
+import { CalendarConnectCard } from '@/components/CalendarConnectCard';
 import { UserAvatar } from '@/components/bits';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -30,7 +31,7 @@ export default function Settings() {
   const blocked = push.permission === 'denied';
 
   return (
-    <Layout title="Configuración" subtitle="Notificaciones, apariencia y cuenta">
+    <Layout title="Configuración" subtitle="Notificaciones, calendario, apariencia y cuenta">
       <div className="mx-auto max-w-2xl space-y-4">
         {/* Notificaciones */}
         <Card>
@@ -90,6 +91,9 @@ export default function Settings() {
             )}
           </CardContent>
         </Card>
+
+        {/* Google Calendar */}
+        <CalendarConnectCard />
 
         {/* Apariencia */}
         <Card>

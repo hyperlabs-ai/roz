@@ -171,3 +171,15 @@ export const SOURCE_COLOR: Record<string, string> = {
   native: 'hsl(var(--chart-3))',
   linear: 'hsl(var(--muted-foreground))',
 };
+
+/**
+ * Presencia del dev según su calendario. Mismo shape que QUEUE_HEALTH, para que las dos se lean igual.
+ *
+ * `busy` dice "En un evento" y no "Ocupado": es un respaldo para cuando no se conoce el título, y
+ * "ocupado" sería un juicio sobre una actividad que puede ser perfectamente interrumpible.
+ */
+export const DEV_PRESENCE: Record<string, { label: string; dot: string; pill: string }> = {
+  busy: { label: 'En un evento', dot: 'bg-warning', pill: 'bg-warning/12 text-warning' },
+  free: { label: 'Sin actividad', dot: 'bg-success', pill: 'bg-success/12 text-success' },
+  unknown: { label: 'Sin calendario', dot: 'bg-muted-foreground/40', pill: 'bg-muted text-muted-foreground' },
+};

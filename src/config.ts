@@ -66,6 +66,20 @@ const raw = z
     VAPID_PRIVATE_KEY: z.string().default(''),
     // Contacto del emisor (mailto: o https URL) que exige el estándar Web Push.
     VAPID_SUBJECT: z.string().default('mailto:roz@hyperdigital.mx'),
+
+    // Google Calendar (presencia en vivo: "ocupado hasta las 11:30"). Cada dev conecta SU cuenta
+    // desde Configuración; roz solo lee eventos. Opcional: sin client id/secret la feature se apaga
+    // en silencio, como el resto de adapters.
+    GOOGLE_CLIENT_ID: z.string().default(''),
+    GOOGLE_CLIENT_SECRET: z.string().default(''),
+    // Explícita, NO derivada de DASHBOARD_URL: Google exige que calce carácter por carácter con la
+    // URI registrada en la consola, y una derivación silenciosa produce un redirect_uri_mismatch
+    // imposible de diagnosticar desde el código.
+    GOOGLE_REDIRECT_URI: z.string().default(''),
+
+    // Llave de cifrado (32 bytes en base64) para los tokens de terceros guardados por-dev. Generar
+    // una vez con: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+    ROZ_ENCRYPTION_KEY: z.string().default(''),
   })
   // Fail-fast en producción: los secretos críticos de seguridad NO pueden quedar vacíos, o el
   // server arrancaría con auth/firmas rotas (webhooks rechazando todo, crons abiertos, etc.).
@@ -83,6 +97,25 @@ const raw = z
     };
     for (const [k, val] of Object.entries(required)) {
       if (!val) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${k} es obligatorio en producción` });
+    }
+  })
+  // La integración de calendario es opcional en bloque, pero NO a medias: si está encendida hay que
+  // poder cifrar los refresh tokens. Arrancar sin llave los guardaría en claro, que es peor que no
+  // tener la feature. Se valida en todos los entornos, no solo en producción, porque el token que se
+  // guardaría en local es igual de real.
+  .superRefine((v, ctx) => {
+    if (!v.GOOGLE_CLIENT_ID && !v.GOOGLE_CLIENT_SECRET) return;
+    const missing = [
+      !v.GOOGLE_CLIENT_ID && 'GOOGLE_CLIENT_ID',
+      !v.GOOGLE_CLIENT_SECRET && 'GOOGLE_CLIENT_SECRET',
+      !v.GOOGLE_REDIRECT_URI && 'GOOGLE_REDIRECT_URI',
+      !v.ROZ_ENCRYPTION_KEY && 'ROZ_ENCRYPTION_KEY',
+    ].filter(Boolean);
+    for (const k of missing) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${k} es obligatorio cuando la integración de Google Calendar está configurada`,
+      });
     }
   })
   .parse(process.env);
@@ -121,6 +154,12 @@ export const config = {
   vercel: { token: raw.VERCEL_API_TOKEN, teamId: raw.VERCEL_TEAM_ID },
   railway: { token: raw.RAILWAY_API_TOKEN },
   supabaseAdmin: { token: raw.SUPABASE_ACCESS_TOKEN },
+  google: {
+    clientId: raw.GOOGLE_CLIENT_ID,
+    clientSecret: raw.GOOGLE_CLIENT_SECRET,
+    redirectUri: raw.GOOGLE_REDIRECT_URI,
+  },
+  encryptionKey: raw.ROZ_ENCRYPTION_KEY,
   mcp: { token: raw.ROZ_MCP_TOKEN },
   ingest: { token: raw.ROZ_INGEST_TOKEN },
   cron: { secret: raw.CRON_SECRET },
