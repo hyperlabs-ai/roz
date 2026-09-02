@@ -1272,6 +1272,13 @@ function samePerson(a: TicketActor, b: TicketActor): boolean {
   return false;
 }
 
+/**
+ * Techo de filas que la lista de tareas trae de una vez. Era 500 con 564 work_item en la base: 64
+ * tareas no llegaban a la lista y nada lo decía. El `truncated` del return lo hace visible cuando
+ * se vuelva a alcanzar, en lugar de esconder trabajo en silencio.
+ */
+const TICKETS_LIMIT = 1500;
+
 export async function getTickets(f: TicketFilters) {
   const [devs, projects] = await Promise.all([allDevs(), allProjects()]);
   const devName = new Map(devs.map((d) => [d.id, d.name]));
@@ -1294,8 +1301,11 @@ export async function getTickets(f: TicketFilters) {
   if (f.to) q = q.lt('scheduled_start', f.to);
   if (f.status) q = q.eq('status', f.status);
   else if (f.scope !== 'all') q = q.in('status', OPEN_STATES);
-  const { data } = await q.order('updated_at', { ascending: false }).limit(500);
+  const { data } = await q.order('updated_at', { ascending: false }).limit(TICKETS_LIMIT);
   const rows = (data ?? []) as any[];
+  // El corte es por `updated_at desc`, así que lo que se cae es siempre lo más viejo. Se reporta
+  // para que la lista pueda decirlo en vez de esconder trabajo (ver `truncated` en el return).
+  const truncated = rows.length >= TICKETS_LIMIT;
 
   const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
   const now = Date.now();
@@ -1306,6 +1316,16 @@ export async function getTickets(f: TicketFilters) {
   const effortByItem = await loadTicketEffort(rows.map((w) => w.id));
   // Responsables (multi): lista completa por tarea desde la junction work_item_assignee.
   const assigneesByItem = await loadTicketAssignees(rows.map((w) => w.id), devName, devAvatar);
+  // …con el PRIMARIO al frente. `assignee_dev_id` es el responsable y el resto es apoyo, pero la
+  // junction no garantiza orden y el orden importa dos veces: la lista marca al primero como
+  // responsable, y updateTask vuelve a tomar `[0]` como primario al guardar. Sin esto, editar los
+  // responsables de una tarea podía ascender a un apoyo por el orden en que volvió la consulta.
+  const orderedAssignees = (id: string, primaryId: string | null) => {
+    const list = assigneesByItem.get(id) ?? [];
+    if (!primaryId || list.length < 2) return list;
+    const primary = list.filter((a) => a.id === primaryId);
+    return primary.length ? [...primary, ...list.filter((a) => a.id !== primaryId)] : list;
+  };
   // Quién creó/asignó la tarea (created_by = usuario del dashboard). Resuelve nombre por
   // user_profiles y avatar mapeando su email a un roz.dev. Solo aplica a tareas nativas manuales.
   const devByEmail = new Map<string, { name: string; avatarUrl: string | null }>();
@@ -1333,7 +1353,7 @@ export async function getTickets(f: TicketFilters) {
         projectId: w.project_id,
         projectName: w.project_id ? projName.get(w.project_id) ?? null : null,
         assignee: w.assignee_dev_id ? { id: w.assignee_dev_id, name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
-        assignees: assigneesByItem.get(w.id) ?? [],
+        assignees: orderedAssignees(w.id, w.assignee_dev_id ?? null),
         createdBy: w.created_by ? creatorsById.get(w.created_by) ?? null : null,
         estimate: w.estimate,
         dueDate: w.due_date,
@@ -1446,6 +1466,8 @@ export async function getTickets(f: TicketFilters) {
 
   return {
     total: tickets.length,
+    // true = se alcanzó el techo y hay trabajo más viejo fuera de la lista. La UI lo dice.
+    truncated,
     overdue: tickets.filter((t) => t.overdue).length,
     unassigned: tickets.filter((t) => !t.assignee).length,
     summary,

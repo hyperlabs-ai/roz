@@ -247,6 +247,16 @@ export function DateCell({ value, overdue, onSave, compact }: {
 }
 
 // ---- Responsables (multi) ----
+/**
+ * Responsables de una tarea. `value` viene con el PRINCIPAL al frente (lo garantizan
+ * `orderedAssignees` en el backend y `assigneesOf` en la lista): el primero es el responsable y el
+ * resto es apoyo. La distinción se pinta — el principal a opacidad completa, el apoyo atenuado —
+ * porque "quién la saca" y "quién ayuda" no son lo mismo al repartir trabajo.
+ *
+ * El orden también manda al guardar: updateTask toma `[0]` como primario, y este control preserva
+ * la posición (quita por filtro, agrega al final), así que agregar apoyo nunca degrada al
+ * responsable.
+ */
 export function AssigneesCell({ value, devs, onSave, compact }: {
   value: { id: string; name: string; avatarUrl: string | null }[];
   devs: { id: string; name: string; avatarUrl?: string | null }[];
@@ -254,8 +264,23 @@ export function AssigneesCell({ value, devs, onSave, compact }: {
   compact?: boolean;
 }) {
   const ids = value.map((v) => v.id);
+  const [primary, ...support] = value;
   const display = value.length
-    ? <AvatarStack people={value} max={3} size="size-6" />
+    ? (
+        <span className="flex items-center gap-1">
+          <UserAvatar
+            url={primary.avatarUrl}
+            name={primary.name}
+            className="size-6 ring-2 ring-background"
+            title={`Responsable · ${primary.name}`}
+          />
+          {support.length > 0 && (
+            <span className="opacity-55" title={`Apoyo · ${support.map((s) => s.name).join(', ')}`}>
+              <AvatarStack people={support} max={2} size="size-5" />
+            </span>
+          )}
+        </span>
+      )
     : <span className="text-[13px] text-muted-foreground/60">—</span>;
 
   return (
@@ -268,10 +293,14 @@ export function AssigneesCell({ value, devs, onSave, compact }: {
           <PopoverTrigger asChild>
             <button type="button" className={cell(compact)}>{display}</button>
           </PopoverTrigger>
-          <PopoverContent className="w-56 p-1" align="start">
+          <PopoverContent className="w-60 p-1" align="start">
+            <p className="px-2 pb-1 pt-1.5 text-[11px] text-muted-foreground">
+              El primero es el responsable; los demás, apoyo.
+            </p>
             <div className="scroll-thin max-h-64 overflow-y-auto">
               {devs.map((d) => {
-                const on = ids.includes(d.id);
+                const at = ids.indexOf(d.id);
+                const on = at >= 0;
                 return (
                   <button
                     key={d.id}
@@ -279,8 +308,13 @@ export function AssigneesCell({ value, devs, onSave, compact }: {
                     onClick={() => onSave(on ? ids.filter((x) => x !== d.id) : [...ids, d.id])}
                     className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
                   >
-                    <UserAvatar url={d.avatarUrl ?? null} name={d.name} className="size-5" />
+                    <UserAvatar url={d.avatarUrl ?? null} name={d.name} className={cn('size-5', on && at > 0 && 'opacity-55')} />
                     <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                    {on && (
+                      <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        {at === 0 ? 'Responsable' : 'Apoyo'}
+                      </span>
+                    )}
                     {on && <Check className="size-3.5 shrink-0 text-primary" />}
                   </button>
                 );

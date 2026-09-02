@@ -207,6 +207,8 @@ export interface Ticket {
 }
 export interface TicketsResponse {
   total: number; overdue: number; unassigned: number;
+  /** true = la consulta topó su techo de filas y hay trabajo más viejo fuera de la lista. */
+  truncated: boolean;
   summary: { total: number; open: number; inProgress: number; completed: number; unassigned: number; overdue: number };
   byState: { label: string; value: number }[];
   byPriority: { label: string; value: number }[];

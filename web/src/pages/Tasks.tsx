@@ -38,8 +38,17 @@ import {
 const ALL = '__all__';
 const EMPTY_FILTERS: TicketFilterOptions = { projects: [], allProjects: [], devs: [], states: [], allStates: [], priorities: [] };
 
-type GroupMode = 'state' | 'project' | 'assignee' | 'none';
-const GROUP_MODES: GroupMode[] = ['state', 'project', 'assignee', 'none'];
+type GroupMode = 'state' | 'project' | 'assignee' | 'module' | 'none';
+const GROUP_MODES: GroupMode[] = ['state', 'project', 'assignee', 'module', 'none'];
+
+// Orden dentro de cada sección. `plan` es el DEFAULT: respeta la secuencia en que se capturó el
+// trabajo (`number` es correlativo por proyecto — HYPERHUB-1 = tarea 0.1 del plan), que es como se
+// lee un plan de desarrollo paso a paso. `priority` es el criterio histórico — abiertas primero,
+// luego prioridad — y sigue disponible en el desplegable.
+type OrderMode = 'priority' | 'plan';
+const ORDER_MODES: OrderMode[] = ['priority', 'plan'];
+
+const SIN_MODULO = '__sin_modulo__';
 
 const STATE_RANK: Record<string, number> = {
   planificada: 0, backlog: 0, pendiente: 1, unstarted: 1, triage: 1,
@@ -57,8 +66,38 @@ function taskSort(a: Ticket, b: Ticket): number {
   return (PRIO_ORDER[a.priority ?? ''] ?? 4) - (PRIO_ORDER[b.priority ?? ''] ?? 4);
 }
 
+/**
+ * Orden de captura: el `number` del identificador, ascendente. Es correlativo por proyecto, así
+ * que primero agrupa por proyecto (si no, dos proyectos se intercalarían por un número que no
+ * comparten). Las tareas sin número — el legado de Linear — van al final por identificador.
+ */
+function planSort(a: Ticket, b: Ticket): number {
+  const p = (a.projectName ?? '').localeCompare(b.projectName ?? '');
+  if (p !== 0) return p;
+  if (a.number == null || b.number == null) {
+    if (a.number != null) return -1;
+    if (b.number != null) return 1;
+    return a.identifier.localeCompare(b.identifier);
+  }
+  return a.number - b.number;
+}
+
+/**
+ * Responsables con el principal al frente. El backend ya los devuelve así (`orderedAssignees` en
+ * getTickets), pero se reafirma aquí porque el orden decide dos cosas: quién se pinta como
+ * responsable y, al guardar, quién queda como primario (updateTask toma `[0]`).
+ */
 function assigneesOf(t: Ticket) {
-  return t.assignees?.length ? t.assignees : t.assignee ? [t.assignee] : [];
+  const list = t.assignees?.length ? t.assignees : t.assignee ? [t.assignee] : [];
+  const primaryId = t.assignee?.id;
+  if (!primaryId || list.length < 2) return list;
+  const primary = list.filter((a) => a.id === primaryId);
+  return primary.length ? [...primary, ...list.filter((a) => a.id !== primaryId)] : list;
+}
+
+/** Módulo de la tarea: la primera etiqueta. Es la convención con que se cargó el plan. */
+function moduleOf(t: Ticket): string | null {
+  return t.labels?.[0] ?? null;
 }
 
 /** Trabajo vivo de un grupo — ordena los proyectos por actividad, no alfabéticamente. */
@@ -66,8 +105,14 @@ function liveCount(tasks: Ticket[]): number {
   return tasks.filter((t) => !CLOSED_STATES.includes(t.status)).length;
 }
 
-function buildGroups(tasks: Ticket[], mode: GroupMode): Group[] {
-  const sorted = [...tasks].sort(taskSort);
+/** Menor `number` del grupo: ordena las secciones por dónde arrancan en el plan. */
+function firstInPlan(tasks: Ticket[]): number {
+  const ns = tasks.map((t) => t.number).filter((n): n is number => n != null);
+  return ns.length ? Math.min(...ns) : Number.MAX_SAFE_INTEGER;
+}
+
+function buildGroups(tasks: Ticket[], mode: GroupMode, order: OrderMode): Group[] {
+  const sorted = [...tasks].sort(order === 'plan' ? planSort : taskSort);
   if (mode === 'none') return [{ key: 'all', name: '', tasks: sorted }];
 
   const map = new Map<string, Group>();
@@ -75,13 +120,22 @@ function buildGroups(tasks: Ticket[], mode: GroupMode): Group[] {
     if (!map.has(key)) map.set(key, { key, name, tasks: [] });
     map.get(key)!.tasks.push(t);
   };
+  // Con el orden del plan las secciones también van en secuencia; si no, por trabajo vivo.
+  const bySequenceOrActivity = (a: Group, b: Group) =>
+    order === 'plan'
+      ? firstInPlan(a.tasks) - firstInPlan(b.tasks) || a.name.localeCompare(b.name)
+      : liveCount(b.tasks) - liveCount(a.tasks) || a.name.localeCompare(b.name);
+  // "Sin …" siempre al final, sea cual sea el criterio.
+  const danglingLast = (key: string) => (a: Group, b: Group) =>
+    a.key === key ? 1 : b.key === key ? -1 : bySequenceOrActivity(a, b);
 
   if (mode === 'state') {
     for (const t of sorted) push(t.status, STATE_LABEL[t.status] ?? t.status, t);
     return [...map.values()].sort((a, b) => (STATE_RANK[a.key] ?? 9) - (STATE_RANK[b.key] ?? 9) || a.name.localeCompare(b.name));
   }
   if (mode === 'assignee') {
-    // Multi-responsable: la tarea va bajo su PRIMER responsable, para no duplicar filas.
+    // Multi-responsable: la tarea va bajo su responsable PRINCIPAL, para no duplicar filas. El
+    // apoyo no abre sección propia — se ve en la columna de responsables de la fila.
     for (const t of sorted) {
       const primary = assigneesOf(t)[0];
       if (primary) push(primary.id, primary.name, t);
@@ -89,10 +143,16 @@ function buildGroups(tasks: Ticket[], mode: GroupMode): Group[] {
     }
     return [...map.values()].sort((a, b) => (a.key === '__none__' ? 1 : b.key === '__none__' ? -1 : a.name.localeCompare(b.name)));
   }
+  if (mode === 'module') {
+    for (const t of sorted) {
+      const m = moduleOf(t);
+      if (m) push(m, m, t);
+      else push(SIN_MODULO, 'Sin módulo', t);
+    }
+    return [...map.values()].sort(danglingLast(SIN_MODULO));
+  }
   for (const t of sorted) push(t.projectId ?? '__none__', t.projectName ?? 'Sin proyecto', t);
-  return [...map.values()].sort((a, b) =>
-    a.key === '__none__' ? 1 : b.key === '__none__' ? -1 : liveCount(b.tasks) - liveCount(a.tasks) || a.name.localeCompare(b.name),
-  );
+  return [...map.values()].sort(danglingLast('__none__'));
 }
 
 export default function Tasks() {
@@ -110,6 +170,8 @@ export default function Tasks() {
   const mine = params.get('scope') !== 'team'; // mías por defecto
   const groupParam = params.get('group') as GroupMode | null;
   const group: GroupMode = groupParam && GROUP_MODES.includes(groupParam) ? groupParam : 'state';
+  const orderParam = params.get('order') as OrderMode | null;
+  const order: OrderMode = orderParam && ORDER_MODES.includes(orderParam) ? orderParam : 'plan';
   // Por defecto se ve TODO. Las secciones cerradas nacen colapsadas (ver defaultOpen), así que
   // el trabajo terminado está presente y contado sin estorbar. "Activas" es el filtro opcional.
   const onlyActive = params.get('active') === '1';
@@ -152,7 +214,7 @@ export default function Tasks() {
       .filter((t) => !needle || t.name.toLowerCase().includes(needle) || t.identifier.toLowerCase().includes(needle));
   }, [tasks, onlyActive, fProject, fPriority, q]);
 
-  const groups = useMemo(() => buildGroups(visible, group), [visible, group]);
+  const groups = useMemo(() => buildGroups(visible, group, order), [visible, group, order]);
 
   // Secciones cerradas arrancan colapsadas al agrupar por estado; el resto abiertas.
   const [openOverride, setOpenOverride] = useState<Record<string, boolean>>({});
@@ -324,7 +386,16 @@ export default function Tasks() {
             <SelectItem value="state">Agrupar: Estado</SelectItem>
             <SelectItem value="project">Agrupar: Proyecto</SelectItem>
             <SelectItem value="assignee">Agrupar: Responsable</SelectItem>
+            <SelectItem value="module">Agrupar: Módulo</SelectItem>
             <SelectItem value="none">Sin agrupar</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={order} onValueChange={(v) => setParam('order', v === 'plan' ? null : v)}>
+          <SelectTrigger className="h-8 w-auto min-w-[9rem] gap-1 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="plan">Orden: Plan</SelectItem>
+            <SelectItem value="priority">Orden: Prioridad</SelectItem>
           </SelectContent>
         </Select>
 
@@ -379,6 +450,12 @@ export default function Tasks() {
           <span><span className="font-medium text-foreground">{abiertas}</span> abiertas</span>
           {vencidas > 0 && <span className="font-medium text-destructive">{vencidas} vencidas</span>}
           <span>{total} en total</span>
+          {/* El backend topa las filas que trae. Decirlo, en lugar de esconder el trabajo viejo. */}
+          {data?.truncated && (
+            <span className="text-amber-600 dark:text-amber-500" title="La consulta alcanzó su techo de filas: falta trabajo más viejo. Filtra por proyecto para verlo.">
+              lista recortada
+            </span>
+          )}
         </div>
       </div>
 
