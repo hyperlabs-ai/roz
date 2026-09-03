@@ -177,18 +177,22 @@ export function TaskDialog({
     // hace strip de las claves que no reconoce, así que mandar `title`/`spec`/`state` — los
     // nombres previos a la migración 0020 — no daba error: descartaba nombre, descripción y
     // estado en silencio, y el guardado parecía funcionar sin cambiar nada.
-    const body = {
-      name: title.trim(),
-      description: spec.trim() || null,
-      status: state,
-      priority: priority === NONE ? null : priority,
-      assigneeDevIds: assigneeIds,
-      scheduledStart,
-      scheduledEnd,
-      dueDate: dueDate || null,
-      labels: labelList,
-      ...(editing ? {} : { projectId }),
-    };
+    // En edición este botón guarda SOLO el texto: los detalles ya se guardaron al tocarlos (ver
+    // `autosave`). En alta no hay fila que parchear, así que todo viaja junto en el POST.
+    const body = editing
+      ? { name: title.trim(), description: spec.trim() || null }
+      : {
+          name: title.trim(),
+          description: spec.trim() || null,
+          status: state,
+          priority: priority === NONE ? null : priority,
+          assigneeDevIds: assigneeIds,
+          scheduledStart,
+          scheduledEnd,
+          dueDate: dueDate || null,
+          labels: labelList,
+          projectId,
+        };
     try {
       if (editing) {
         const { task: saved } = await apiSend<{ task: Ticket }>('PATCH', `/tickets/${task!.id}`, body);
@@ -290,15 +294,56 @@ export function TaskDialog({
     }
   }
 
+  /**
+   * Autoguardado de los DETALLES (estado, prioridad, responsables, fechas, etiquetas).
+   *
+   * Este modal era un formulario entero: cambiabas responsables, cerrabas con Esc o clic fuera, y
+   * se descartaba en silencio. La tabla, en cambio, guarda cada celda al tocarla. Convivían dos
+   * comportamientos opuestos sin ninguna señal de cuál estabas usando, así que nunca sabías si un
+   * cambio había quedado. Ahora los detalles se guardan igual que en la tabla; el título y la
+   * descripción siguen con "Guardar" porque son texto largo y no quieres un PATCH por tecla.
+   *
+   * Encadenado, como en la lista: dos cambios seguidos sobre la misma tarea van en orden, no en
+   * paralelo. Al crear no hace nada — todavía no hay fila que parchear y todo viaja en el POST.
+   */
+  const [autoBusy, setAutoBusy] = useState(0);
+  const autoChain = useRef<Promise<void>>(Promise.resolve());
+  const autosave = (body: Record<string, unknown>) => {
+    if (!task) return;
+    const id = task.id;
+    setAutoBusy((n) => n + 1);
+    autoChain.current = autoChain.current.then(async () => {
+      try {
+        // Se avisa al padre con la fila completa: la tabla de atrás se actualiza sola, sin recargar.
+        onSaved((await apiSend<{ task: Ticket }>('PATCH', `/tickets/${id}`, body)).task, 'updated');
+      } catch (e: any) {
+        toast.error('No se pudo guardar', { description: String(e?.message ?? e) });
+      } finally {
+        setAutoBusy((n) => n - 1);
+      }
+    });
+  };
+
   // Quitar conserva la posición del resto; agregar va al final (= apoyo). Nunca degrada al
   // responsable actual por accidente.
+  function setAssignees(next: string[]) {
+    setAssigneeIds(next);
+    autosave({ assigneeDevIds: next });
+  }
   function toggleAssignee(id: string) {
-    setAssigneeIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setAssignees(assigneeIds.includes(id) ? assigneeIds.filter((x) => x !== id) : [...assigneeIds, id]);
   }
   /** Al frente = responsable. Es la única forma de cambiar quién saca la tarea sin vaciar la
    *  lista y volver a armarla en el orden correcto. */
   function promoteAssignee(id: string) {
-    setAssigneeIds((prev) => [id, ...prev.filter((x) => x !== id)]);
+    setAssignees([id, ...assigneeIds.filter((x) => x !== id)]);
+  }
+  /** La agenda son tres campos que viajan juntos, así que se recalcula el par completo. */
+  function saveSchedule(date: string, start: string, end: string) {
+    autosave({
+      scheduledStart: date ? toIso(date, start) : null,
+      scheduledEnd: date ? toIso(date, end) : null,
+    });
   }
   // Avatar de un responsable: su propio avatar (de la lista de devs) o el del ticket. Sin fallback
   // al responsable primario (eso ponía el MISMO avatar a todos).
@@ -423,7 +468,14 @@ export function TaskDialog({
 
             {/* ---- Derecha: metadatos + código + galería ---- */}
             <div className="flex min-w-0 flex-col gap-4">
-              <Section title="Detalles">
+              <Section
+                title="Detalles"
+                action={editing && (
+                  <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                    {autoBusy > 0 ? <><Loader2 className="size-3 animate-spin" /> Guardando…</> : 'Se guarda solo'}
+                  </span>
+                )}
+              >
                 <div className="space-y-3">
                   <div className="space-y-1.5">
                     <Label htmlFor="task-project">Proyecto</Label>
@@ -438,7 +490,7 @@ export function TaskDialog({
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="task-state">Estado</Label>
-                      <Select value={state} onValueChange={setState}>
+                      <Select value={state} onValueChange={(v) => { setState(v); autosave({ status: v }); }}>
                         <SelectTrigger id="task-state"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           {states.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
@@ -447,7 +499,7 @@ export function TaskDialog({
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="task-priority">Prioridad</Label>
-                      <Select value={priority} onValueChange={setPriority}>
+                      <Select value={priority} onValueChange={(v) => { setPriority(v); autosave({ priority: v === NONE ? null : v }); }}>
                         <SelectTrigger id="task-priority"><SelectValue placeholder="Sin prioridad" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value={NONE}>— Sin prioridad —</SelectItem>
@@ -551,10 +603,29 @@ export function TaskDialog({
 
                   <div className="space-y-1.5">
                     <Label htmlFor="task-date">Agenda (calendario)</Label>
-                    <Input id="task-date" type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} />
+                    {/* Los inputs de fecha/hora solo emiten `change` con un valor COMPLETO (o
+                        vacío), así que guardar en cada cambio no manda estados a medias. */}
+                    <Input
+                      id="task-date"
+                      type="date"
+                      value={schedDate}
+                      onChange={(e) => { setSchedDate(e.target.value); saveSchedule(e.target.value, startTime, endTime); }}
+                    />
                     <div className="grid grid-cols-2 gap-2">
-                      <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={!schedDate} aria-label="Hora de inicio" />
-                      <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={!schedDate} aria-label="Hora de fin" />
+                      <Input
+                        type="time"
+                        value={startTime}
+                        onChange={(e) => { setStartTime(e.target.value); saveSchedule(schedDate, e.target.value, endTime); }}
+                        disabled={!schedDate}
+                        aria-label="Hora de inicio"
+                      />
+                      <Input
+                        type="time"
+                        value={endTime}
+                        onChange={(e) => { setEndTime(e.target.value); saveSchedule(schedDate, startTime, e.target.value); }}
+                        disabled={!schedDate}
+                        aria-label="Hora de fin"
+                      />
                     </div>
                     <p className="text-xs text-muted-foreground">Sin fecha, la tarea vive en el backlog.</p>
                   </div>
@@ -562,11 +633,29 @@ export function TaskDialog({
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="task-due">Fecha límite</Label>
-                      <Input id="task-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                      <Input
+                        id="task-due"
+                        type="date"
+                        value={dueDate}
+                        onChange={(e) => { setDueDate(e.target.value); autosave({ dueDate: e.target.value || null }); }}
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="task-labels">Etiquetas</Label>
-                      <Input id="task-labels" value={labels} onChange={(e) => setLabels(e.target.value)} placeholder="bug, urgente" />
+                      {/* Texto libre: guarda al salir del campo, no en cada tecla. Y solo si de
+                          verdad cambiaron — tabular por el formulario no debe pegarle a la API. */}
+                      <Input
+                        id="task-labels"
+                        value={labels}
+                        onChange={(e) => setLabels(e.target.value)}
+                        onBlur={() => {
+                          const list = labels.split(',').map((s) => s.trim()).filter(Boolean);
+                          const prev = task?.labels ?? [];
+                          if (list.length !== prev.length || list.some((l, i) => l !== prev[i])) autosave({ labels: list });
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                        placeholder="bug, urgente"
+                      />
                     </div>
                   </div>
                 </div>
@@ -709,10 +798,12 @@ export function TaskDialog({
               </AlertDialogContent>
             </AlertDialog>
           ) : <span />}
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <div className="flex items-center gap-2">
+            {/* En edición ya no hay nada que "cancelar" salvo el texto: los detalles se guardaron
+                al tocarlos, así que el botón dice lo que hace. */}
+            <Button variant="outline" onClick={() => onOpenChange(false)}>{editing ? 'Cerrar' : 'Cancelar'}</Button>
             <Button onClick={save} disabled={busy || !title.trim()}>
-              {busy ? 'Guardando…' : editing ? 'Guardar cambios' : 'Crear tarea'}
+              {busy ? 'Guardando…' : editing ? 'Guardar título y descripción' : 'Crear tarea'}
             </Button>
           </div>
         </DialogFooter>
