@@ -9,7 +9,7 @@
 // control de Radix se monta en el primer clic, ya abierto (`defaultOpen`), y se desmonta al
 // cerrarse. Para quien la usa el gesto es el mismo — un clic y el desplegable está abierto.
 import { useState, type ReactNode } from 'react';
-import { CalendarDays, Check, Circle, CircleCheck, CircleDashed, CircleDot, CircleDotDashed, CircleSlash } from 'lucide-react';
+import { CalendarDays, Check, ChevronUp, Circle, CircleCheck, CircleDashed, CircleDot, CircleDotDashed, CircleSlash } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -293,7 +293,7 @@ export function AssigneesCell({ value, devs, onSave, compact }: {
           <PopoverTrigger asChild>
             <button type="button" className={cell(compact)}>{display}</button>
           </PopoverTrigger>
-          <PopoverContent className="w-60 p-1" align="start">
+          <PopoverContent className="w-64 p-1" align="start">
             <p className="px-2 pb-1 pt-1.5 text-[11px] text-muted-foreground">
               El primero es el responsable; los demás, apoyo.
             </p>
@@ -302,21 +302,37 @@ export function AssigneesCell({ value, devs, onSave, compact }: {
                 const at = ids.indexOf(d.id);
                 const on = at >= 0;
                 return (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => onSave(on ? ids.filter((x) => x !== d.id) : [...ids, d.id])}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent"
-                  >
-                    <UserAvatar url={d.avatarUrl ?? null} name={d.name} className={cn('size-5', on && at > 0 && 'opacity-55')} />
-                    <span className="min-w-0 flex-1 truncate">{d.name}</span>
-                    {on && (
-                      <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        {at === 0 ? 'Responsable' : 'Apoyo'}
-                      </span>
+                  // Fila, no botón: el apoyo lleva DENTRO su propia acción para ascender, y un
+                  // botón dentro de otro no es HTML válido.
+                  <div key={d.id} className="flex items-center rounded-md transition-colors hover:bg-accent">
+                    <button
+                      type="button"
+                      onClick={() => onSave(on ? ids.filter((x) => x !== d.id) : [...ids, d.id])}
+                      className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm"
+                    >
+                      <UserAvatar url={d.avatarUrl ?? null} name={d.name} className={cn('size-5 shrink-0', on && at > 0 && 'opacity-55')} />
+                      <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                      {on && (
+                        <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                          {at === 0 ? 'Responsable' : 'Apoyo'}
+                        </span>
+                      )}
+                      {on && <Check className="size-3.5 shrink-0 text-primary" />}
+                    </button>
+                    {/* Ascender a responsable. Sin esto, cambiar quién saca la tarea obligaba a
+                        quitar a todos y volver a agregarlos en el orden correcto. */}
+                    {on && at > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => onSave([d.id, ...ids.filter((x) => x !== d.id)])}
+                        className="mr-1 shrink-0 rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+                        title="Hacer responsable"
+                        aria-label={`Hacer responsable a ${d.name}`}
+                      >
+                        <ChevronUp className="size-3.5" />
+                      </button>
                     )}
-                    {on && <Check className="size-3.5 shrink-0 text-primary" />}
-                  </button>
+                  </div>
                 );
               })}
             </div>

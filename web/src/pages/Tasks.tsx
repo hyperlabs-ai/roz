@@ -8,7 +8,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Plus, ChevronDown, Inbox, Trash2, Copy, X, Search, Loader2, Users, User, CircleDot,
+  Plus, ChevronDown, Inbox, Trash2, Copy, X, Search, Loader2, Users, User, CircleDot, RefreshCw,
 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { TaskDialog } from '@/components/TaskDialog';
@@ -181,7 +181,7 @@ export default function Tasks() {
   const [q, setQ] = useState('');
 
   const filters = useApi<TicketFilterOptions>(() => apiGet('/tickets/filters'), []);
-  const { data, loading, error, reload } = useApi<TicketsResponse>(
+  const { data, loading, refetching, error, reload } = useApi<TicketsResponse>(
     () => apiGet(`/tickets?scope=all${mine ? '&involved=me' : ''}`),
     [mine],
   );
@@ -199,11 +199,6 @@ export default function Tasks() {
   const devs = useMemo(() => filters.data?.devs ?? [], [filters.data]);
   const projects = useMemo(() => filters.data?.allProjects ?? [], [filters.data]);
   const projectOptions = useMemo(() => projects.map((p) => ({ value: p.id, label: p.name })), [projects]);
-
-  // `reload` de useApi se recrea en cada render; por un ref los callbacks de abajo pueden ser
-  // estables sin quedarse con una versión vieja.
-  const reloadRef = useRef(reload);
-  reloadRef.current = reload;
 
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -226,11 +221,20 @@ export default function Tasks() {
   const clearFilters = () => { setFProject(ALL); setFPriority(ALL); setQ(''); };
 
   // Deep-link ?task=<id> — lo usa la notificación de "cambio documentado".
+  //
+  // Se abre UNA vez por id. El efecto también depende de `tasks`, y sin este candado cada cambio
+  // en la lista (un patch en otra fila) volvía a llamar setDialogTask con el objeto nuevo: el
+  // modal se reinicializaba encima de lo que estuvieras escribiendo y el texto se perdía.
   const taskParam = params.get('task');
+  const openedParam = useRef<string | null>(null);
   useEffect(() => {
-    if (!taskParam) return;
+    if (!taskParam) { openedParam.current = null; return; }
+    if (openedParam.current === taskParam) return;
     const t = tasks.find((x) => x.id === taskParam);
-    if (t) { setDialogTask(t); setDialogOpen(true); }
+    if (!t) return;
+    openedParam.current = taskParam;
+    setDialogTask(t);
+    setDialogOpen(true);
   }, [taskParam, tasks]);
 
   function onDialogOpenChange(open: boolean) {
@@ -238,17 +242,36 @@ export default function Tasks() {
     if (!open && params.get('task')) setParam('task', null);
   }
 
-  /** Patch optimista: pinta el cambio, lo manda, y revierte SOLO esa fila si el servidor lo
-   *  rechaza (restaurar el array entero pisaría ediciones concurrentes de otras filas). */
-  const patch = useCallback(async (t: Ticket, body: Record<string, unknown>, optimistic: Partial<Ticket>) => {
+  /**
+   * Patch optimista de UNA fila.
+   *
+   * Tres cosas, y las tres importan para que se sienta fluido:
+   *
+   *  · No recarga la lista. El PATCH devuelve la tarea COMPLETA y se sustituye solo esa fila.
+   *    Antes cada cambio disparaba un GET /tickets — la consulta más cara de la app (hasta 1500
+   *    tareas + atribución + esfuerzo + agregados) — y hasta que volvía, la fila que acababas de
+   *    tocar podía pintarse con datos anteriores a tu propio cambio.
+   *  · Encadena por tarea. Los cambios sobre la MISMA fila van en orden: el popover de
+   *    responsables no se cierra al elegir, así que tres clics seguidos mandaban tres PATCH en
+   *    paralelo y ganaba el que contestara al final — no el último que pediste.
+   *  · Al fallar revierte SOLO los campos que este patch tocó, no la fila entera: restaurar `t`
+   *    completo pisaría un cambio posterior encadenado sobre la misma tarea.
+   */
+  const chains = useRef(new Map<string, Promise<void>>());
+  const patch = useCallback((t: Ticket, body: Record<string, unknown>, optimistic: Partial<Ticket>) => {
     setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, ...optimistic } : x)));
-    try {
-      await apiSend('PATCH', `/tickets/${t.id}`, body);
-      reloadRef.current();
-    } catch (e: any) {
-      setTasks((prev) => prev.map((x) => (x.id === t.id ? t : x)));
-      toast.error('No se pudo guardar', { description: String(e.message ?? e) });
-    }
+    const run = (chains.current.get(t.id) ?? Promise.resolve()).then(async () => {
+      try {
+        const { task } = await apiSend<{ task: Ticket }>('PATCH', `/tickets/${t.id}`, body);
+        setTasks((prev) => prev.map((x) => (x.id === task.id ? task : x)));
+      } catch (e: any) {
+        const rollback = Object.fromEntries(Object.keys(optimistic).map((k) => [k, (t as any)[k]]));
+        setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, ...rollback } : x)));
+        toast.error('No se pudo guardar', { description: String(e.message ?? e) });
+      }
+    });
+    chains.current.set(t.id, run);
+    return run;
   }, []);
 
   const setStatus = useCallback((t: Ticket, status: string) => patch(t, { status }, { status }), [patch]);
@@ -259,13 +282,17 @@ export default function Tasks() {
     patch(t, { dueDate }, { dueDate, overdue: !CLOSED_STATES.includes(t.status) && isPastDay(dueDate) }), [patch]);
   const setProject = useCallback((t: Ticket, projectId: string | null) =>
     patch(t, { projectId }, { projectId, projectName: projects.find((p) => p.id === projectId)?.name ?? null }), [patch, projects]);
-  const setAssignees = useCallback((t: Ticket, ids: string[]) =>
-    patch(t, { assigneeDevIds: ids }, {
-      assignees: ids.map((id) => {
-        const d = devs.find((x) => x.id === id);
-        return { id, name: d?.name ?? '—', avatarUrl: d?.avatarUrl ?? null };
-      }),
-    }), [patch, devs]);
+  // El optimista fija TAMBIÉN el responsable primario (`assignee`), no solo la lista: el backend
+  // toma `ids[0]` como primario, y `assigneesOf` reordena la fila usando `assignee`. Sin esto,
+  // promover a un apoyo se veía como si no hubiera pasado nada — el orden viejo volvía a ganar
+  // hasta que respondía el servidor.
+  const setAssignees = useCallback((t: Ticket, ids: string[]) => {
+    const people = ids.map((id) => {
+      const d = devs.find((x) => x.id === id);
+      return { id, name: d?.name ?? '—', avatarUrl: d?.avatarUrl ?? null };
+    });
+    return patch(t, { assigneeDevIds: ids }, { assignees: people, assignee: people[0] ?? null });
+  }, [patch, devs]);
 
   /** El círculo de la izquierda alterna completada ⇄ pendiente, como en Ops. */
   const toggleDone = useCallback((t: Ticket) =>
@@ -274,7 +301,8 @@ export default function Tasks() {
   const duplicate = useCallback(async (t: Ticket) => {
     if (!t.projectId) return toast.error('La tarea no tiene proyecto', { description: 'Duplicar necesita uno.' });
     try {
-      await apiSend('POST', '/tickets', {
+      // El POST devuelve la tarea completa: se inserta la fila y ya. Sin recargar la lista.
+      const { task } = await apiSend<{ task: Ticket }>('POST', '/tickets', {
         projectId: t.projectId,
         name: `${t.name} (copia)`,
         description: t.description ?? undefined,
@@ -284,8 +312,8 @@ export default function Tasks() {
         dueDate: t.dueDate ?? undefined,
         labels: t.labels ?? [],
       });
-      toast.success('Tarea duplicada');
-      reloadRef.current();
+      setTasks((prev) => [task, ...prev.filter((x) => x.id !== task.id)]);
+      toast.success('Tarea duplicada', { description: `${task.identifier} · ${task.name}` });
     } catch (e: any) {
       toast.error('No se pudo duplicar', { description: String(e.message ?? e) });
     }
@@ -296,7 +324,6 @@ export default function Tasks() {
     try {
       await apiSend('DELETE', `/tickets/${t.id}`);
       toast.success('Tarea eliminada', { description: `${t.identifier} · ${t.name}` });
-      reloadRef.current();
     } catch (e: any) {
       setTasks((prev) => (prev.some((x) => x.id === t.id) ? prev : [...prev, t]));
       toast.error('No se pudo eliminar', { description: String(e.message ?? e) });
@@ -306,6 +333,7 @@ export default function Tasks() {
   // ---- Acciones en lote ----
   const selectedTasks = () => visible.filter((t) => selected.has(t.id));
 
+  /** Cada acción actualiza su propia fila; el lote no recarga la lista (ver `patch`). */
   async function batch(label: string, fn: (t: Ticket) => Promise<unknown>) {
     const items = selectedTasks();
     if (!items.length) return;
@@ -316,12 +344,18 @@ export default function Tasks() {
     const failed = results.filter((r) => r.status === 'rejected').length;
     if (failed) toast.error(`${label}: fallaron ${failed} de ${items.length}`);
     else toast.success(`${label}: ${items.length} tarea${items.length === 1 ? '' : 's'}`);
-    reload();
   }
 
   const batchStatus = (status: string) =>
-    batch(`Estado → ${STATE_LABEL[status] ?? status}`, (t) => apiSend('PATCH', `/tickets/${t.id}`, { status }));
-  const batchDelete = () => batch('Eliminadas', (t) => apiSend('DELETE', `/tickets/${t.id}`));
+    batch(`Estado → ${STATE_LABEL[status] ?? status}`, async (t) => {
+      const { task } = await apiSend<{ task: Ticket }>('PATCH', `/tickets/${t.id}`, { status });
+      setTasks((prev) => prev.map((x) => (x.id === task.id ? task : x)));
+    });
+  const batchDelete = () =>
+    batch('Eliminadas', async (t) => {
+      await apiSend('DELETE', `/tickets/${t.id}`);
+      setTasks((prev) => prev.filter((x) => x.id !== t.id));
+    });
 
   const toggleSelect = useCallback((id: string) => {
     setSelected((prev) => {
@@ -444,6 +478,21 @@ export default function Tasks() {
             {activeFilters}
           </Button>
         )}
+
+        {/* Traer los cambios del equipo. Es MANUAL a propósito: tus ediciones ya se ven al
+            instante (cada mutación devuelve su fila), así que la lista no tiene por qué recargarse
+            sola y borrarte el scroll o lo que tengas a medio editar. */}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="size-8 text-muted-foreground"
+          onClick={reload}
+          disabled={refetching}
+          title="Traer cambios del equipo"
+          aria-label="Actualizar"
+        >
+          <RefreshCw className={cn('size-3.5', refetching && 'animate-spin')} />
+        </Button>
 
         {/* En móvil ocupa su propia línea (`basis-full`) en vez de pelear por el hueco que sobra. */}
         <div className="flex basis-full items-center gap-3 text-xs text-muted-foreground sm:ml-auto sm:basis-auto">
@@ -578,7 +627,16 @@ export default function Tasks() {
         onOpenChange={onDialogOpenChange}
         task={dialogTask}
         filters={filters.data ?? EMPTY_FILTERS}
-        onSaved={reload}
+        // El modal devuelve la tarea que guardó (el backend responde la fila completa), así que se
+        // toca solo esa. Antes llamaba a `reload` y volvía a traer la lista entera.
+        onSaved={(task, mode) => {
+          setTasks((prev) =>
+            mode === 'deleted' ? prev.filter((x) => x.id !== task.id)
+              : mode === 'created' ? [task, ...prev.filter((x) => x.id !== task.id)]
+                : prev.map((x) => (x.id === task.id ? task : x)),
+          );
+          if (mode !== 'deleted') setDialogTask(task);
+        }}
       />
     </Layout>
   );

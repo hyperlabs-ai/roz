@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Trash2, Send, ImagePlus, X, GitPullRequest, GitCommit, Loader2, GitMerge, Eye, Pencil, Check, ChevronsUpDown } from 'lucide-react';
+import { Trash2, Send, ImagePlus, X, GitPullRequest, GitCommit, Loader2, GitMerge, Eye, Pencil, Check, ChevronUp, ChevronsUpDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -67,7 +67,9 @@ export function TaskDialog({
   task?: Ticket | null;
   defaultDate?: string;
   filters: TicketFilterOptions;
-  onSaved: () => void;
+  /** Devuelve la tarea afectada (el backend responde la fila completa) para que la lista toque
+   *  esa fila y nada más, en vez de recargarse entera. */
+  onSaved: (task: Ticket, mode: 'created' | 'updated' | 'deleted') => void;
 }) {
   const editing = !!task;
 
@@ -99,8 +101,17 @@ export function TaskDialog({
   const [dropActive, setDropActive] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Fuente del formulario, leída por REF dentro del efecto de abajo. Va aparte porque el efecto
+  // NO debe volver a correr cuando estos valores cambian de identidad: `task` es un objeto nuevo
+  // cada vez que la lista se actualiza, y re-ejecutar el efecto reescribía el formulario encima de
+  // lo que estabas escribiendo — de ahí la sensación de que la descripción "no se guardaba".
+  const src = useRef({ task, defaultDate, projects: filters.allProjects });
+  src.current = { task, defaultDate, projects: filters.allProjects };
+
+  // Se resetea SOLO al abrir, o al cambiar de tarea (por id) con el modal ya abierto.
   useEffect(() => {
     if (!open) return;
+    const { task, defaultDate, projects } = src.current;
     if (task) {
       setTitle(task.name ?? '');
       setSpec(task.description ?? '');
@@ -119,7 +130,7 @@ export function TaskDialog({
       setDueDate(task.dueDate ? task.dueDate.slice(0, 10) : '');
       setLabels((task.labels ?? []).join(', '));
     } else {
-      setTitle(''); setSpec(''); setProjectId(filters.allProjects[0]?.id ?? '');
+      setTitle(''); setSpec(''); setProjectId(projects[0]?.id ?? '');
       setState('planificada'); setPriority(NONE); setAssigneeIds([]);
       setSchedDate(defaultDate ?? ''); setStartTime('09:00'); setEndTime('10:00');
       setDueDate(''); setLabels('');
@@ -130,9 +141,12 @@ export function TaskDialog({
     setPending((prev) => { prev.forEach((p) => URL.revokeObjectURL(p.url)); return []; });
     // Al abrir en edición con descripción → arranca en Vista; en alta o sin texto → Editar.
     setDescMode(task && (task.description ?? '').trim() ? 'view' : 'edit');
-  }, [open, task, defaultDate, filters.allProjects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, task?.id]);
 
-  // Carga de comentarios + adjuntos al abrir en edición.
+  // Carga de comentarios + adjuntos al abrir en edición. Por id, por lo mismo: la lista renueva el
+  // objeto `task` y no hay que re-pedir comentarios ni imágenes por eso.
+  const taskId = task?.id;
   useEffect(() => {
     if (!open || !task) return;
     let alive = true;
@@ -146,7 +160,8 @@ export function TaskDialog({
       .then((r) => alive && setAttachments(r.attachments))
       .catch((e) => alive && toast.error('No se pudieron cargar las imágenes', { description: String(e?.message ?? e) }));
     return () => { alive = false; };
-  }, [open, task]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, taskId]);
 
   async function save() {
     if (!title.trim()) return;
@@ -176,10 +191,12 @@ export function TaskDialog({
     };
     try {
       if (editing) {
-        await apiSend<{ task: { id: string } }>('PATCH', `/tickets/${task!.id}`, body);
+        const { task: saved } = await apiSend<{ task: Ticket }>('PATCH', `/tickets/${task!.id}`, body);
         toast.success('Tarea actualizada', { description: title.trim() });
+        onOpenChange(false);
+        onSaved(saved, 'updated');
       } else {
-        const { task: created } = await apiSend<{ task: { id: string; identifier: string } }>('POST', '/tickets', body);
+        const { task: created } = await apiSend<{ task: Ticket }>('POST', '/tickets', body);
         // Subir las imágenes encoladas ahora que la tarea existe (best-effort: no anula la creación).
         if (pending.length) {
           try {
@@ -190,9 +207,9 @@ export function TaskDialog({
           pending.forEach((p) => URL.revokeObjectURL(p.url));
         }
         toast.success('Tarea creada', { description: `${created.identifier} · ${title.trim()}` });
+        onOpenChange(false);
+        onSaved(created, 'created');
       }
-      onOpenChange(false);
-      onSaved();
     } catch (e: any) {
       toast.error(editing ? 'No se pudo guardar' : 'No se pudo crear', { description: String(e.message ?? e) });
     }
@@ -206,7 +223,7 @@ export function TaskDialog({
       await apiSend<{ ok: true }>('DELETE', `/tickets/${task.id}`);
       toast.success('Tarea eliminada', { description: task.name });
       onOpenChange(false);
-      onSaved();
+      onSaved(task, 'deleted');
     } catch (e: any) {
       toast.error('No se pudo eliminar', { description: String(e.message ?? e) });
     }
@@ -273,8 +290,15 @@ export function TaskDialog({
     }
   }
 
+  // Quitar conserva la posición del resto; agregar va al final (= apoyo). Nunca degrada al
+  // responsable actual por accidente.
   function toggleAssignee(id: string) {
     setAssigneeIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
+  /** Al frente = responsable. Es la única forma de cambiar quién saca la tarea sin vaciar la
+   *  lista y volver a armarla en el orden correcto. */
+  function promoteAssignee(id: string) {
+    setAssigneeIds((prev) => [id, ...prev.filter((x) => x !== id)]);
   }
   // Avatar de un responsable: su propio avatar (de la lista de devs) o el del ticket. Sin fallback
   // al responsable primario (eso ponía el MISMO avatar a todos).
@@ -282,6 +306,10 @@ export function TaskDialog({
     (filters.devs ?? []).find((d) => d.id === id)?.avatarUrl
     ?? task?.assignees?.find((a) => a.id === id)?.avatarUrl
     ?? null;
+  const nameOfDev = (id: string) =>
+    (filters.devs ?? []).find((d) => d.id === id)?.name
+    ?? task?.assignees?.find((a) => a.id === id)?.name
+    ?? '—';
 
   const projects = filters.allProjects ?? [];
   const states = filters.allStates ?? [];
@@ -429,13 +457,20 @@ export function TaskDialog({
                     </div>
                   </div>
 
+                  {/* Responsable vs apoyo. El ORDEN de esta lista es el dato: el backend toma el
+                      primero como responsable (assignee_dev_id) y el resto queda como apoyo. Antes
+                      eso no se veía por ningún lado — dos chips idénticos y "2 responsables" — así
+                      que poner a alguien de apoyo dependía del orden en que hubieras hecho clic y
+                      no había forma de saber si había funcionado, ni de corregirlo. */}
                   <div className="space-y-1.5">
                     <Label>Responsables</Label>
                     <Popover open={assigneeOpen} onOpenChange={setAssigneeOpen}>
                       <PopoverTrigger asChild>
                         <Button variant="outline" role="combobox" className="w-full justify-between font-normal">
                           <span className={cn('truncate', assigneeIds.length === 0 && 'text-muted-foreground')}>
-                            {assigneeIds.length === 0 ? 'Sin asignar' : `${assigneeIds.length} responsable${assigneeIds.length > 1 ? 's' : ''}`}
+                            {assigneeIds.length === 0
+                              ? 'Sin asignar'
+                              : nameOfDev(assigneeIds[0]) + (assigneeIds.length > 1 ? ` · +${assigneeIds.length - 1} de apoyo` : '')}
                           </span>
                           <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
                         </Button>
@@ -443,19 +478,26 @@ export function TaskDialog({
                       <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-1">
                         <div className="scroll-thin max-h-56 overflow-y-auto">
                           {devs.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">Sin developers</p>}
+                          {/* El popover NO se cierra al elegir: armar un equipo son varios clics. */}
                           {devs.map((d) => {
-                            const active = assigneeIds.includes(d.id);
+                            const at = assigneeIds.indexOf(d.id);
+                            const active = at >= 0;
                             return (
                               <button
                                 key={d.id}
                                 type="button"
-                                onClick={() => { toggleAssignee(d.id); setAssigneeOpen(false); }}
+                                onClick={() => toggleAssignee(d.id)}
                                 className={cn('flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent', active && 'bg-accent/50')}
                               >
                                 <span className={cn('grid size-4 shrink-0 place-items-center rounded border', active ? 'border-primary bg-primary text-primary-foreground' : 'border-input')}>
                                   {active && <Check className="size-3" />}
                                 </span>
-                                <span className="truncate">{d.name}</span>
+                                <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                                {active && (
+                                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+                                    {at === 0 ? 'Responsable' : 'Apoyo'}
+                                  </span>
+                                )}
                               </button>
                             );
                           })}
@@ -463,17 +505,36 @@ export function TaskDialog({
                       </PopoverContent>
                     </Popover>
                     {assigneeIds.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 pt-1">
-                        {assigneeIds.map((id) => {
+                      <div className="space-y-1 pt-1">
+                        {assigneeIds.map((id, i) => {
                           const d = devs.find((x) => x.id === id);
                           return (
-                            <span key={id} className="inline-flex items-center gap-1 rounded-full border bg-card py-0.5 pl-0.5 pr-1.5 text-xs">
-                              <UserAvatar url={avatarFor(id)} name={d?.name ?? '?'} className="size-4" />
-                              <span className="max-w-[9rem] truncate">{d?.name ?? id}</span>
-                              <button type="button" onClick={() => toggleAssignee(id)} className="text-muted-foreground transition-colors hover:text-foreground" aria-label={`Quitar ${d?.name ?? ''}`}>
-                                <X className="size-3" />
+                            <div key={id} className="flex items-center gap-2 rounded-md border bg-card px-2 py-1.5 text-xs">
+                              <UserAvatar url={avatarFor(id)} name={d?.name ?? '?'} className={cn('size-5 shrink-0', i > 0 && 'opacity-55')} />
+                              <span className="min-w-0 flex-1 truncate">{d?.name ?? id}</span>
+                              <span className={cn('shrink-0 text-[10px] uppercase tracking-wide', i === 0 ? 'font-medium text-foreground' : 'text-muted-foreground')}>
+                                {i === 0 ? 'Responsable' : 'Apoyo'}
+                              </span>
+                              {i > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => promoteAssignee(id)}
+                                  className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                  title="Hacer responsable"
+                                  aria-label={`Hacer responsable a ${d?.name ?? ''}`}
+                                >
+                                  <ChevronUp className="size-3.5" />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => toggleAssignee(id)}
+                                className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                aria-label={`Quitar ${d?.name ?? ''}`}
+                              >
+                                <X className="size-3.5" />
                               </button>
-                            </span>
+                            </div>
                           );
                         })}
                       </div>
