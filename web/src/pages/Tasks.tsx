@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { TaskDialog } from '@/components/TaskDialog';
-import { EmptyState, ErrorCard } from '@/components/bits';
+import { EmptyState, ErrorCard, UserAvatar } from '@/components/bits';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -36,6 +36,7 @@ import {
 } from '@/lib/labels';
 
 const ALL = '__all__';
+const NO_DEV = '__none__'; // filtro "Sin responsable" — el hueco que el resumen ya contaba pero no dejaba ver
 const EMPTY_FILTERS: TicketFilterOptions = { projects: [], allProjects: [], devs: [], states: [], allStates: [], priorities: [] };
 
 type GroupMode = 'state' | 'project' | 'assignee' | 'module' | 'none';
@@ -178,6 +179,7 @@ export default function Tasks() {
 
   const [fProject, setFProject] = useState(ALL);
   const [fPriority, setFPriority] = useState(ALL);
+  const [fDev, setFDev] = useState(ALL);
   const [q, setQ] = useState('');
 
   const filters = useApi<TicketFilterOptions>(() => apiGet('/tickets/filters'), []);
@@ -200,14 +202,33 @@ export default function Tasks() {
   const projects = useMemo(() => filters.data?.allProjects ?? [], [filters.data]);
   const projectOptions = useMemo(() => projects.map((p) => ({ value: p.id, label: p.name })), [projects]);
 
+  // Opciones del filtro por responsable: los devs ACTIVOS (los que puedes asignar) mas cualquiera
+  // que ya aparezca como responsable en la lista. `filters.devs` solo trae activos, asi que dar de
+  // baja a alguien con tareas dejaria su trabajo imposible de filtrar — visible en la tabla pero
+  // fuera del desplegable.
+  const devOptions = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; avatarUrl: string | null }>();
+    for (const d of devs) map.set(d.id, { id: d.id, name: d.name, avatarUrl: d.avatarUrl ?? null });
+    for (const t of tasks) for (const a of assigneesOf(t)) if (!map.has(a.id)) map.set(a.id, a);
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [devs, tasks]);
+
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return tasks
       .filter((t) => !onlyActive || OPEN_STATES.includes(t.status))
       .filter((t) => fProject === ALL || t.projectId === fProject)
       .filter((t) => fPriority === ALL || t.priority === fPriority)
+      // Por responsable: cuenta el principal Y el apoyo, igual que la columna "Resp.". Filtrar
+      // solo por el principal escondería el trabajo en el que alguien participa sin encabezarlo,
+      // que es justo lo que quieres ver al repartir carga.
+      .filter((t) => {
+        if (fDev === ALL) return true;
+        const people = assigneesOf(t);
+        return fDev === NO_DEV ? people.length === 0 : people.some((a) => a.id === fDev);
+      })
       .filter((t) => !needle || t.name.toLowerCase().includes(needle) || t.identifier.toLowerCase().includes(needle));
-  }, [tasks, onlyActive, fProject, fPriority, q]);
+  }, [tasks, onlyActive, fProject, fPriority, fDev, q]);
 
   const groups = useMemo(() => buildGroups(visible, group, order), [visible, group, order]);
 
@@ -217,8 +238,8 @@ export default function Tasks() {
   const isOpen = (g: Group) => (group === 'none' ? true : openOverride[g.key] ?? defaultOpen(g.key));
   const toggleGroup = (g: Group) => setOpenOverride((o) => ({ ...o, [g.key]: !isOpen(g) }));
 
-  const activeFilters = (fProject !== ALL ? 1 : 0) + (fPriority !== ALL ? 1 : 0) + (q ? 1 : 0);
-  const clearFilters = () => { setFProject(ALL); setFPriority(ALL); setQ(''); };
+  const activeFilters = (fProject !== ALL ? 1 : 0) + (fPriority !== ALL ? 1 : 0) + (fDev !== ALL ? 1 : 0) + (q ? 1 : 0);
+  const clearFilters = () => { setFProject(ALL); setFPriority(ALL); setFDev(ALL); setQ(''); };
 
   // Deep-link ?task=<id> — lo usa la notificación de "cambio documentado".
   //
@@ -438,6 +459,24 @@ export default function Tasks() {
           <SelectContent className="max-h-72">
             <SelectItem value={ALL}>Todos los proyectos</SelectItem>
             {projectOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+
+        {/* Responsable. Tiene sentido sobre todo en "Todas" — es como ves la carga de otra
+            persona — pero tambien sirve en "Mias" para acotar a lo que compartes con alguien. */}
+        <Select value={fDev} onValueChange={setFDev}>
+          <SelectTrigger className="h-8 w-auto min-w-[8.5rem] gap-1 text-xs"><SelectValue placeholder="Responsable" /></SelectTrigger>
+          <SelectContent className="max-h-72">
+            <SelectItem value={ALL}>Todo el equipo</SelectItem>
+            <SelectItem value={NO_DEV}>Sin responsable</SelectItem>
+            {devOptions.map((d) => (
+              <SelectItem key={d.id} value={d.id}>
+                <span className="flex items-center gap-2">
+                  <UserAvatar url={d.avatarUrl} name={d.name} className="size-4" />
+                  {d.name}
+                </span>
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
 

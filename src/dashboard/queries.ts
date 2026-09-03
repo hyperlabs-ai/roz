@@ -1217,6 +1217,42 @@ async function involvedWorkItemIds(devId: string): Promise<string[]> {
   return [...ids];
 }
 
+/**
+ * Trozo maximo de una lista para un `.in()`.
+ *
+ * PostgREST manda el `.in()` DENTRO DE LA URL, asi que una lista larga de UUIDs revienta el limite
+ * de tamano de la peticion: medido contra la base, ~400 ids devuelven "Bad Request" y por encima
+ * el fetch ni sale. Con 150 la URL ronda los 6 KB, muy por debajo de cualquier tope.
+ */
+const IN_CHUNK = 150;
+
+/**
+ * Ejecuta una consulta `.in()` por trozos y junta los resultados.
+ *
+ * El sintoma que arregla no parecia un error: como estas cargas descartaban el error
+ * (`const { data } = await …`), una lista demasiado larga devolvia VACIO en vez de fallar. En la
+ * vista "Todas" (700 tareas) eso dejaba la lista sin responsables, sin atribucion de PR y sin
+ * esfuerzo, mientras que en "Mias" (pocas tareas) se veia bien — y nada indicaba por que.
+ *
+ * Los trozos van en paralelo, y un fallo AHORA SI se propaga: un error visible es mejor que datos
+ * incompletos que se ven como "no hay nada".
+ */
+async function selectInChunks<T>(
+  ids: string[],
+  query: (chunk: string[]) => PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<T[]> {
+  if (!ids.length) return [];
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += IN_CHUNK) chunks.push(ids.slice(i, i + IN_CHUNK));
+  const results = await Promise.all(chunks.map((c) => query(c)));
+  const out: T[] = [];
+  for (const r of results) {
+    if (r.error) throw r.error;
+    out.push(...((r.data ?? []) as T[]));
+  }
+  return out;
+}
+
 interface TicketActor { name: string; avatarUrl: string | null; login: string | null; devId: string | null; reviewState: string | null }
 
 /** Carga la atribución (autor/revisor/merger) de `roz.work_item_actor` para un set de tickets. */
@@ -1227,11 +1263,9 @@ async function loadTicketActors(
 ): Promise<Map<string, { authors: TicketActor[]; reviewers: TicketActor[]; merger: TicketActor | null }>> {
   const map = new Map<string, { authors: TicketActor[]; reviewers: TicketActor[]; merger: TicketActor | null }>();
   if (!ids.length) return map;
-  const { data } = await db()
-    .from('work_item_actor')
-    .select('work_item_id, dev_id, github_login, role, review_state')
-    .in('work_item_id', ids);
-  for (const a of (data ?? []) as any[]) {
+  const rows = await selectInChunks<any>(ids, (c) =>
+    db().from('work_item_actor').select('work_item_id, dev_id, github_login, role, review_state').in('work_item_id', c));
+  for (const a of rows) {
     const person: TicketActor = {
       name: a.dev_id ? devName.get(a.dev_id) ?? a.github_login : a.github_login,
       avatarUrl: a.dev_id ? devAvatar.get(a.dev_id) ?? avatarFor(a.github_login) : avatarFor(a.github_login),
@@ -1256,8 +1290,9 @@ async function loadTicketAssignees(
 ): Promise<Map<string, { id: string; name: string; avatarUrl: string | null }[]>> {
   const map = new Map<string, { id: string; name: string; avatarUrl: string | null }[]>();
   if (!ids.length) return map;
-  const { data } = await db().from('work_item_assignee').select('work_item_id, dev_id').in('work_item_id', ids);
-  for (const r of (data ?? []) as any[]) {
+  const rows = await selectInChunks<any>(ids, (c) =>
+    db().from('work_item_assignee').select('work_item_id, dev_id').in('work_item_id', c));
+  for (const r of rows) {
     const list = map.get(r.work_item_id) ?? [];
     list.push({ id: r.dev_id, name: devName.get(r.dev_id) ?? '—', avatarUrl: devAvatar.get(r.dev_id) ?? null });
     map.set(r.work_item_id, list);
@@ -1394,20 +1429,36 @@ export async function getTickets(f: TicketFilters) {
   const devAvatar = new Map(devs.map((d) => [d.id, avatarFor(d.github_login)]));
   const projName = new Map(projects.map((p) => [p.id, p.name]));
 
-  let q = db().from('work_item').select(TICKET_COLUMNS);
+  // Los filtros son los mismos con o sin troceo, asi que la consulta se arma una vez y el trozo
+  // de ids (si lo hay) se le inyecta.
+  const build = (idChunk?: string[]) => {
+    let q = db().from('work_item').select(TICKET_COLUMNS);
+    if (idChunk) q = q.in('id', idChunk);
+    if (f.projectId) q = q.eq('project_id', f.projectId);
+    if (f.assigneeDevId) q = q.eq('assignee_dev_id', f.assigneeDevId);
+    if (f.priority) q = q.eq('priority', f.priority);
+    if (f.from) q = q.gte('scheduled_start', f.from);
+    if (f.to) q = q.lt('scheduled_start', f.to);
+    if (f.status) q = q.eq('status', f.status);
+    else if (f.scope !== 'all') q = q.in('status', OPEN_STATES);
+    return q.order('updated_at', { ascending: false }).limit(TICKETS_LIMIT);
+  };
+
+  let rows: any[];
   if (f.involvedDevId) {
+    // "Mias" filtra por la lista de tareas en las que participas, y esa lista ya roza los 300 ids
+    // para quien mas trabaja. Un `.in()` de ese tamano no vacia una columna: tumba ESTA consulta,
+    // o sea la vista entera. Troceada, cada parte trae como mucho TICKETS_LIMIT filas (ningun
+    // trozo se corta), asi que reordenar y recortar despues da exactamente el mismo resultado.
     const ids = await involvedWorkItemIds(f.involvedDevId);
-    q = q.in('id', ids.length ? ids : [NO_MATCH]);
+    rows = await selectInChunks<any>(ids.length ? ids : [NO_MATCH], (c) => build(c));
+    rows.sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')));
+    rows = rows.slice(0, TICKETS_LIMIT);
+  } else {
+    const { data, error } = await build();
+    if (error) throw error;
+    rows = (data ?? []) as any[];
   }
-  if (f.projectId) q = q.eq('project_id', f.projectId);
-  if (f.assigneeDevId) q = q.eq('assignee_dev_id', f.assigneeDevId);
-  if (f.priority) q = q.eq('priority', f.priority);
-  if (f.from) q = q.gte('scheduled_start', f.from);
-  if (f.to) q = q.lt('scheduled_start', f.to);
-  if (f.status) q = q.eq('status', f.status);
-  else if (f.scope !== 'all') q = q.in('status', OPEN_STATES);
-  const { data } = await q.order('updated_at', { ascending: false }).limit(TICKETS_LIMIT);
-  const rows = (data ?? []) as any[];
   // El corte es por `updated_at desc`, así que lo que se cae es siempre lo más viejo. Se reporta
   // para que la lista pueda decirlo en vez de esconder trabajo (ver `truncated` en el return).
   const truncated = rows.length >= TICKETS_LIMIT;
@@ -1565,8 +1616,9 @@ async function loadCreators(
   const unique = [...new Set(ids)];
   if (!unique.length) return map;
   try {
-    const { data } = await dbPublic().from('user_profiles').select('user_id, full_name, email').in('user_id', unique);
-    for (const p of (data ?? []) as any[]) {
+    const rows = await selectInChunks<any>(unique, (c) =>
+      dbPublic().from('user_profiles').select('user_id, full_name, email').in('user_id', c));
+    for (const p of rows) {
       const email = (p.email ?? '').toLowerCase();
       const dev = email ? devByEmail.get(email) : undefined;
       map.set(p.user_id, { name: p.full_name ?? p.email ?? '—', avatarUrl: dev?.avatarUrl ?? null });
@@ -1582,9 +1634,10 @@ async function loadCreators(
 async function loadTicketEffort(ids: string[]): Promise<Map<string, { commits: number; lines: number; points: number }>> {
   const map = new Map<string, { commits: number; lines: number; points: number }>();
   if (!ids.length) return map;
-  const { data } = await db().from('commit').select('work_item_id, additions, deletions').in('work_item_id', ids);
+  const rows = await selectInChunks<any>(ids, (chunk) =>
+    db().from('commit').select('work_item_id, additions, deletions').in('work_item_id', chunk));
   const agg = new Map<string, { commits: number; lines: number }>();
-  for (const c of (data ?? []) as any[]) {
+  for (const c of rows) {
     if (!c.work_item_id) continue;
     const e = agg.get(c.work_item_id) ?? { commits: 0, lines: 0 };
     e.commits += 1;
