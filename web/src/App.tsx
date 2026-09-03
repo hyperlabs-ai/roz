@@ -48,10 +48,12 @@ function RequireAuth() {
   if (loading) return <Spinner />;
   if (!session) return <Login />;
   if (denied) return <AccessDenied reason={denied} />;
-  if (resolving) return <Spinner />;
+  // `&& !user`: si ya sabemos quién es, una revalidación posterior ocurre en silencio. Cambiar a
+  // spinner desmontaría el dashboard entero y cada página volvería a cargar desde cero.
+  if (resolving && !user) return <Spinner />;
   // El backend no contestó. No es un rechazo, así que se ofrece reintentar en vez de dejar la
   // pantalla girando para siempre.
-  if (failed || !user) return <AuthUnavailable reason={failed} onRetry={retry} />;
+  if (!user) return <AuthUnavailable reason={failed} onRetry={retry} />;
   return <Outlet />;
 }
 

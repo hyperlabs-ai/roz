@@ -1279,43 +1279,36 @@ function samePerson(a: TicketActor, b: TicketActor): boolean {
  */
 const TICKETS_LIMIT = 1500;
 
-export async function getTickets(f: TicketFilters) {
-  const [devs, projects] = await Promise.all([allDevs(), allProjects()]);
+const TICKET_COLUMNS =
+  'id, identifier, number, name, description, status, priority, project_id, assignee_dev_id, created_by, estimate, due_date, labels, creator_name, url, source, parent_id, scheduled_start, scheduled_end, head_ref, pr_state, started_at, completed_at, created_at, linear_created_at, linear_updated_at, updated_at, pr_number, repo, merger_dev_id';
+
+/**
+ * Filas crudas de `work_item` → el ticket que consume el dashboard.
+ *
+ * Está fuera de `getTickets` porque una mutación necesita devolver EXACTAMENTE la misma forma para
+ * UNA tarea (ver getTicketById). Sin eso, el dashboard no tenía con qué reconciliar la fila que
+ * acababa de editar y recargaba la lista entera — que es la consulta más cara de la app — después
+ * de cada cambio de estado, prioridad o responsable.
+ */
+async function mapTicketRows(
+  rows: any[],
+  devs: DevRow[],
+  projects: { id: string; name: string }[],
+) {
   const devName = new Map(devs.map((d) => [d.id, d.name]));
   const devAvatar = new Map(devs.map((d) => [d.id, avatarFor(d.github_login)]));
   const projName = new Map(projects.map((p) => [p.id, p.name]));
 
-  let q = db()
-    .from('work_item')
-    .select(
-      'id, identifier, number, name, description, status, priority, project_id, assignee_dev_id, created_by, estimate, due_date, labels, creator_name, url, source, parent_id, scheduled_start, scheduled_end, head_ref, pr_state, started_at, completed_at, created_at, linear_created_at, linear_updated_at, updated_at, pr_number, repo, merger_dev_id',
-    );
-  if (f.involvedDevId) {
-    const ids = await involvedWorkItemIds(f.involvedDevId);
-    q = q.in('id', ids.length ? ids : [NO_MATCH]);
-  }
-  if (f.projectId) q = q.eq('project_id', f.projectId);
-  if (f.assigneeDevId) q = q.eq('assignee_dev_id', f.assigneeDevId);
-  if (f.priority) q = q.eq('priority', f.priority);
-  if (f.from) q = q.gte('scheduled_start', f.from);
-  if (f.to) q = q.lt('scheduled_start', f.to);
-  if (f.status) q = q.eq('status', f.status);
-  else if (f.scope !== 'all') q = q.in('status', OPEN_STATES);
-  const { data } = await q.order('updated_at', { ascending: false }).limit(TICKETS_LIMIT);
-  const rows = (data ?? []) as any[];
-  // El corte es por `updated_at desc`, así que lo que se cae es siempre lo más viejo. Se reporta
-  // para que la lista pueda decirlo en vez de esconder trabajo (ver `truncated` en el return).
-  const truncated = rows.length >= TICKETS_LIMIT;
-
   const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
   const now = Date.now();
+  const ids = rows.map((w) => w.id);
 
   // Atribución por PR (autor/revisor/merger) para los tickets visibles.
-  const actorsByItem = await loadTicketActors(rows.map((w) => w.id), devName, devAvatar);
+  const actorsByItem = await loadTicketActors(ids, devName, devAvatar);
   // Esfuerzo real: commits/líneas/hyperpoints ligados a cada tarea (lo que Ops/Linear no tienen).
-  const effortByItem = await loadTicketEffort(rows.map((w) => w.id));
+  const effortByItem = await loadTicketEffort(ids);
   // Responsables (multi): lista completa por tarea desde la junction work_item_assignee.
-  const assigneesByItem = await loadTicketAssignees(rows.map((w) => w.id), devName, devAvatar);
+  const assigneesByItem = await loadTicketAssignees(ids, devName, devAvatar);
   // …con el PRIMARIO al frente. `assignee_dev_id` es el responsable y el resto es apoyo, pero la
   // junction no garantiza orden y el orden importa dos veces: la lista marca al primero como
   // responsable, y updateTask vuelve a tomar `[0]` como primario al guardar. Sin esto, editar los
@@ -1332,7 +1325,7 @@ export async function getTickets(f: TicketFilters) {
   for (const d of devs) if (d.email) devByEmail.set(d.email.toLowerCase(), { name: d.name, avatarUrl: avatarFor(d.github_login) });
   const creatorsById = await loadCreators(rows.map((w) => w.created_by).filter(Boolean), devByEmail);
 
-  const tickets = rows
+  return rows
     .map((w) => {
       const act = actorsByItem.get(w.id);
       const merger = act?.merger
@@ -1380,6 +1373,46 @@ export async function getTickets(f: TicketFilters) {
       };
     })
     .sort((a, b) => (PRIO_ORDER[a.priority ?? ''] ?? 9) - (PRIO_ORDER[b.priority ?? ''] ?? 9));
+}
+
+/** El ticket tal como lo consume el dashboard. Se deriva del mapeo para que no puedan divergir. */
+export type DashboardTicket = Awaited<ReturnType<typeof mapTicketRows>>[number];
+
+/** Un solo ticket, con la MISMA forma que trae la lista. Lo devuelven las mutaciones para que el
+ *  dashboard reemplace esa fila y nada más, en vez de re-pedir las ~1500 de `getTickets`. */
+export async function getTicketById(id: string): Promise<DashboardTicket | null> {
+  const { data } = await db().from('work_item').select(TICKET_COLUMNS).eq('id', id).maybeSingle();
+  if (!data) return null;
+  const [devs, projects] = await Promise.all([allDevs(), allProjects()]);
+  const [ticket] = await mapTicketRows([data], devs, projects);
+  return ticket ?? null;
+}
+
+export async function getTickets(f: TicketFilters) {
+  const [devs, projects] = await Promise.all([allDevs(), allProjects()]);
+  const devName = new Map(devs.map((d) => [d.id, d.name]));
+  const devAvatar = new Map(devs.map((d) => [d.id, avatarFor(d.github_login)]));
+  const projName = new Map(projects.map((p) => [p.id, p.name]));
+
+  let q = db().from('work_item').select(TICKET_COLUMNS);
+  if (f.involvedDevId) {
+    const ids = await involvedWorkItemIds(f.involvedDevId);
+    q = q.in('id', ids.length ? ids : [NO_MATCH]);
+  }
+  if (f.projectId) q = q.eq('project_id', f.projectId);
+  if (f.assigneeDevId) q = q.eq('assignee_dev_id', f.assigneeDevId);
+  if (f.priority) q = q.eq('priority', f.priority);
+  if (f.from) q = q.gte('scheduled_start', f.from);
+  if (f.to) q = q.lt('scheduled_start', f.to);
+  if (f.status) q = q.eq('status', f.status);
+  else if (f.scope !== 'all') q = q.in('status', OPEN_STATES);
+  const { data } = await q.order('updated_at', { ascending: false }).limit(TICKETS_LIMIT);
+  const rows = (data ?? []) as any[];
+  // El corte es por `updated_at desc`, así que lo que se cae es siempre lo más viejo. Se reporta
+  // para que la lista pueda decirlo en vez de esconder trabajo (ver `truncated` en el return).
+  const truncated = rows.length >= TICKETS_LIMIT;
+
+  const tickets = await mapTicketRows(rows, devs, projects);
 
   // Top revisores: se cuenta sobre TODO el trabajo del filtro (rol reviewer en work_item_actor),
   // NO solo los tickets abiertos visibles. Las revisiones viven en PRs mergeadas → tareas

@@ -68,6 +68,7 @@ import {
   updateService,
   unlinkService,
   getTickets,
+  getTicketById,
   getTicketFilters,
   createTask,
   updateTask,
@@ -699,7 +700,8 @@ dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
       parentId,
       createdBy: c.get('user')?.id ?? null,
     });
-    return c.json({ task }, 201);
+    // Completa (igual que el PATCH): el dashboard inserta la fila nueva sin recargar la lista.
+    return c.json({ task: (await getTicketById(task.id)) ?? task }, 201);
   } catch (err) {
     return fail(c, err);
   }
@@ -725,7 +727,12 @@ dashboardRoutes.patch('/tickets/:id', requireAdmin, async (c) => {
   const parsed = TaskPatchBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
-    return c.json({ task: await updateTask(c.req.param('id'), parsed.data) });
+    const { id } = await updateTask(c.req.param('id'), parsed.data);
+    // Se devuelve la tarea COMPLETA, con la misma forma que trae la lista: así el dashboard
+    // reemplaza esa fila y nada más. Antes esto respondía `{ id }` y el cliente no tenía con qué
+    // reconciliar, así que re-pedía /tickets entero — la consulta más cara de la app — después de
+    // cada cambio de estado, prioridad o responsable.
+    return c.json({ task: (await getTicketById(id)) ?? { id } });
   } catch (err) {
     return fail(c, err);
   }
