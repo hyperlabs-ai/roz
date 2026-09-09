@@ -182,10 +182,16 @@ export default function Tasks() {
   const [fDev, setFDev] = useState(ALL);
   const [q, setQ] = useState('');
 
-  const filters = useApi<TicketFilterOptions>(() => apiGet('/tickets/filters'), []);
+  // Mismas claves que Reportes: las opciones de filtro se piden una vez por sesión y la lista de
+  // tareas sobrevive a salir y volver a la sección (antes: skeleton y refetch cada vez).
+  const filters = useApi<TicketFilterOptions>(() => apiGet('/tickets/filters'), [], {
+    key: '/tickets/filters',
+    ttl: 600_000,
+  });
   const { data, loading, refetching, error, reload } = useApi<TicketsResponse>(
     () => apiGet(`/tickets?scope=all${mine ? '&involved=me' : ''}`),
     [mine],
+    { key: '/tickets', ttl: 30_000 },
   );
 
   // Copia local para pintar el cambio antes de que responda el servidor.
@@ -642,7 +648,9 @@ export default function Tasks() {
           <div className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-2xl border bg-popover px-3 py-2 shadow-lg sm:rounded-full">
             <span className="pl-1 text-xs font-medium">{selected.size} seleccionada{selected.size === 1 ? '' : 's'}</span>
             <span className="mx-1 hidden h-4 w-px bg-border sm:block" />
-            <Select onValueChange={batchStatus}>
+            {/* `disabled` también aquí: sin esto se podía lanzar un segundo lote encima del que ya
+                estaba corriendo. */}
+            <Select onValueChange={batchStatus} disabled={busy}>
               <SelectTrigger className="h-7 w-auto gap-1 border-0 bg-transparent text-xs shadow-none hover:bg-accent">
                 Cambiar estado
               </SelectTrigger>
@@ -778,7 +786,10 @@ const TaskRow = memo(function TaskRow({
         <div className="flex items-center gap-2.5">
           <span className="w-4 shrink-0">{check}</span>
           {statusToggle}
-          <span className="hidden w-16 shrink-0 truncate font-mono text-xs text-muted-foreground sm:block">{t.identifier}</span>
+          {/* `w-24` y no `w-16`: en una tabla la columna sí necesita ancho fijo para alinear,
+              pero con 16 el `truncate` se comía el NÚMERO de `HYPERFLOW-454`, que es lo único que
+              identifica al ticket. */}
+          <span className="hidden w-24 shrink-0 truncate font-mono text-xs text-muted-foreground sm:block">{t.identifier}</span>
           {title}
           <span className="w-32 shrink-0"><StateCell value={t.status} options={STATE_OPTIONS} onSave={(v) => onStatus(t, v)} /></span>
           <span className="hidden w-28 shrink-0 lg:block"><PriorityCell value={t.priority} options={PRIO_OPTIONS} onSave={(v) => onPriority(t, v)} /></span>

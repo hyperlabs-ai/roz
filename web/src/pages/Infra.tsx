@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
-import { toast } from 'sonner';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Server, Plus, Pencil, X, ExternalLink, RefreshCw, TriangleAlert, GitCommitHorizontal, GitBranch,
-  Triangle, TrainFront, Database, Clock, Timer, Globe, Activity, Cpu, Layers,
+  Server, Plus, Pencil, X, ExternalLink, TriangleAlert, GitCommitHorizontal, GitBranch,
+  Triangle, TrainFront, Database, Clock, Timer, Globe, Activity, Cpu, Layers, Loader2,
 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
-import { EmptyState, ErrorCard } from '@/components/bits';
+import { EmptyState, ErrorCard, Fresh, RefreshButton } from '@/components/bits';
+import { MetricCard } from '@/components/MetricCard';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -16,8 +16,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { useApi } from '@/lib/useApi';
+import { useMirror, type Mirror } from '@/lib/useMirror';
 import { apiGet, apiSend, type InfraResponse, type InfraProject, type InfraService, type ServiceProvider, type ServiceStatus } from '@/lib/api';
 import { compact, relative } from '@/lib/format';
 
@@ -85,12 +90,34 @@ function aggregate(services: InfraService[]): ServiceStatus {
   return 'unknown';
 }
 
+/** Servicio + el proyecto al que pertenece: el espejo es una lista PLANA. */
+export type ServiceRow = InfraService & { projectId: string };
+
 export default function Infra() {
   const { user } = useAuth();
   const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
-  const { data, loading, error, reload } = useApi<InfraResponse>(() => apiGet('/infra'), []);
+  // Misma clave que el bloque de infra del Resumen: navegar Resumen → Infraestructura ya no vuelve
+  // a pedir /infra (que en el backend es un N+1 de snapshots).
+  const { data, loading, refetching, error, reload } = useApi<InfraResponse>(() => apiGet('/infra'), [], {
+    key: '/infra',
+    ttl: 60_000,
+  });
 
-  const projects = data?.projects ?? [];
+  // Se APLANAN los servicios para poder sustituir UNO sin tocar los demás. Antes cualquier cambio
+  // hacía `reload()` de /infra entero: todas las tarjetas se remontaban, los puntos de estado
+  // relataban su animación y las franjas se reordenaban. Con la clave del espejo en `service.id`,
+  // React conserva la identidad de cada tarjeta.
+  const flat = useMemo<ServiceRow[]>(
+    () => (data?.projects ?? []).flatMap((p) => p.services.map((sv) => ({ ...sv, projectId: p.projectId }))),
+    [data],
+  );
+  const services = useMirror<ServiceRow>(flat);
+
+  // Los metadatos del proyecto vienen del payload; los servicios, del espejo.
+  const projects = useMemo<InfraProject[]>(
+    () => (data?.projects ?? []).map((p) => ({ ...p, services: services.items.filter((sv) => sv.projectId === p.projectId) })),
+    [data, services.items],
+  );
   const withServices = projects.filter((p) => p.services.length);
   const emptyProjects = projects.filter((p) => !p.services.length);
   const allServices = withServices.flatMap((p) => p.services);
@@ -106,7 +133,7 @@ export default function Infra() {
     <Layout
       title="Infraestructura"
       subtitle="Estado de deploys, salud y métricas por proyecto"
-      actions={<Button variant="outline" size="sm" onClick={reload}><RefreshCw /> Actualizar</Button>}
+      actions={<RefreshButton busy={refetching} onClick={reload} title="Volver a leer el estado" />}
     >
       {error && <ErrorCard message={error} className="mb-4" />}
 
@@ -138,12 +165,12 @@ export default function Infra() {
               projects={withServices.length}
               emptyProjects={emptyProjects}
               isAdmin={isAdmin}
-              onSaved={reload}
+              services={services}
             />
           )}
 
           {withServices.map((p) => (
-            <ProjectSection key={p.projectId} p={p} isAdmin={isAdmin} onChanged={reload} />
+            <ProjectSection key={p.projectId} p={p} isAdmin={isAdmin} services={services} />
           ))}
 
           {!withServices.length && (
@@ -151,7 +178,7 @@ export default function Infra() {
           )}
 
           {/* Sin servicios aún: la barra de resumen no se muestra, así que el selector va aquí de fallback. */}
-          {isAdmin && !allServices.length && !!emptyProjects.length && <LinkToEmptyProject projects={emptyProjects} onSaved={reload} />}
+          {isAdmin && !allServices.length && !!emptyProjects.length && <LinkToEmptyProject projects={emptyProjects} services={services} />}
         </div>
       )}
     </Layout>
@@ -219,22 +246,36 @@ function SummaryBar({
   projects,
   emptyProjects,
   isAdmin,
-  onSaved,
+  services,
 }: {
   total: number;
   counts: Record<ServiceStatus, number>;
   projects: number;
   emptyProjects: InfraProject[];
   isAdmin: boolean;
-  onSaved: () => void;
+  services: Mirror<ServiceRow>;
 }) {
-  const [linkProject, setLinkProject] = useState('');
   const [linkOpen, setLinkOpen] = useState(false);
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border bg-card px-5 py-3.5">
-      <Metric value={projects} label={projects === 1 ? 'proyecto' : 'proyectos'} />
+      {/* Aquí hubo un gauge de anillo con el % de servicios sanos, en dos versiones (arco y
+          anillo), y las dos se veían mal. El motivo no era el componente: esta barra mide 56px de
+          alto, y dentro de un círculo de ese diámetro el hueco interior da ~36px — "100%" en un
+          tamaño legible no cabe ahí sin montarse sobre el trazo. Una gráfica necesita espacio y
+          esta franja no lo tiene, así que el dato va como cifra, que es de lo que está hecha la
+          franja. Si algún día Infra gana una tarjeta con altura propia, ahí sí tiene sentido. */}
+      <MetricCard
+        layout="inline"
+        surface="plain"
+        label="sanos"
+        value={total > 0 ? Math.round(((counts.healthy ?? 0) / total) * 100) : 0}
+        format={(n) => `${n}%`}
+        tone={counts.down ? 'destructive' : counts.degraded ? 'warning' : 'success'}
+      />
       <div className="h-8 w-px bg-border" />
-      <Metric value={total} label={total === 1 ? 'servicio' : 'servicios'} />
+      <MetricCard layout="inline" surface="plain" label={projects === 1 ? 'proyecto' : 'proyectos'} value={projects} />
+      <div className="h-8 w-px bg-border" />
+      <MetricCard layout="inline" surface="plain" label={total === 1 ? 'servicio' : 'servicios'} value={total} />
       <div className="h-8 w-px bg-border" />
       <div className="flex flex-wrap items-center gap-4">
         {(['healthy', 'degraded', 'down', 'paused', 'unknown'] as ServiceStatus[])
@@ -249,33 +290,23 @@ function SummaryBar({
       </div>
 
       {/* Agregar servicios a otro proyecto (admin): alineado a la derecha de la barra de resumen. */}
+      {/* Antes esto era un <Select> que ABRÍA el diálogo desde `onValueChange`. Radix no dispara ese
+          evento si eliges el MISMO valor, y el valor no se limpiaba al cerrar: volver a elegir el
+          mismo proyecto no abría nada, nunca. Ahora es un botón y el proyecto se elige DENTRO. */}
       {isAdmin && emptyProjects.length > 0 && (
         <div className="ml-auto flex items-center gap-2">
-          <span className="hidden text-xs text-muted-foreground sm:inline">Agregar a proyecto:</span>
-          <Select value={linkProject} onValueChange={(v) => { setLinkProject(v); setLinkOpen(true); }}>
-            <SelectTrigger className="h-8 w-48"><SelectValue placeholder="Elige un proyecto…" /></SelectTrigger>
-            <SelectContent>
-              {emptyProjects.map((p) => <SelectItem key={p.projectId} value={p.projectId}>{p.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          {linkProject && <ServiceDialog projectId={linkProject} open={linkOpen} onOpenChange={setLinkOpen} onSaved={onSaved} />}
+          <Button variant="outline" size="sm" onClick={() => setLinkOpen(true)}>
+            <Plus /> Vincular a otro proyecto
+          </Button>
+          <ServiceDialog projects={emptyProjects} open={linkOpen} onOpenChange={setLinkOpen} services={services} />
         </div>
       )}
     </div>
   );
 }
 
-function Metric({ value, label }: { value: number; label: string }) {
-  return (
-    <div className="flex items-baseline gap-1.5">
-      <span className="text-xl font-bold tabular-nums">{value}</span>
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </div>
-  );
-}
-
 // ---- Sección de proyecto ----
-function ProjectSection({ p, isAdmin, onChanged }: { p: InfraProject; isAdmin: boolean; onChanged: () => void }) {
+function ProjectSection({ p, isAdmin, services }: { p: InfraProject; isAdmin: boolean; services: Mirror<ServiceRow> }) {
   const [linkOpen, setLinkOpen] = useState(false);
   const worst = aggregate(p.services);
 
@@ -310,13 +341,15 @@ function ProjectSection({ p, isAdmin, onChanged }: { p: InfraProject; isAdmin: b
           <div key={b.providers.join('-')} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <BandHeader providers={b.providers} />
             {b.items.map((s) => (
-              <ServiceCard key={s.id} projectId={p.projectId} s={s} isAdmin={isAdmin} onChanged={onChanged} />
+              <Fresh key={s.id} fresh={services.isFresh(s.id)} className="h-full">
+                <ServiceCard s={s as ServiceRow} isAdmin={isAdmin} services={services} />
+              </Fresh>
             ))}
           </div>
         ))}
       </div>
 
-      <ServiceDialog projectId={p.projectId} open={linkOpen} onOpenChange={setLinkOpen} onSaved={onChanged} />
+      <ServiceDialog projectId={p.projectId} open={linkOpen} onOpenChange={setLinkOpen} services={services} />
     </section>
   );
 }
@@ -340,25 +373,26 @@ function BandHeader({ providers }: { providers: ServiceProvider[] }) {
 }
 
 // ---- Tarjeta de servicio ----
-function ServiceCard({ projectId, s, isAdmin, onChanged }: { projectId: string; s: InfraService; isAdmin: boolean; onChanged: () => void }) {
+function ServiceCard({ s, isAdmin, services }: { s: ServiceRow; isAdmin: boolean; services: Mirror<ServiceRow> }) {
   const { Icon, accent, chip } = PROVIDER[s.provider];
   const st = STATUS[s.status];
   const title = s.label || (s.provider === 'supabase' ? 'Base de datos' : s.externalRef);
   const [editOpen, setEditOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const busy = services.isBusy(s.id);
 
-  async function unlink() {
-    try {
-      await apiSend('DELETE', `/projects/${projectId}/services/${s.id}`);
-      toast.success('Servicio desvinculado', { description: `${PROVIDER[s.provider].name} · ${title}` });
-      onChanged();
-    } catch (e: any) {
-      toast.error('No se pudo desvincular', { description: String(e.message ?? e) });
-    }
-  }
+  // Desvincular corta el histórico de disponibilidad y no se deshace desde esta pantalla, así que
+  // ahora pide confirmación (antes era un clic en una X de 14px que aparecía al hover) y bloquea el
+  // botón mientras viaja (antes un doble clic mandaba dos DELETE).
+  const unlink = () =>
+    services.remove(s, () => apiSend('DELETE', `/projects/${s.projectId}/services/${s.id}`), {
+      success: { title: 'Servicio desvinculado', description: `${PROVIDER[s.provider].name} · ${title}` },
+      error: 'No se pudo desvincular',
+    });
 
   return (
     <>
-    <Card className="group relative overflow-hidden">
+    <Card className="group relative h-full overflow-hidden">
       <CardContent className="space-y-3 p-4">
         {/* Encabezado */}
         <div className="flex items-start justify-between gap-2">
@@ -376,11 +410,11 @@ function ServiceCard({ projectId, s, isAdmin, onChanged }: { projectId: string; 
             </span>
             {isAdmin && (
               <div className="flex items-center opacity-0 transition group-hover:opacity-100">
-                <button onClick={() => setEditOpen(true)} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground" title="Editar">
+                <button onClick={() => setEditOpen(true)} disabled={busy} className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50" title="Editar">
                   <Pencil className="size-3.5" />
                 </button>
-                <button onClick={unlink} className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive" title="Desvincular">
-                  <X className="size-3.5" />
+                <button onClick={() => setConfirmOpen(true)} disabled={busy} className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50" title="Desvincular">
+                  {busy ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
                 </button>
               </div>
             )}
@@ -394,7 +428,9 @@ function ServiceCard({ projectId, s, isAdmin, onChanged }: { projectId: string; 
             <span className="break-words">{s.error ?? 'No se pudo consultar'}</span>
           </div>
         ) : s.ok === null ? (
-          <div className="rounded-lg bg-muted/50 px-2.5 py-2 text-xs text-muted-foreground">Pendiente de sondear…</div>
+          <div className="rounded-lg bg-muted/50 px-2.5 py-2 text-xs text-muted-foreground">
+            Aún sin sondear · su estado llega en el próximo ciclo (≤15 min)
+          </div>
         ) : s.provider === 'supabase' ? (
           <SupabaseBody s={s} />
         ) : (
@@ -412,7 +448,31 @@ function ServiceCard({ projectId, s, isAdmin, onChanged }: { projectId: string; 
         </div>
       </CardContent>
     </Card>
-    {isAdmin && <ServiceDialog projectId={projectId} service={s} open={editOpen} onOpenChange={setEditOpen} onSaved={onChanged} />}
+    {isAdmin && <ServiceDialog projectId={s.projectId} service={s} open={editOpen} onOpenChange={setEditOpen} services={services} />}
+    {isAdmin && (
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Desvincular {title}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Deja de sondearse y su histórico de disponibilidad se detiene ahí. Puedes volver a
+              vincularlo después con la misma referencia.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancelar</AlertDialogCancel>
+            {/* preventDefault: Radix cerraría el diálogo antes de que salga el DELETE. */}
+            <AlertDialogAction
+              disabled={busy}
+              onClick={(e) => { e.preventDefault(); void unlink().finally(() => setConfirmOpen(false)); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {busy ? <><Loader2 className="animate-spin" /> Desvinculando…</> : 'Desvincular'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    )}
     </>
   );
 }
@@ -452,7 +512,9 @@ function DeployBody({ s }: { s: InfraService }) {
               const ds = mapDeployState(r.state);
               return (
                 <Tooltip key={i}>
-                  <TooltipTrigger asChild><span className={cn('h-3.5 w-1.5 rounded-sm', STATUS[ds].dot)} /></TooltipTrigger>
+                  <TooltipTrigger asChild>
+                    <span className={cn('h-3.5 w-1.5 rounded-full transition-transform duration-fast ease-spring hover:scale-y-125', STATUS[ds].dot)} />
+                  </TooltipTrigger>
                   <TooltipContent>{r.state}{r.createdAt ? ` · ${relative(r.createdAt)}` : ''}</TooltipContent>
                 </Tooltip>
               );
@@ -518,20 +580,16 @@ function mapDeployState(state: string): ServiceStatus {
 }
 
 // ---- Vincular a un proyecto que aún no tiene servicios (admin) ----
-function LinkToEmptyProject({ projects, onSaved }: { projects: InfraProject[]; onSaved: () => void }) {
-  const [projectId, setProjectId] = useState('');
+function LinkToEmptyProject({ projects, services }: { projects: InfraProject[]; services: Mirror<ServiceRow> }) {
   const [open, setOpen] = useState(false);
   return (
     <Card className="border-dashed">
       <CardContent className="flex flex-wrap items-center gap-3 py-4">
-        <span className="text-sm text-muted-foreground">Agregar servicios a otro proyecto:</span>
-        <Select value={projectId} onValueChange={(v) => { setProjectId(v); setOpen(true); }}>
-          <SelectTrigger className="h-9 w-64"><SelectValue placeholder="Elige un proyecto…" /></SelectTrigger>
-          <SelectContent>
-            {projects.map((p) => <SelectItem key={p.projectId} value={p.projectId}>{p.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        {projectId && <ServiceDialog projectId={projectId} open={open} onOpenChange={setOpen} onSaved={onSaved} />}
+        <span className="text-sm text-muted-foreground">Ningún proyecto tiene servicios vinculados todavía.</span>
+        <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+          <Plus /> Vincular el primero
+        </Button>
+        <ServiceDialog projects={projects} open={open} onOpenChange={setOpen} services={services} />
       </CardContent>
     </Card>
   );
@@ -550,17 +608,38 @@ function defaultExtra(p: ServiceProvider): string {
   return p === 'vercel' ? VERCEL_DEFAULT_TEAM : '';
 }
 
-function ServiceDialog({ projectId, service, open, onOpenChange, onSaved }: { projectId: string; service?: InfraService; open: boolean; onOpenChange: (v: boolean) => void; onSaved: () => void }) {
+function ServiceDialog({
+  projectId,
+  projects,
+  service,
+  open,
+  onOpenChange,
+  services,
+}: {
+  /** Proyecto fijo (sección de un proyecto, o edición). */
+  projectId?: string;
+  /** Si no hay proyecto fijo, se elige aquí dentro. */
+  projects?: InfraProject[];
+  service?: ServiceRow;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  services: Mirror<ServiceRow>;
+}) {
   const editing = !!service;
+  const [pid, setPid] = useState(projectId ?? '');
   const [provider, setProvider] = useState<ServiceProvider>('vercel');
   const [externalRef, setExternalRef] = useState('');
   const [label, setLabel] = useState('');
   const [extra, setExtra] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Reset al ABRIR, con dep en el ID del servicio y NUNCA en el objeto: la fila se renueva en cada
+  // revalidación de /infra, así que depender de ella reescribía el formulario mientras escribías
+  // (el mismo bug que 9d02178 arregló en tareas).
   useEffect(() => {
     if (!open) return;
     const p = service?.provider ?? 'vercel';
+    setPid(projectId ?? service?.projectId ?? '');
     setProvider(p);
     setExternalRef(service?.externalRef ?? '');
     setLabel(service?.label ?? '');
@@ -570,7 +649,8 @@ function ServiceDialog({ projectId, service, open, onOpenChange, onSaved }: { pr
     } else {
       setExtra(defaultExtra(p));
     }
-  }, [open, service]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, service?.id, projectId]);
 
   // Al cambiar de proveedor, propone el valor por defecto del campo extra (editable).
   function changeProvider(v: ServiceProvider) {
@@ -579,28 +659,57 @@ function ServiceDialog({ projectId, service, open, onOpenChange, onSaved }: { pr
   }
 
   async function save() {
-    if (!externalRef.trim()) return;
+    const ref = externalRef.trim();
+    if (!ref || !pid) return;
     setBusy(true);
-    try {
-      const config: Record<string, string> = {};
-      if (extra.trim()) {
-        if (provider === 'vercel') config.teamId = extra.trim();
-        else if (provider === 'railway') config.environmentId = extra.trim();
-      }
-      const body = { provider, externalRef: externalRef.trim(), label: label.trim() || null, config };
-      if (editing) {
-        await apiSend('PATCH', `/projects/${projectId}/services/${service!.id}`, body);
-        toast.success('Servicio actualizado', { description: `${PROVIDER[provider].name} · ${externalRef.trim()}` });
-      } else {
-        await apiSend('POST', `/projects/${projectId}/services`, body);
-        toast.success('Servicio vinculado', { description: `${PROVIDER[provider].name} · ${externalRef.trim()}` });
-      }
-      onOpenChange(false);
-      onSaved();
-    } catch (e: any) {
-      toast.error(editing ? 'No se pudo guardar' : 'No se pudo vincular', { description: String(e.message ?? e) });
+    const config: Record<string, string> = {};
+    if (extra.trim()) {
+      if (provider === 'vercel') config.teamId = extra.trim();
+      else if (provider === 'railway') config.environmentId = extra.trim();
+    }
+    const body = { provider, externalRef: ref, label: label.trim() || null, config };
+
+    if (editing) {
+      // Optimista sobre la tarjeta: el endpoint devuelve la fila cruda de la base (snake_case), no
+      // un servicio con estado, así que no hay nada mejor que adoptar — los campos los conocemos.
+      await services.patch(service!, { provider, externalRef: ref, label: body.label, config }, async () => {
+        await apiSend('PATCH', `/projects/${pid}/services/${service!.id}`, body);
+      }, {
+        success: { title: 'Servicio actualizado', description: `${PROVIDER[provider].name} · ${ref}` },
+        error: 'No se pudo guardar',
+      });
+    } else {
+      const draft: ServiceRow = {
+        id: `nuevo:${pid}:${ref}`,
+        projectId: pid,
+        provider,
+        externalRef: ref,
+        label: body.label,
+        config,
+        // `ok: null` es lo que ServiceCard ya pinta como "aún sin sondear": la tarjeta nace honesta.
+        capturedAt: null,
+        ok: null,
+        status: 'unknown',
+        providerStatus: null,
+        active: null,
+        deploy: null,
+        metrics: null,
+        details: null,
+        error: null,
+      };
+      await services.create(draft, async () => {
+        const r = await apiSend<{ service: { id: string } }>('POST', `/projects/${pid}/services`, body);
+        return { ...draft, id: r.service.id };
+      }, {
+        success: {
+          title: 'Servicio vinculado',
+          description: 'Su estado llega en el próximo sondeo (hasta 15 min).',
+        },
+        error: 'No se pudo vincular',
+      });
     }
     setBusy(false);
+    onOpenChange(false);
   }
 
   return (
@@ -611,6 +720,18 @@ function ServiceDialog({ projectId, service, open, onOpenChange, onSaved }: { pr
           <DialogDescription>El sondeo consultará su estado cada 15 min y lo mostrará aquí.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {/* Solo cuando el diálogo no viene de un proyecto concreto. */}
+          {!projectId && !!projects?.length && (
+            <div className="space-y-1.5">
+              <Label htmlFor="svc-project">Proyecto</Label>
+              <Select value={pid} onValueChange={setPid}>
+                <SelectTrigger id="svc-project"><SelectValue placeholder="Elige un proyecto…" /></SelectTrigger>
+                <SelectContent>
+                  {projects.map((pr) => <SelectItem key={pr.projectId} value={pr.projectId}>{pr.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="svc-provider">Proveedor</Label>
             <Select value={provider} onValueChange={(v) => changeProvider(v as ServiceProvider)}>
@@ -639,8 +760,10 @@ function ServiceDialog({ projectId, service, open, onOpenChange, onSaved }: { pr
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button onClick={save} disabled={busy || !externalRef.trim()}>{busy ? 'Guardando…' : editing ? 'Guardar' : 'Vincular'}</Button>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancelar</Button>
+          <Button onClick={save} disabled={busy || !externalRef.trim() || !pid}>
+            {busy ? <><Loader2 className="animate-spin" /> Guardando…</> : editing ? 'Guardar' : 'Vincular'}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

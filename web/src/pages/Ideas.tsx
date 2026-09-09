@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { EmptyState, ErrorCard } from '@/components/bits';
+import { EmptyState, ErrorCard, RefreshButton } from '@/components/bits';
 import { DefinitionBar } from '@/components/ideas/DefinitionMeter';
 import { IdeaDialog } from '@/components/IdeaDialog';
 import { useApi } from '@/lib/useApi';
@@ -41,9 +41,10 @@ export default function Ideas() {
   const [draftId, setDraftId] = useState<string | null>(null);
   const [sort, setSort] = useState<'updated' | 'definition'>('updated');
 
-  const { data, loading, error, reload } = useApi<{ ideas: Idea[] }>(
+  const { data, loading, refetching, error, reload } = useApi<{ ideas: Idea[] }>(
     () => apiGet(`/ideas?${new URLSearchParams({ ...(status ? { status } : {}), ...(mine ? { mine: '1' } : {}) })}`),
     [status, mine],
+    { key: '/ideas', ttl: 30_000 },
   );
 
   const setParam = useCallback(
@@ -96,10 +97,13 @@ export default function Ideas() {
       title="Ideas"
       subtitle="Captura una idea en cuanto llegue y aterrízala contestando lo que falta"
       actions={
-        <Button className="h-9" onClick={create} disabled={creating}>
-          {creating ? <Loader2 className="animate-spin" /> : <Plus />}
-          <span className="ml-1.5">Nueva idea</span>
-        </Button>
+        <>
+          <RefreshButton busy={refetching} onClick={reload} />
+          <Button className="h-9" onClick={create} disabled={creating}>
+            {creating ? <Loader2 className="animate-spin" /> : <Plus />}
+            <span className="ml-1.5">Nueva idea</span>
+          </Button>
+        </>
       }
     >
       <div className="space-y-4">

@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { Activity, TriangleAlert } from 'lucide-react';
-import { UserAvatar } from '@/components/bits';
+import { MatrixLoader, UserAvatar } from '@/components/bits';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useQueueLive } from '@/queue/QueueContext';
 import { inflightPhrase, personOf } from '@/components/queue/QueueRow';
@@ -79,10 +79,9 @@ export function QueuePill() {
       ) : broken && !active ? (
         <TriangleAlert className="ml-1 size-4 shrink-0" />
       ) : (
-        <span className="relative ml-1 grid size-4 shrink-0 place-items-center">
-          <span className="absolute size-2 animate-ping rounded-full bg-primary opacity-75" />
-          <span className="relative size-2 rounded-full bg-primary" />
-        </span>
+        // El `animate-ping` es un pulso que se expande y se desvanece: dice "hay algo" pero no
+        // "está avanzando". La matriz barre, así que se lee como trabajo en curso.
+        <MatrixLoader className="ml-1 size-4 shrink-0 text-primary" />
       )}
 
       <span className="hidden max-w-[15rem] truncate text-[13px] font-medium sm:inline">{phrase}</span>

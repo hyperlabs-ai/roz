@@ -31,15 +31,20 @@ function LandingStyles() {
       @keyframes rozDash   { to { stroke-dashoffset: -36; } }
       @keyframes rozBar    { 0%,100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
       @keyframes rozOrbit  { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      @keyframes rozFade   { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-      .roz-fade { animation: rozFade .35s ease both; }
+      @keyframes rozFade   { from { opacity: 0; transform: translateY(var(--distance-base)); } to { opacity: 1; transform: none; } }
+      .roz-fade { animation: rozFade var(--duration-medium) var(--ease-smooth-out) both; }
 
       /* smooth in-page navigation (offset for the sticky header) */
       html { scroll-padding-top: 84px; }
       @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 
       /* scroll-reveal: blocks fade up as they enter the viewport */
-      [data-reveal] { opacity: 0; transform: translateY(20px); transition: opacity .7s cubic-bezier(.22,.61,.36,1), transform .7s cubic-bezier(.22,.61,.36,1); will-change: opacity, transform; }
+      /* Solo la curva se tokeniza. La duración (.7s) y la distancia (20px) NO corresponden a
+         ningún uso de la escala de transitions.dev — "revelado al hacer scroll en una página
+         larga" no está en su tabla —, y la regla es no forzar un token porque el número quede
+         cerca. Lo mismo aplica a los bucles decorativos de arriba (flujo, órbita, parpadeo):
+         son adorno continuo, no transiciones de estado. */
+      [data-reveal] { opacity: 0; transform: translateY(20px); transition: opacity .7s var(--ease-smooth-out), transform .7s var(--ease-smooth-out); will-change: opacity, transform; }
       [data-reveal].is-visible { opacity: 1; transform: none; }
 
       .roz-conn { position: relative; height: 2px; border-radius: 9999px; background: hsl(var(--border)); overflow: visible; }

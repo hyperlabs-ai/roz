@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { CircleCheck, Inbox, RefreshCw, RotateCw, TriangleAlert } from 'lucide-react';
+import { CircleCheck, Inbox, RotateCw, TriangleAlert } from 'lucide-react';
 import { Layout } from '@/components/Layout';
-import { EmptyState, ErrorCard } from '@/components/bits';
+import { EmptyState, ErrorCard, RefreshButton } from '@/components/bits';
+import { MetricCard } from '@/components/MetricCard';
 import { QueueRow, Ago } from '@/components/queue/QueueRow';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -40,21 +41,10 @@ function LiveDot({ health }: { health: string }) {
   );
 }
 
+/** Cifra suelta de la cola. Es `MetricCard` sin superficie ni icono: misma tipografía y mismo
+ *  count-up que cualquier otra cifra de la app, que era justo lo que no tenía. */
 function Metric({ label, value, tone }: { label: string; value: number; tone?: 'warning' | 'destructive' }) {
-  return (
-    <div>
-      <div
-        className={cn(
-          'text-lg font-semibold tabular-nums leading-none',
-          tone === 'warning' && 'text-warning',
-          tone === 'destructive' && 'text-destructive',
-        )}
-      >
-        {value}
-      </div>
-      <div className="mt-1 text-[11px] text-muted-foreground">{label}</div>
-    </div>
-  );
+  return <MetricCard layout="row" surface="plain" size="sm" label={label} value={value} tone={tone} />;
 }
 
 function HealthBar({ data }: { data: QueueResponse }) {
@@ -123,7 +113,7 @@ function CronBeat({ beat }: { beat: QueueBeat[] }) {
               key={b.minute}
               title={n ? `${n} evento${n > 1 ? 's' : ''}` : 'sin actividad'}
               className={cn(
-                'min-w-px flex-1 rounded-[1.5px] transition-[height] duration-500 ease-spring',
+                'min-w-px flex-1 rounded-full transition-[height,transform] duration-slow ease-spring hover:scale-x-150',
                 b.failed > 0 ? 'bg-warning' : n ? 'bg-chart-1' : 'bg-muted',
               )}
               style={{ height: `${pct}%` }}
@@ -211,11 +201,12 @@ function QueueSkeleton() {
 
 export default function Activity() {
   const { pulse, refresh } = useQueueLive();
-  const { data, loading, error, reload } = useApi<QueueResponse>(() => apiGet('/queue'), []);
+  const { data, loading, refetching, error, reload } = useApi<QueueResponse>(() => apiGet('/queue'), [], { key: '/queue', ttl: 10_000 });
   const [filter, setFilter] = useState<Filter>('all');
 
-  // El historial se sondea aquí; lo en vuelo llega del contexto (que va más rápido).
-  usePoll(reload, HISTORY_MS);
+  // El historial se sondea aquí; lo en vuelo llega del contexto (que va más rápido). Al volver a la
+  // pestaña solo se pide si los datos ya están viejos: asomarse un momento no debe disparar nada.
+  usePoll(reload, HISTORY_MS, { onFocus: 'stale' });
   useEffect(() => { refresh(); }, [refresh]);
 
   // Solo se anima la ENTRADA de filas realmente nuevas. Animar la lista entera en cada sondeo
@@ -245,9 +236,7 @@ export default function Activity() {
       title="Actividad en vivo"
       subtitle="Lo que roz está procesando ahora y a quién se le acreditó"
       actions={
-        <Button variant="outline" size="sm" onClick={reload}>
-          <RefreshCw /> Actualizar
-        </Button>
+        <RefreshButton busy={refetching} onClick={reload} title="Traer lo último de la cola" />
       }
     >
       {error && <ErrorCard message={error} className="mb-4" />}

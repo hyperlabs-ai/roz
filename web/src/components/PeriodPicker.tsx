@@ -20,6 +20,9 @@ export function PeriodPicker({ value, onChange }: { value: PeriodState; onChange
   const pickPreset = (id: PresetId) => {
     if (id === 'custom') return;
     onChange({ ...value, preset: id, range: presetRange(id) });
+    // Se cierra, como ya hacía `applyCustom`. Antes te quedabas mirando el menú abierto sobre una
+    // vista que todavía no había cambiado: parecía que el clic no había hecho nada.
+    setOpen(false);
   };
 
   const applyCustom = () => {

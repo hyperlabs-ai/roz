@@ -5,6 +5,7 @@ import { AuthProvider } from '@/auth/AuthContext';
 import { SyncProvider } from '@/sync/SyncContext';
 import { QueueProvider } from '@/queue/QueueContext';
 import { PresenceProvider } from '@/presence/PresenceContext';
+import { PushProvider } from '@/push/PushContext';
 import { ThemeProvider } from '@/components/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -48,7 +49,9 @@ root.render(
                 <QueueProvider>
                   <PresenceProvider>
                     <SyncProvider>
-                      <App />
+                      <PushProvider>
+                        <App />
+                      </PushProvider>
                     </SyncProvider>
                   </PresenceProvider>
                 </QueueProvider>

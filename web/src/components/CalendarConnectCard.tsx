@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CalendarDays, TriangleAlert, Link2, Unlink } from 'lucide-react';
+import { CalendarDays, TriangleAlert, Link2, Unlink, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useApi } from '@/lib/useApi';
+import { usePoll } from '@/lib/usePoll';
 import { apiGet, apiSend, type CalendarConnection } from '@/lib/api';
 import { relative } from '@/lib/format';
 import { usePresence } from '@/presence/PresenceContext';
@@ -25,7 +27,15 @@ export function CalendarConnectCard() {
   const [params, setParams] = useSearchParams();
   const [busy, setBusy] = useState(false);
   const { refresh: refreshPresence } = usePresence();
-  const { data, reload } = useApi<CalendarConnection>(() => apiGet('/calendar/status'), []);
+  const { data, loading, reload } = useApi<CalendarConnection>(() => apiGet('/calendar/status'), [], {
+    key: '/calendar/status',
+    ttl: 60_000,
+  });
+
+  // Recién conectada, `lastSyncedAt` es null y el estado real lo trae el cron cada 5 min. Se sondea
+  // SOLO en esa ventana, así que la tarjeta se resuelve sola: antes había que recargar la página
+  // para descubrir que sí había funcionado.
+  usePoll(reload, data?.connected && !data.lastSyncedAt ? 30_000 : null);
 
   // Feedback del redirect de Google. Se limpia el query param para que un refresh no vuelva a
   // mostrar el mismo aviso.
@@ -43,6 +53,10 @@ export function CalendarConnectCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [outcome]);
 
+  // Mientras carga se reserva el sitio con un skeleton. Devolver `null` hacía que la tarjeta NO
+  // existiera y luego apareciera de golpe, empujando "Apariencia" y "Cuenta" hacia abajo: un salto
+  // de layout en cada entrada a Configuración.
+  if (loading && !data) return <Skeleton className="h-[188px] w-full rounded-xl" />;
   if (!data?.available) return null; // deploy sin credenciales de Google: no hay nada que ofrecer
 
   const revoked = data.status === 'revoked';
@@ -95,7 +109,7 @@ export function CalendarConnectCard() {
               {data.connected
                 ? data.lastSyncedAt
                   ? `Última sincronización ${relative(data.lastSyncedAt)}`
-                  : 'Sincronizando…'
+                  : 'Sincronizando… tu estado aparece para el equipo en los próximos minutos.'
                 : 'Tu estado no aparece en el dashboard.'}
             </div>
           </div>
@@ -106,8 +120,8 @@ export function CalendarConnectCard() {
             disabled={busy}
             className="shrink-0"
           >
-            {data.connected ? <Unlink /> : <Link2 />}
-            {busy ? '…' : data.connected ? 'Desconectar' : 'Conectar'}
+            {busy ? <Loader2 className="animate-spin" /> : data.connected ? <Unlink /> : <Link2 />}
+            {busy ? (data.connected ? 'Desconectando…' : 'Abriendo Google…') : data.connected ? 'Desconectar' : 'Conectar'}
           </Button>
         </div>
 

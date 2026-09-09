@@ -47,6 +47,76 @@
     --shadow-sm: 0 1px 2px 0 hsl(220 43% 11% / 0.04), 0 1px 3px 0 hsl(220 43% 11% / 0.06);
     --shadow-md: 0 2px 4px -1px hsl(220 43% 11% / 0.06), 0 6px 16px -4px hsl(220 43% 11% / 0.08);
     --shadow-lg: 0 10px 30px -6px hsl(220 43% 11% / 0.12);
+
+    /* ── Escala de movimiento (transitions.dev) ────────────────────────────────────────────
+       Vive aquí y no en un archivo aparte: roz tiene un único CSS y partirlo crearía dos
+       fuentes de verdad para las duraciones. No se re-declara en `.dark` — el movimiento no
+       depende del tema (los COLORES de las recetas sí: se toman de los tokens de arriba, nunca
+       de los hex que traen los snippets originales).
+
+       La regla al adoptar una receta es mapear por USO, no por número: un cierre de modal de
+       300ms va a `--duration-quick` (150ms) porque ambos son "cierre de modal". Si un valor no
+       corresponde a ningún uso de la tabla, se deja como token propio abajo en vez de forzarlo. */
+
+    /* Duraciones */
+    --duration-stagger: 40ms;          /* desfase por elemento en una entrada escalonada */
+    --duration-micro: 80ms;            /* delay de tooltip, segmento de shake, trazo de check */
+    --duration-quick: 150ms;           /* cierre de modal/dropdown, swap de texto, tooltip que entra */
+    --duration-fast: 250ms;            /* icon swap, apertura de modal/dropdown, tabs, page slide */
+    --duration-medium: 350ms;          /* cierre de panel, toast, viaje del toggle */
+    --duration-slow: 400ms;            /* apertura de panel, revelado del skeleton */
+    --duration-very-slow: 500ms;       /* momentos de énfasis: badge, revelado de texto, check */
+
+    /* Curvas. `--ease-smooth-out` ES la curva base del sistema: `ease-spring` de Tailwind la
+       lee (tailwind.config.js), así que hay un único valor y las clases `ease-spring` que ya
+       están repartidas por la app siguen funcionando sin tocar un solo JSX. */
+    --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);   /* aperturas, cierres, cambios de posición */
+    --ease-in-out: ease-in-out;                          /* icon swap, swap de texto, revelados */
+    --ease-out: ease-out;                                /* tooltip */
+    --ease-linear: linear;                               /* shimmer, pulso, spinner */
+    --ease-bounce: cubic-bezier(0.34, 1.36, 0.64, 1);    /* pop del badge, pulgar del toggle */
+    --ease-bounce-strong: cubic-bezier(0.34, 3.85, 0.64, 1); /* regreso del hover (avatares) */
+
+    /* Distancias, escalas y desenfoques */
+    --distance-micro: 4px;             /* swap de texto, overshoot del shake */
+    --distance-small: 6px;             /* shake (segmento corto) */
+    --distance-base: 8px;              /* page slide, shake (segmento largo), pop de dígito */
+    --distance-medium: 12px;           /* revelado de texto */
+    --distance-large: 30px;            /* aparición del check */
+    --scale-large: 0.96;               /* modal */
+    --scale-medium: 0.97;              /* dropdown al abrir, toast */
+    --scale-small: 0.98;               /* tooltip */
+    --scale-tiny: 0.99;                /* dropdown al cerrar */
+    --blur-small: 2px;                 /* icon swap, skeleton, toast, dígitos */
+    --blur-medium: 3px;                /* page slide, revelado de texto, carrete */
+    --blur-large: 8px;                 /* apertura del success check */
+
+    /* Valores que no corresponden a ningún uso de la escala compartida: quedan propios en vez
+       de plegarse al token más cercano. */
+    --resize-dur: 300ms;               /* tween de alto/ancho de un contenedor */
+    --tt-out-dur: 50ms;                /* el tooltip sale casi instantáneo, a propósito */
+    --icon-swap-start-scale: 0.25;     /* el icono que sale colapsa, no solo se desvanece */
+    --shimmer-dur: 2000ms;             /* barrido del shimmer (texto y skeleton) */
+    --digit-stagger: 70ms;             /* desfase entre dígitos al entrar */
+    --digit-ease: cubic-bezier(0.34, 1.45, 0.64, 1);
+    --avatar-lift: -4px;               /* cuánto sube el avatar en hover */
+    --avatar-dur: 320ms;
+    --avatar-scale: 1.05;
+    --avatar-falloff: 0.45;            /* cuánto acompaña el vecino (0 = nada) */
+    --shake-dur-b: 60ms;               /* segmento corto del shake */
+    --revert-hold: 3000ms;             /* cuánto sostiene el estado de error antes de volver */
+    --revert-dur: 280ms;
+    --check-rotate-from: 80deg;         /* de dónde viene girando el check */
+    --check-y-amount: 40px;            /* cuánto rebota en vertical */
+    --check-blur-from: 8px;
+    --toast-distance: 16px;            /* cuánto sube el toast al aparecer */
+    --toggle-travel: 18px;             /* recorrido del pulgar: pista w-9 (34px de contenido) menos 14 del pulgar menos 3 de holgura, el mismo valor que tenía la clase */
+    --think-hold: 2000ms;              /* cuánto sostiene cada estado antes de pasar al siguiente */
+    --think-gap: 50ms;
+    --matrix-cycle: 1200ms;            /* ciclo de la matriz de puntos */
+    --reel-dur: 1400ms;                /* giro del carrete */
+    --reel-stagger: 90ms;
+    --reel-ease: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   /* DARK — first-class, no una inversión automática. Superficies casi neutras (menos azul que
@@ -224,39 +294,49 @@
   @keyframes roz-scale-in { from { opacity: 0; transform: scale(.97) } to { opacity: 1; transform: none } }
   @keyframes roz-slide-in-up { from { opacity: 0; transform: translateY(16px) scale(.98) } to { opacity: 1; transform: none } }
   @keyframes roz-shimmer { 100% { transform: translateX(100%) } }
+  /* Page slide de transitions.dev (08-page-side-by-side) reducido a una sola dirección: la app
+     no navega lateralmente, así que entra desde abajo con desenfoque cruzado. */
+  @keyframes roz-page {
+    from { opacity: 0; transform: translateY(var(--distance-base)); filter: blur(var(--blur-medium)) }
+    to { opacity: 1; transform: none; filter: blur(0) }
+  }
 
-  .animate-fade-in { animation: roz-fade-in .3s ease-out both }
-  .animate-fade-in-up { animation: roz-fade-in-up .45s cubic-bezier(.22,1,.36,1) both }
-  .animate-scale-in { animation: roz-scale-in .35s cubic-bezier(.22,1,.36,1) both }
-  .animate-slide-in-up { animation: roz-slide-in-up .4s cubic-bezier(.22,1,.36,1) both }
+  .animate-fade-in { animation: roz-fade-in var(--duration-fast) var(--ease-out) both }
+  .animate-fade-in-up { animation: roz-fade-in-up var(--duration-very-slow) var(--ease-smooth-out) both }
+  .animate-scale-in { animation: roz-scale-in var(--duration-medium) var(--ease-smooth-out) both }
+  .animate-slide-in-up { animation: roz-slide-in-up var(--duration-slow) var(--ease-smooth-out) both }
 
   /* Transición al cambiar de página (se re-monta por ruta, así que re-dispara). */
-  .animate-page { animation: roz-fade-in-up .42s cubic-bezier(.22,1,.36,1) both }
+  .animate-page { animation: roz-page var(--duration-fast) var(--ease-smooth-out) both }
 
-  /* Entrada escalonada de hijos directos (grids, listas). Delay incremental por posición. */
-  .stagger-children > * { animation: roz-fade-in-up .5s cubic-bezier(.22,1,.36,1) both }
-  .stagger-children > *:nth-child(1) { animation-delay: 30ms }
-  .stagger-children > *:nth-child(2) { animation-delay: 70ms }
-  .stagger-children > *:nth-child(3) { animation-delay: 110ms }
-  .stagger-children > *:nth-child(4) { animation-delay: 150ms }
-  .stagger-children > *:nth-child(5) { animation-delay: 190ms }
-  .stagger-children > *:nth-child(6) { animation-delay: 230ms }
-  .stagger-children > *:nth-child(7) { animation-delay: 270ms }
-  .stagger-children > *:nth-child(8) { animation-delay: 310ms }
-  .stagger-children > *:nth-child(9) { animation-delay: 350ms }
-  .stagger-children > *:nth-child(10) { animation-delay: 390ms }
-  .stagger-children > *:nth-child(n+11) { animation-delay: 420ms }
+  /* Entrada escalonada de hijos directos (grids, listas). El desfase es un múltiplo del token
+     de stagger, así que ajustar el ritmo de toda la app es cambiar un número en `:root`. */
+  .stagger-children > * { animation: roz-fade-in-up var(--duration-very-slow) var(--ease-smooth-out) both }
+  .stagger-children > *:nth-child(1) { animation-delay: calc(var(--duration-stagger) * 1) }
+  .stagger-children > *:nth-child(2) { animation-delay: calc(var(--duration-stagger) * 2) }
+  .stagger-children > *:nth-child(3) { animation-delay: calc(var(--duration-stagger) * 3) }
+  .stagger-children > *:nth-child(4) { animation-delay: calc(var(--duration-stagger) * 4) }
+  .stagger-children > *:nth-child(5) { animation-delay: calc(var(--duration-stagger) * 5) }
+  .stagger-children > *:nth-child(6) { animation-delay: calc(var(--duration-stagger) * 6) }
+  .stagger-children > *:nth-child(7) { animation-delay: calc(var(--duration-stagger) * 7) }
+  .stagger-children > *:nth-child(8) { animation-delay: calc(var(--duration-stagger) * 8) }
+  .stagger-children > *:nth-child(9) { animation-delay: calc(var(--duration-stagger) * 9) }
+  .stagger-children > *:nth-child(10) { animation-delay: calc(var(--duration-stagger) * 10) }
+  .stagger-children > *:nth-child(n+11) { animation-delay: calc(var(--duration-stagger) * 11) }
 
-  /* Elevación al hover para superficies clicables (cards, filas). */
-  .hover-lift { transition: transform .22s cubic-bezier(.22,1,.36,1), box-shadow .22s ease, border-color .22s ease }
+  /* Elevación al hover para superficies clicables (cards, filas). Las tres siguientes conservan
+     su duración: "hover lift", "press" y "nudge de fila" no corresponden a ningún uso de la
+     escala, y la regla es no forzar un token solo porque el número quede cerca. Sí comparten la
+     curva base por token. */
+  .hover-lift { transition: transform .22s var(--ease-smooth-out), box-shadow .22s ease, border-color .22s ease }
   .hover-lift:hover { transform: translateY(-2px) }
 
   /* Feedback de presión para elementos interactivos. */
-  .press { transition: transform .12s cubic-bezier(.22,1,.36,1) }
+  .press { transition: transform .12s var(--ease-smooth-out) }
   .press:active { transform: scale(.97) }
 
   /* Deslizamiento suave en filas de lista al hover. */
-  .row-nudge { transition: background-color .18s ease, transform .18s cubic-bezier(.22,1,.36,1) }
+  .row-nudge { transition: background-color .18s ease, transform .18s var(--ease-smooth-out) }
   .row-nudge:hover { transform: translateX(2px) }
 
   /* Shimmer para skeletons: barrido de luz sobre la superficie. */
@@ -267,9 +347,218 @@
     inset: 0;
     transform: translateX(-100%);
     background: linear-gradient(90deg, transparent, hsl(var(--foreground) / .07), transparent);
-    animation: roz-shimmer 1.6s ease-in-out infinite;
+    animation: roz-shimmer var(--shimmer-dur) var(--ease-linear) infinite;
   }
 }
+
+/* ============================================================================
+   Recetas de transitions.dev, adaptadas a roz.
+
+   Dos adaptaciones que valen la pena entender antes de tocar esto:
+
+   1. Las recetas originales documentan `.is-open` / `.is-closing` con orquestación en JS. Aquí no
+      hace falta: Radix ya expone `data-state="open|closed"` y mantiene el nodo montado durante el
+      cierre. Se selecciona por atributo y se borra el JS.
+   2. Van como @keyframes, NO como transiciones, aunque la receta original use `transition`. El
+      Presence de Radix decide cuándo desmontar leyendo `animationName`: con una transición pura
+      lee `none`, desmonta en el mismo frame y el cierre no se ve nunca. Con animación, espera.
+
+   Los colores NO se copian de los snippets (traen hex tipo #7c7c7c): salen de los tokens de roz,
+   así cada receta funciona en claro y oscuro sin una segunda declaración.
+   ============================================================================ */
+
+/* ---- 06-modal: diálogos y su fondo ---- */
+@keyframes roz-modal-in { from { opacity: 0; transform: translate(-50%, -50%) scale(var(--scale-large)) } to { opacity: 1; transform: translate(-50%, -50%) scale(1) } }
+@keyframes roz-modal-out { from { opacity: 1; transform: translate(-50%, -50%) scale(1) } to { opacity: 0; transform: translate(-50%, -50%) scale(var(--scale-large)) } }
+@keyframes roz-fade-out { from { opacity: 1 } to { opacity: 0 } }
+
+/* El modal ya viene centrado con translate(-50%,-50%) desde las clases de Tailwind; los keyframes
+   lo repiten porque `animation` sobre `transform` pisa el valor estático y sin él salta a la
+   esquina durante la animación. */
+.t-modal[data-state='open'] { animation: roz-modal-in var(--duration-fast) var(--ease-smooth-out) both }
+.t-modal[data-state='closed'] { animation: roz-modal-out var(--duration-quick) var(--ease-smooth-out) both }
+.t-overlay[data-state='open'] { animation: roz-fade-in var(--duration-fast) var(--ease-smooth-out) both }
+.t-overlay[data-state='closed'] { animation: roz-fade-out var(--duration-quick) var(--ease-smooth-out) both }
+
+/* ---- 05-menu-dropdown: menús, popovers y selects ---- */
+/* "Origin-aware": crece desde el disparador, no desde su propio centro. Cada primitivo de Radix
+   publica su propia variable de origen, así que la cadena de fallback deja que una sola clase
+   sirva para los tres (en cada elemento solo una de las tres está definida). */
+@keyframes roz-dropdown-in { from { opacity: 0; transform: scale(var(--scale-medium)) } to { opacity: 1; transform: scale(1) } }
+@keyframes roz-dropdown-out { from { opacity: 1; transform: scale(1) } to { opacity: 0; transform: scale(var(--scale-tiny)) } }
+
+.t-dropdown {
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin,
+                    var(--radix-popover-content-transform-origin,
+                    var(--radix-select-content-transform-origin, center)));
+}
+.t-dropdown[data-state='open'] { animation: roz-dropdown-in var(--duration-fast) var(--ease-smooth-out) both }
+.t-dropdown[data-state='closed'] { animation: roz-dropdown-out var(--duration-quick) var(--ease-smooth-out) both }
+
+/* ---- 17-tooltip: entra con retardo, sale casi instantáneo ---- */
+/* Asimétrico a propósito: el retardo evita que aparezca al pasar el ratón de largo, y la salida
+   rápida evita una estela de tooltips al recorrer una fila de iconos. */
+@keyframes roz-tooltip-in { from { opacity: 0; transform: scale(var(--scale-small)) } to { opacity: 1; transform: scale(1) } }
+.t-tooltip { transform-origin: var(--radix-tooltip-content-transform-origin, center) }
+.t-tooltip[data-state='delayed-open'],
+.t-tooltip[data-state='instant-open'] { animation: roz-tooltip-in var(--duration-quick) var(--ease-out) var(--duration-micro) both }
+.t-tooltip[data-state='closed'] { animation: roz-fade-out var(--tt-out-dur) var(--ease-out) both }
+
+/* ---- 22-toast: NO se aplica, a propósito ---- */
+/* Sonner ya anima sus toasts, y lo hace apilándolos con un `transform: translateY(var(--y))` que
+   recalcula por toast. Aplicar la receta encima significa escribir `transform` sobre el mismo
+   elemento y romper el apilado: los toasts se montan uno sobre otro. Lo único que se le alinea es
+   el desenfoque de entrada, que es aditivo y no toca `transform`. */
+[data-sonner-toast] { transition: filter var(--duration-medium) var(--ease-smooth-out) }
+[data-sonner-toast][data-mounted='false'] { filter: blur(var(--blur-small)) }
+
+/* ---- 09-icon-swap: dos iconos en la misma celda ---- */
+/* El que sale no solo se desvanece: colapsa y se desenfoca, lo que lee como "se convirtió en" en
+   vez de "desapareció y apareció otro". Los dos iconos viven siempre en el DOM. */
+/* La receta original empareja `data-state` con `data-icon` y solo contempla dos iconos. Aquí el
+   activo lo marca el componente con `.is-on`, porque CSS no puede comparar dos atributos entre sí
+   y el selector de tema tiene TRES estados (claro / oscuro / sistema). */
+.t-icon-swap { position: relative; display: inline-grid; place-items: center }
+.t-icon-swap > .t-icon {
+  grid-area: 1 / 1;
+  opacity: 0;
+  filter: blur(var(--blur-small));
+  transform: scale(var(--icon-swap-start-scale));
+  transition:
+    opacity var(--duration-fast) var(--ease-in-out),
+    filter var(--duration-fast) var(--ease-in-out),
+    transform var(--duration-fast) var(--ease-in-out);
+}
+.t-icon-swap > .t-icon.is-on { opacity: 1; filter: blur(0); transform: scale(1) }
+
+/* ---- 27-toggle: el pulgar viaja con doble rebote ---- */
+/* El recorrido sale de un token: el pulgar mide 14px dentro de una pista de 36px con 3px de
+   holgura a cada lado, así que viaja 36 - 14 - 6 = 16px. Antes eran dos `translate-x` literales
+   repartidos en la clase, y la curva era la genérica: con el doble rebote se siente mecánico. */
+.t-toggle-thumb { transition: transform var(--duration-medium) var(--ease-bounce) }
+.t-toggle[aria-checked='true'] > .t-toggle-thumb { transform: translateX(var(--toggle-travel)) }
+.t-toggle[aria-checked='false'] > .t-toggle-thumb { transform: translateX(3px) }
+
+/* ---- 14-skeleton-reveal: NO se aplica, a propósito ---- */
+/* El revelado tendría que ir en el contenedor que aparece cuando llegan los datos, y en la mayoría
+   de las secciones ese contenedor es el de `Revalidating`. Ahí choca: la animación se declara con
+   `both`, así que fija `opacity: 1` para siempre y anula el atenuado con el que `Revalidating`
+   avisa de una revalidación — la señal que costó añadir en el trabajo anterior. Las secciones que
+   ya tienen entrada la resuelven con `.stagger-children`, y el placeholder de roz usa `shimmer`
+   (un barrido) en vez del pulso de la receta, que se lee mejor sobre bloques grandes. */
+
+/* ---- 12-error-state-shake: el shake se siente, no se ve ---- */
+/* Segmentos con duración distinta (largo, corto, largo…) en vez de un seno uniforme: un shake
+   parejo parece decorativo, este parece un "no". */
+@keyframes roz-shake {
+  0% { transform: translateX(0) }
+  15% { transform: translateX(calc(var(--distance-small) * -1)) }
+  30% { transform: translateX(var(--distance-small)) }
+  45% { transform: translateX(calc(var(--distance-micro) * -1)) }
+  60% { transform: translateX(var(--distance-micro)) }
+  100% { transform: translateX(0) }
+}
+.t-shake { animation: roz-shake calc(var(--duration-micro) * 4 + var(--shake-dur-b) * 2) var(--ease-smooth-out) both }
+
+/* ---- 10-success-check: fade + rotación + rebote vertical + trazo del path ---- */
+@keyframes roz-check-in {
+  from { opacity: 0; transform: rotate(var(--check-rotate-from)) translateY(var(--check-y-amount)); filter: blur(var(--check-blur-from)) }
+  to { opacity: 1; transform: none; filter: blur(0) }
+}
+@keyframes roz-check-draw { from { stroke-dashoffset: 100 } to { stroke-dashoffset: 0 } }
+.t-check { animation: roz-check-in var(--duration-very-slow) var(--ease-bounce) both }
+/* El path declara `pathLength="100"`, así que su largo queda normalizado a 100 y el dash cubre
+   exactamente el trazo: offset 100 = invisible, offset 0 = dibujado. Sin esa normalización habría
+   que conocer el largo real del path en unidades de usuario. */
+.t-check-path {
+  stroke-dasharray: 100;
+  animation: roz-check-draw var(--duration-very-slow) var(--ease-smooth-out) var(--duration-micro) both;
+}
+/* Variante compacta: dentro de un botón de 32px, los 40px de rebote y los 80° de giro del original
+   sacan el icono de su caja. Los tres valores son propios de la receta, así que se sobreescriben
+   localmente sin tocar ningún token global. */
+.t-check--inline {
+  --check-y-amount: 8px;
+  --check-rotate-from: 25deg;
+  --check-blur-from: 3px;
+}
+
+/* ---- 02-number-pop-in: cada dígito vuelve a entrar ---- */
+/* Para cifras que cambian por una acción del usuario (un KPI tras cambiar de período). No para
+   contadores que suben solos: ahí sigue el count-up de lib/motion.ts. */
+@keyframes roz-digit-in {
+  from { opacity: 0; transform: translateY(var(--distance-base)); filter: blur(var(--blur-small)) }
+  to { opacity: 1; transform: none; filter: blur(0) }
+}
+.t-digits { display: inline-flex }
+.t-digits > .t-digit { animation: roz-digit-in var(--duration-very-slow) var(--digit-ease) both }
+.t-digits > .t-digit:nth-child(1) { animation-delay: calc(var(--digit-stagger) * 0) }
+.t-digits > .t-digit:nth-child(2) { animation-delay: calc(var(--digit-stagger) * 1) }
+.t-digits > .t-digit:nth-child(3) { animation-delay: calc(var(--digit-stagger) * 2) }
+.t-digits > .t-digit:nth-child(4) { animation-delay: calc(var(--digit-stagger) * 3) }
+.t-digits > .t-digit:nth-child(n+5) { animation-delay: calc(var(--digit-stagger) * 4) }
+
+/* ---- 11-avatar-group-hover: el vecino acompaña, con caída ---- */
+/* El `--avatar-falloff` es lo que hace que se sienta como un grupo y no como N botones sueltos:
+   el de al lado sube una fracción. La salida usa la curva con rebote fuerte. */
+.t-avatars > .t-avatar {
+  transition: transform var(--avatar-dur) var(--ease-bounce-strong);
+  will-change: transform;
+}
+.t-avatars > .t-avatar:hover {
+  transform: translateY(var(--avatar-lift)) scale(var(--avatar-scale));
+  transition-timing-function: var(--ease-smooth-out);
+  z-index: 1;
+}
+.t-avatars > .t-avatar:hover + .t-avatar,
+.t-avatars > .t-avatar:has(+ .t-avatar:hover) {
+  transform: translateY(calc(var(--avatar-lift) * var(--avatar-falloff)));
+  transition-timing-function: var(--ease-smooth-out);
+}
+
+/* ---- 01-card-resize / 21-accordion: el alto se tweenea en vez de saltar ---- */
+/* `grid-template-rows: 0fr → 1fr` es la única forma de animar "hasta el alto del contenido" sin
+   medirlo en JS ni fijar un max-height inventado que recorta cuando el contenido crece. */
+.t-collapse { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--resize-dur) var(--ease-smooth-out) }
+.t-collapse[data-open='true'] { grid-template-rows: 1fr }
+.t-collapse > * { overflow: hidden; min-height: 0 }
+
+/* ---- 28-thinking-states: un estado que se sostiene y se releva ---- */
+/* Para el widget de sincronización ("Encolado → Sincronizando → Listo"): mientras sostiene, el
+   texto tiene shimmer, así se lee "sigue trabajando" y no "se colgó". */
+@keyframes roz-think-in {
+  from { opacity: 0; transform: translateY(var(--distance-base)); filter: blur(var(--blur-small)) }
+  to { opacity: 1; transform: none; filter: blur(0) }
+}
+.t-think { animation: roz-think-in var(--duration-quick) var(--ease-in-out) both }
+.t-think-live {
+  background: linear-gradient(90deg,
+    hsl(var(--muted-foreground)) 0%,
+    hsl(var(--foreground)) 50%,
+    hsl(var(--muted-foreground)) 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: roz-text-shimmer var(--shimmer-dur) var(--ease-linear) infinite;
+}
+/* ---- 15-shimmer-text ---- */
+@keyframes roz-text-shimmer { from { background-position: 150% 0 } to { background-position: -150% 0 } }
+
+/* ---- 31-matrix-loader: matriz de puntos que barre ---- */
+@keyframes roz-matrix { 0%, 100% { opacity: .25 } 40% { opacity: 1 } }
+/* Las filas necesitan medida explícita: los puntos son spans vacíos, y con `grid-auto-rows: auto`
+   colapsan a 0 de alto y la matriz no se ve. */
+.t-matrix { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); gap: 1px }
+.t-matrix > span {
+  border-radius: 9999px;
+  background: currentColor;
+  animation: roz-matrix var(--matrix-cycle) var(--ease-in-out) infinite;
+}
+
+/* ---- 26-spinning-counter: carrete con desenfoque vertical ---- */
+@keyframes roz-reel-blur { 0% { filter: blur(var(--blur-medium)) } 70% { filter: blur(var(--blur-medium)) } 100% { filter: blur(0) } }
+.t-reel { display: inline-block; animation: roz-reel-blur var(--reel-dur) var(--reel-ease) both }
 
 /* Respeta a quien pide menos movimiento: apaga animaciones y transiciones. */
 @media (prefers-reduced-motion: reduce) {

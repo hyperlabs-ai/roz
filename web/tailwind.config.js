@@ -46,7 +46,20 @@ export default {
       },
       transitionTimingFunction: {
         // "spring suave": overshoot mínimo, sensación fluida. Curva base del sistema de movimiento.
-        spring: 'cubic-bezier(.22,1,.36,1)',
+        // Lee el token en vez de repetir el literal: `--ease-smooth-out` (styles.css) es el MISMO
+        // cubic-bezier(.22,1,.36,1), así que las recetas de transitions.dev y las ~40 clases
+        // `ease-spring` ya repartidas por la app comparten un único valor.
+        spring: 'var(--ease-smooth-out)',
+      },
+      transitionDuration: {
+        // Duraciones por token, para poder escribir `duration-fast` en el JSX igual que en el CSS.
+        stagger: 'var(--duration-stagger)',
+        micro: 'var(--duration-micro)',
+        quick: 'var(--duration-quick)',
+        fast: 'var(--duration-fast)',
+        medium: 'var(--duration-medium)',
+        slow: 'var(--duration-slow)',
+        'very-slow': 'var(--duration-very-slow)',
       },
       keyframes: {
         'accordion-down': { from: { height: '0' }, to: { height: 'var(--radix-accordion-content-height)' } },

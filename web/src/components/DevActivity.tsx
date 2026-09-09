@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { GitCommitHorizontal, GitBranch, CircleCheck, Eye } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EmptyState, LineDelta, ErrorCard } from '@/components/bits';
+import { EmptyState, LineDelta, ErrorCard, RefetchBar } from '@/components/bits';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type DeveloperActivity } from '@/lib/api';
 import { relative } from '@/lib/format';
@@ -26,9 +26,10 @@ const DEFAULT_DAYS = 30;
  */
 export function DevActivity({ devId, to }: { devId: string; to: string }) {
   const [days, setDays] = useState<number>(DEFAULT_DAYS);
-  const { data, loading, error } = useApi<DeveloperActivity>(
+  const { data, loading, refetching, error } = useApi<DeveloperActivity>(
     () => apiGet(`/developers/${devId}/activity?days=${days}&to=${encodeURIComponent(to)}`),
     [devId, days, to],
+    { key: '/developers/activity', ttl: 60_000 },
   );
 
   return (
@@ -42,6 +43,7 @@ export function DevActivity({ devId, to }: { devId: string; to: string }) {
               key={w.days}
               onClick={() => setDays(w.days)}
               aria-pressed={days === w.days}
+              disabled={refetching}
               className={cn(
                 'rounded px-2 py-1 text-xs font-medium tabular-nums text-muted-foreground transition-colors hover:text-foreground',
                 days === w.days && 'bg-background text-foreground shadow-sm',
@@ -59,8 +61,12 @@ export function DevActivity({ devId, to }: { devId: string; to: string }) {
             {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
           </div>
         )}
+        {/* Cambiar de ventana (7d/14d/30d/90d) refetchea: la barra lo dice. Aquí la señal va como
+            HERMANO de la lista, no envolviéndola: la lista necesita ser hija directa del CardContent
+            flex para que su `lg:flex-1` y su scroll interno sigan funcionando. */}
+        <RefetchBar active={refetching} className="mb-1 shrink-0" />
         {!loading && data && (data.activity.length ? (
-          <div className="space-y-0.5 scrollbar-thin lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1">
+          <div className={cn("space-y-0.5 scrollbar-thin transition-opacity lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-1", refetching && 'opacity-55')}>
             {data.activity.map((a, i) => (
               <div key={i} className="flex items-center gap-3 border-b py-2 last:border-0">
                 <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted">

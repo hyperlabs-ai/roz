@@ -85,6 +85,24 @@ export const PRIO: Record<string, { label: string; dot: string }> = {
 export const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 /** Color de barra por etiqueta de estado (heurístico): verde terminado, azul en curso, gris pendiente. */
+/**
+ * Posición de un estado en el pipeline, a partir de su ETIQUETA (no de su clave).
+ *
+ * `GET /tickets` agrupa con `STATE_LABEL[status]` en el backend, así que al front llegan etiquetas
+ * en español y en el orden arbitrario en que aparecieron los tickets. Para dibujar un embudo hace
+ * falta el orden real del flujo, y esto lo recupera. Varias claves comparten etiqueta ("En curso"
+ * viene de `en_progreso`, `started` e `in_progress`): se queda con la primera, que es la canónica.
+ */
+const STATE_RANK: Record<string, number> = STATE_ORDER.reduce<Record<string, number>>((acc, key, i) => {
+  const label = STATE_LABEL[key];
+  if (label && !(label in acc)) acc[label] = i;
+  return acc;
+}, {});
+
+export function stateRank(label: string): number {
+  return STATE_RANK[label] ?? 99;
+}
+
 export function stateColorVar(label: string): string {
   const l = label.toLowerCase();
   if (/(done|complet|hecho|cerrad)/.test(l)) return 'hsl(var(--success))';

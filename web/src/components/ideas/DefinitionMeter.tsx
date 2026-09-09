@@ -1,6 +1,7 @@
 import { Check, Circle } from 'lucide-react';
 import { ProgressBar } from '@/components/bits';
-import { definitionBarClass, definitionHint, type DefinitionCheck, type DefinitionScore } from '@/lib/ideas';
+import { RadialGauge } from '@/components/charts';
+import { definitionBarClass, definitionColor, definitionHint, type DefinitionCheck, type DefinitionScore } from '@/lib/ideas';
 import { cn } from '@/lib/utils';
 
 /**
@@ -21,11 +22,15 @@ export function DefinitionMeter({
 }) {
   return (
     <div className={cn('space-y-3', className)}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-2xl font-semibold tabular-nums">{score.pct}%</span>
-        <span className="text-[11px] text-muted-foreground">{definitionHint(score.pct)}</span>
+      {/* Arco en vez de "número + barra recta": el arco tiene techo visible, y el techo es justo
+          la información que importa aquí (cuánto FALTA para tener la idea definida). La frase de
+          apoyo se queda al lado, donde se lee sin competir con la cifra. */}
+      <div className="flex items-center gap-3">
+        <div className="w-28 shrink-0">
+          <RadialGauge pct={score.pct} height={72} size="sm" color={definitionColor(score.pct)} />
+        </div>
+        <span className="min-w-0 flex-1 text-[11px] leading-snug text-muted-foreground">{definitionHint(score.pct)}</span>
       </div>
-      <ProgressBar pct={score.pct} barClassName={definitionBarClass(score.pct)} />
       <ul className="space-y-0.5">
         {[...score.done, ...score.missing].map((check) => {
           const ok = score.done.includes(check);

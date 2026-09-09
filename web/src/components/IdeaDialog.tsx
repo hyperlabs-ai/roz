@@ -16,6 +16,8 @@ import { FeatureList } from '@/components/ideas/FeatureList';
 import { BlockList } from '@/components/ideas/BlockList';
 import { apiGet, apiSend, apiUpload, type Attachment, type Idea, type IdeaBlock, type IdeaDetail, type IdeaFeature } from '@/lib/api';
 import { GUIDED_FIELDS, IDEA_STATUS_OPTIONS, definitionScore, type DefinitionCheck, type GuidedKey } from '@/lib/ideas';
+import { useAction } from '@/lib/useAction';
+import { invalidate } from '@/lib/store';
 import { relative } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -75,6 +77,8 @@ export function IdeaDialog({
   const [tags, setTags] = useState('');
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const action = useAction();
   const [confirmClose, setConfirmClose] = useState(false);
   // La idea se crea al abrir el editor (features y bloques necesitan un idea_id al que colgarse),
   // pero mientras no se guarde NO cuenta como creada: cerrar la tira. Deja de ser descartable en el
@@ -174,17 +178,29 @@ export function IdeaDialog({
     setBusy(false);
   }
 
-  /** Banderas sueltas (estado, compartir): una petición con una sola clave, sin tocar el texto. */
+  /**
+   * Banderas sueltas (estado, compartir): una petición con una sola clave, sin tocar el texto.
+   *
+   * OPTIMISTA: antes el `Select` de estado y el toggle de visibilidad no se movían hasta que
+   * respondía el servidor — el control volvía visualmente al valor anterior durante el vuelo, y
+   * encima cada clic recargaba la rejilla de fondo. Ahora la bandera cambia en el frame del clic,
+   * se revierte sola si falla, y la rejilla se revalida al CERRAR el diálogo, no en cada clic.
+   */
   async function patchFlag(body: { status?: string; shared?: boolean }) {
-    if (!ideaId) return;
-    try {
+    if (!ideaId || !idea) return;
+    const key = body.status !== undefined ? 'flag:status' : 'flag:shared';
+    const before = { status: idea.status, shared: idea.shared };
+    setIdea((prev) => (prev ? { ...prev, ...body } as Idea : prev));
+    const ok = await action.run(key, async () => {
       const { idea: updated } = await apiSend<{ idea: Idea }>('PATCH', `/ideas/${ideaId}`, body);
       // Solo se adopta la bandera: el resto del estado local puede tener cambios sin guardar.
       setIdea((prev) => (prev ? { ...prev, status: updated.status, shared: updated.shared } : updated));
-      onSaved();
-    } catch (e: any) {
-      toast.error('No se pudo guardar', { description: String(e?.message ?? e) });
-    }
+      // La rejilla de fondo se revalida en silencio (antes cada clic disparaba onSaved() y la
+      // recargaba entera con el diálogo abierto encima).
+      invalidate('/ideas');
+      return true;
+    }, { success: false, error: 'No se pudo guardar' });
+    if (!ok) setIdea((prev) => (prev ? { ...prev, ...before } as Idea : prev));
   }
 
   async function removeIdea() {
@@ -204,12 +220,19 @@ export function IdeaDialog({
   // ---- Features ----
   async function addFeature(featureTitle: string) {
     if (!ideaId) return;
-    try {
+    // Optimista con id provisional: la fila aparece al instante y se sustituye por la del servidor.
+    const tmp = `nueva:${Date.now()}`;
+    const draft: IdeaFeature = {
+      id: tmp, title: featureTitle, detail: null, priority: 'media',
+      position: features.length, createdAt: new Date().toISOString(),
+    };
+    setFeatures((prev) => [...prev, draft]);
+    const ok = await action.run('feature:add', async () => {
       const { feature } = await apiSend<{ feature: IdeaFeature }>('POST', `/ideas/${ideaId}/features`, { title: featureTitle });
-      setFeatures((prev) => [...prev, feature]);
-    } catch (e: any) {
-      toast.error('No se pudo añadir la feature', { description: String(e?.message ?? e) });
-    }
+      setFeatures((prev) => prev.map((f) => (f.id === tmp ? feature : f)));
+      return true;
+    }, { success: false, error: 'No se pudo añadir la feature' });
+    if (!ok) setFeatures((prev) => prev.filter((f) => f.id !== tmp));
   }
 
   async function updateFeature(id: string, patch: { title?: string; detail?: string | null; priority?: string }) {
@@ -253,12 +276,21 @@ export function IdeaDialog({
   // ---- Bloques ----
   async function addBlock(kind: string) {
     if (!ideaId) return;
-    try {
+    // El candado de `useAction` es lo que impide que un doble clic cree DOS bloques (el botón no
+    // tenía `disabled`).
+    const tmp = `nuevo:${Date.now()}`;
+    const now = new Date().toISOString();
+    const draft: IdeaBlock = {
+      id: tmp, kind, title: null, body: null, source: null, url: null,
+      resolved: false, position: blocks.length, createdAt: now, updatedAt: now,
+    };
+    setBlocks((prev) => [...prev, draft]);
+    const ok = await action.run(`block:add:${kind}`, async () => {
       const { block } = await apiSend<{ block: IdeaBlock }>('POST', `/ideas/${ideaId}/blocks`, { kind });
-      setBlocks((prev) => [...prev, block]);
-    } catch (e: any) {
-      toast.error('No se pudo añadir el bloque', { description: String(e?.message ?? e) });
-    }
+      setBlocks((prev) => prev.map((b) => (b.id === tmp ? block : b)));
+      return true;
+    }, { success: false, error: 'No se pudo añadir el bloque' });
+    if (!ok) setBlocks((prev) => prev.filter((b) => b.id !== tmp));
   }
 
   async function updateBlock(
@@ -289,6 +321,9 @@ export function IdeaDialog({
   // ---- Imágenes ----
   async function uploadFiles(files: File[]) {
     if (!ideaId || !files.length) return;
+    // Antes seleccionabas tres imágenes y la UI no cambiaba en NADA hasta que iban apareciendo una
+    // por una. `uploading` es la señal que faltaba (como en TaskDialog).
+    setUploading(true);
     for (const file of files) {
       if (!file.type.startsWith('image/')) {
         toast.error('Solo se aceptan imágenes', { description: file.name });
@@ -305,6 +340,7 @@ export function IdeaDialog({
         toast.error('No se pudo subir la imagen', { description: String(e?.message ?? e) });
       }
     }
+    setUploading(false);
   }
 
   async function removeAttachment(id: string) {
@@ -428,6 +464,9 @@ export function IdeaDialog({
                     <FeatureList
                       features={features}
                       readOnly={readOnly}
+                      /* `busy` existía en FeatureList y NUNCA se le pasaba: su spinner era código
+                         muerto y el botón admitía doble clic. */
+                      busy={action.busy('feature:add')}
                       onAdd={addFeature}
                       onUpdate={updateFeature}
                       onDelete={deleteFeature}
@@ -438,6 +477,7 @@ export function IdeaDialog({
                   <BlockList
                     blocks={blocks}
                     readOnly={readOnly}
+                    busyKind={(k) => action.busy(`block:add:${k}`)}
                     handlers={{ onAdd: addBlock, onUpdate: updateBlock, onDelete: deleteBlock }}
                   />
                 </div>
@@ -447,14 +487,24 @@ export function IdeaDialog({
                   <Section title="Definición">
                     <DefinitionMeter score={score} onJump={readOnly ? undefined : jump} />
                     {score.pct === 100 && idea?.status !== 'definida' && !readOnly && (
-                      <Button size="sm" variant="secondary" className="mt-3 w-full text-xs" onClick={() => patchFlag({ status: 'definida' })}>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="mt-3 w-full text-xs"
+                        disabled={action.busy('flag:status')}
+                        onClick={() => patchFlag({ status: 'definida' })}
+                      >
                         Marcar como Definida
                       </Button>
                     )}
                   </Section>
 
                   <Section title="Estado">
-                    <Select value={idea?.status ?? 'semilla'} onValueChange={(v) => patchFlag({ status: v })} disabled={readOnly}>
+                    <Select
+                      value={idea?.status ?? 'semilla'}
+                      onValueChange={(v) => patchFlag({ status: v })}
+                      disabled={readOnly || action.busy('flag:status')}
+                    >
                       <SelectTrigger className="h-8 text-xs">
                         <SelectValue />
                       </SelectTrigger>
@@ -471,7 +521,7 @@ export function IdeaDialog({
                   <Section title="Visibilidad">
                     <button
                       type="button"
-                      disabled={readOnly}
+                      disabled={readOnly || action.busy('flag:shared')}
                       onClick={() => patchFlag({ shared: !idea?.shared })}
                       className={cn(
                         'flex w-full items-start gap-2.5 rounded-lg border p-2.5 text-left transition-colors',
@@ -506,8 +556,14 @@ export function IdeaDialog({
                     title="Imágenes"
                     action={
                       !readOnly && (
-                        <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => fileInput.current?.click()}>
-                          <ImagePlus className="size-3.5" />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          disabled={uploading}
+                          onClick={() => fileInput.current?.click()}
+                        >
+                          {uploading ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
                         </Button>
                       )
                     }
