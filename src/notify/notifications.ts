@@ -6,6 +6,7 @@ import { db } from '../db/supabase.js';
 import { config } from '../config.js';
 import { sendEmail } from '../adapters/email.js';
 import { pushToDev, pushToEmail } from './push.js';
+import { emailAllowed, emailEnabled } from './switches.js';
 import { claimOnce, releaseOnce } from '../events/outbox.js';
 
 interface AssignedPayload {
@@ -121,6 +122,10 @@ export async function notifyProposerDone(opts: {
   name: string;
   url?: string | null;
 }): Promise<void> {
+  // Killswitch: se omite el aviso sin lanzar, para que el evento del outbox cierre en vez de
+  // reintentar hasta morir. El destinatario es un correo suelto (quien reportó), no un dev: solo
+  // aplica el interruptor global.
+  if (!(await emailEnabled())) return;
   const supabase = db();
   const subject = `ROZ · ${opts.identifier} completado${opts.name ? ` — ${opts.name}` : ''}`;
   const { html, text } = renderDoneEmail(opts);
@@ -157,6 +162,10 @@ export async function notifyProposerDone(opts: {
 export async function notifyAssignment(payload: AssignedPayload): Promise<void> {
   const { workItemId, devId, identifier } = payload;
   if (!devId || !identifier) return;
+
+  // Interruptores (global + el del dev) ANTES del guard anti-duplicado: si se consumiera el claim
+  // con los avisos apagados, al reencenderlos este dev ya nunca recibiría el correo.
+  if (!(await emailAllowed(devId))) return;
 
   const supabase = db();
 
@@ -294,6 +303,9 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
  */
 export async function notifyChangesDocumented(devId: string): Promise<void> {
   if (!devId) return;
+  // Interruptores primero: los cambios pendientes se marcan `change_notified` solo tras enviar, así
+  // que salir aquí los deja intactos y se avisarán cuando se reenciendan los avisos.
+  if (!(await emailAllowed(devId))) return;
   const supabase = db();
 
   const { data: dev } = await supabase.from('dev').select('id, name, email').eq('id', devId).single();
@@ -407,6 +419,7 @@ interface RepoNotifyPayload {
 export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<void> {
   const repo = payload.repo;
   if (!repo) return;
+  if (!(await emailEnabled())) return; // killswitch de equipo: nada que enviar, nada que reintentar
   const supabase = db();
 
   const { data } = await supabase.from('dev').select('id, name, email').eq('active', true).not('email', 'is', null);
@@ -418,6 +431,7 @@ export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<vo
 
   for (const dev of devs) {
     if (!dev.email) continue;
+    if (!(await emailAllowed(dev.id))) continue; // silenciado por esta persona (no consume el claim)
     const key = `notify-repo:${repo}:${dev.id}`;
     const firstTime = await claimOnce(key, 'notify-repo');
     if (!firstTime) continue; // ya notificado en un intento previo

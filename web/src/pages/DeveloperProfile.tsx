@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, GitCommitHorizontal, CircleCheck, Timer, Code2, FolderGit2, Pencil, Zap, Eye } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { DeltaBadge, MetricCard } from '@/components/MetricCard';
-import { Donut, MiniArea } from '@/components/charts';
-import { UserAvatar, EmptyState, StateBadge, SkillMeters, ErrorCard } from '@/components/bits';
+import { Columns, Donut, MiniArea } from '@/components/charts';
+import { UserAvatar, EmptyState, StateBadge, SkillMeters, ErrorCard, RefreshButton } from '@/components/bits';
 import { AvailabilityControl } from '@/components/AvailabilityControl';
 import { PresencePanel } from '@/components/PresencePanel';
 import { DeveloperDialog } from '@/components/DeveloperDialog';
@@ -21,6 +21,7 @@ import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip';
 import { HyperTooltip } from '@/components/HyperTooltip';
 import { useApi } from '@/lib/useApi';
+import { invalidate } from '@/lib/store';
 import { apiGet, type DeveloperProfile as Profile } from '@/lib/api';
 import { compact, hours } from '@/lib/format';
 import { comparisonRange } from '@/lib/period';
@@ -35,10 +36,22 @@ export default function DeveloperProfile() {
   const presence = useDevPresence(id);
   const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const compare = useMemo(() => comparisonRange(period.range, period.compare, period.preset), [period.range, period.compare, period.preset]);
-  const { data, loading, error, reload } = useApi<Profile>(
+  const { data, loading, refetching, error, reload } = useApi<Profile>(
     () => apiGet(`/developers/${id}`, period.range, compare),
     [id, period.range.from, period.range.to, compare?.from, compare?.to],
+    { key: '/developers/profile', ttl: 60_000 },
   );
+
+  /**
+   * Disponibilidad que se está mostrando. El slider y el <Select> del diálogo de credenciales
+   * escriben el MISMO campo: sin este override compartido, guardar en uno dejaba al otro mostrando
+   * el valor viejo, y los dos controles se contradecían en la misma pantalla.
+   */
+  const [availability, setAvailability] = useState<number | null>(null);
+  const shownAvailability = availability ?? data?.dev.availability ?? 1;
+  useEffect(() => {
+    if (data && availability !== null && data.dev.availability === availability) setAvailability(null);
+  }, [data, availability]);
 
   return (
     <Layout
@@ -46,6 +59,7 @@ export default function DeveloperProfile() {
       subtitle={data?.dev.githubLogin ? `@${data.dev.githubLogin}` : undefined}
       actions={
         <div className="flex items-center gap-2">
+          <RefreshButton busy={refetching} onClick={reload} />
           {isAdmin && (
             <Button variant="outline" onClick={() => setEditOpen(true)}>
               <Pencil /> Editar credenciales
@@ -116,13 +130,17 @@ export default function DeveloperProfile() {
 
               <Separator orientation="vertical" className="hidden h-12 self-center sm:block" />
               <div className="w-full sm:w-auto sm:shrink-0">
-                <AvailabilityControl devId={data.dev.id} value={data.dev.availability} />
+                <AvailabilityControl
+                  devId={data.dev.id}
+                  value={shownAvailability}
+                  onSaved={(v) => { setAvailability(v); invalidate('/developers'); }}
+                />
               </div>
             </CardContent>
           </Card>
 
           <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            <MetricCard label="Commits" value={data.kpis.commits.value} metric={data.kpis.commits} icon={GitCommitHorizontal} colorVar="--chart-1" />
+            <MetricCard label="Commits" value={data.kpis.commits.value} metric={data.kpis.commits} icon={GitCommitHorizontal} colorVar="--chart-1" trend={data.commitTrend} trendKey="commits" />
             <MetricCard label="Líneas cambiadas" value={data.kpis.linesChanged.value} metric={data.kpis.linesChanged} icon={Code2} format={compact} colorVar="--chart-4" />
             <MetricCard label="Tickets resueltos" value={data.kpis.ticketsResolved.value} metric={data.kpis.ticketsResolved} icon={CircleCheck} colorVar="--chart-3" />
             <MetricCard label="Revisiones" value={data.kpis.reviews.value} metric={data.kpis.reviews} icon={Eye} colorVar="--chart-2" />
@@ -144,22 +162,29 @@ export default function DeveloperProfile() {
             </CardContent>
           </Card>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <Card className="min-w-0 lg:col-span-2">
+          {/* Dos columnas iguales y no 2/3 + 1/3: con la dona a 320px dentro de la tarjeta ancha
+              quedaba un anillo chico flotando entre dos huecos. Ahora lleva su leyenda al lado, así
+              que la tarjeta se acorta. Las dos se estiran a la misma altura: la de Repos absorbe el
+              sobrante en su gráfica (`fill`) y la de la dona lo centra. */}
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <Card className="flex min-w-0 flex-col">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2"><FolderGit2 className="size-4" /> Foco por proyecto</CardTitle>
                 <CardDescription>Dónde se concentra el trabajo (commits)</CardDescription>
               </CardHeader>
-              <CardContent>
-                {data.projects.length ? <Donut data={projectShare(data.projects)} height={320} /> : <EmptyState>Sin actividad</EmptyState>}
+              {/* Una dona no crece de forma útil (es cuadrada), así que esta tarjeta no puede
+                  `fill`. Lo que sí puede es centrar: el alto que le sobra al estirarse a la fila se
+                  reparte arriba y abajo en vez de quedarse todo al pie como un hueco. */}
+              <CardContent className="flex flex-1 flex-col justify-center">
+                {data.projects.length ? <Donut data={projectShare(data.projects)} height={200} layout="side" /> : <EmptyState>Sin actividad</EmptyState>}
               </CardContent>
             </Card>
-            <Card className="min-w-0">
+            <Card className="flex min-w-0 flex-col">
               <CardHeader className="flex-row items-center justify-between space-y-0">
                 <CardTitle>Repos</CardTitle>
                 {data.repos.length > 0 && <span className="text-sm text-muted-foreground tabular-nums">{data.repos.length}</span>}
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-1 flex-col">
                 {data.repos.length ? <RepoBars repos={data.repos} /> : <EmptyState>Sin actividad</EmptyState>}
               </CardContent>
             </Card>
@@ -200,7 +225,12 @@ export default function DeveloperProfile() {
         </>
       )}
 
-      <DeveloperDialog devId={id} open={editOpen} onOpenChange={setEditOpen} onSaved={reload} />
+      <DeveloperDialog
+        devId={id}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        onSaved={() => { reload(); invalidate('/developers'); }}
+      />
     </Layout>
   );
 }
@@ -220,29 +250,17 @@ function projectShare(projects: Profile['projects']): { label: string; value: nu
 }
 
 /**
- * Repos del dev como barras proporcionales. Altura acotada con scroll: sin importar cuántos repos
- * haya, el card no se estira (a diferencia de RankBars, cuya altura crecía con el nº de repos).
+ * Repos del dev como columnas. Top 6: la tarjeta ocupa media fila, y por encima de seis los
+ * nombres de repo se solapan en el eje. El resto se lee en "Ver todos".
  */
 function RepoBars({ repos }: { repos: Profile['repos'] }) {
-  const sorted = [...repos].sort((a, b) => b.commits - a.commits);
-  const max = sorted[0]?.commits || 1;
   return (
-    <div className="space-y-2.5 lg:max-h-[340px] lg:overflow-y-auto lg:pr-3 lg:[scrollbar-color:hsl(var(--border))_transparent] lg:[scrollbar-width:thin] lg:[&::-webkit-scrollbar-thumb]:rounded-full lg:[&::-webkit-scrollbar-thumb]:bg-border hover:lg:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/40 lg:[&::-webkit-scrollbar-track]:bg-transparent lg:[&::-webkit-scrollbar]:w-1.5">
-      {sorted.map((r) => {
-        const name = r.repo.split('/')[1] ?? r.repo;
-        return (
-          <div key={r.repo} className="space-y-1">
-            <div className="flex items-center justify-between gap-2 text-sm">
-              <span className="min-w-0 truncate font-medium">{name}</span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">{r.commits}</span>
-            </div>
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div className="h-full rounded-full" style={{ width: `${(r.commits / max) * 100}%`, background: 'hsl(var(--chart-4))' }} />
-            </div>
-          </div>
-        );
-      })}
-    </div>
+    <Columns
+      fill
+      topN={6}
+      color="hsl(var(--chart-4))"
+      data={repos.map((r) => ({ label: r.repo.split('/')[1] ?? r.repo, value: r.commits }))}
+    />
   );
 }
 
@@ -252,7 +270,8 @@ function TicketList({ tickets }: { tickets: Profile['tickets']['open'] }) {
     <div className="space-y-0.5">
       {tickets.map((t) => (
         <div key={t.id} className="flex items-center gap-3 border-b py-2 last:border-0">
-          <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">{t.identifier}</span>
+          {/* Sin ancho fijo: `w-16` no alcanzaba para `HYPERFLOW-454` y partía en dos renglones. */}
+          <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted-foreground">{t.identifier}</span>
           <span className="min-w-0 flex-1 truncate text-sm">
             {t.url && t.url !== '#' ? <a href={t.url} target="_blank" rel="noreferrer" className="hover:underline">{t.name}</a> : t.name}
           </span>

@@ -1,4 +1,5 @@
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Columns, StackedBar } from '@/components/charts';
 import { compact } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import type { SizeBucket } from '@/lib/api';
@@ -12,11 +13,13 @@ import type { SizeBucket } from '@/lib/api';
 
 // Rampa ORDINAL de un solo hue (azul de marca) micro→grande: magnitud creciente = intensidad
 // creciente, coherente con el tema en light y dark (antes eran sky/violet/amber sueltos).
-const META: Record<SizeBucket['key'], { label: string; range: string; bar: string; dot: string }> = {
-  micro: { label: 'Micro', range: '<30 líneas', bar: 'bg-chart-1/30', dot: 'bg-chart-1/40' },
-  chico: { label: 'Chico', range: '30–300', bar: 'bg-chart-1/55', dot: 'bg-chart-1/60' },
-  mediano: { label: 'Mediano', range: '300–2k', bar: 'bg-chart-1/80', dot: 'bg-chart-1/80' },
-  grande: { label: 'Grande', range: '>2k', bar: 'bg-chart-1', dot: 'bg-chart-1' },
+// `color` (y no solo la clase `bar`) porque las primitivas de gráfica reciben un color, no una
+// clase de Tailwind: el mismo valor sirve para el segmento apilado y para la barra proporcional.
+const META: Record<SizeBucket['key'], { label: string; range: string; color: string; dot: string }> = {
+  micro: { label: 'Micro', range: '<30 líneas', color: 'hsl(var(--chart-1) / 0.3)', dot: 'bg-chart-1/40' },
+  chico: { label: 'Chico', range: '30–300', color: 'hsl(var(--chart-1) / 0.55)', dot: 'bg-chart-1/60' },
+  mediano: { label: 'Mediano', range: '300–2k', color: 'hsl(var(--chart-1) / 0.8)', dot: 'bg-chart-1/80' },
+  grande: { label: 'Grande', range: '>2k', color: 'hsl(var(--chart-1))', dot: 'bg-chart-1' },
 };
 
 /** Barra compacta (para la fila del listado): segmentos = % de líneas por franja de tamaño. */
@@ -27,11 +30,10 @@ export function SizeDistBar({ dist }: { dist: SizeBucket[] }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <div className="mt-2">
-          <div className="flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-muted">
-            {dist.filter((b) => b.lines > 0).map((b) => (
-              <div key={b.key} className={cn('h-full', META[b.key].bar)} style={{ width: `${(100 * b.lines) / totalLines}%` }} />
-            ))}
-          </div>
+          <StackedBar
+            height={6}
+            data={dist.map((b) => ({ label: META[b.key].label, value: b.lines, color: META[b.key].color }))}
+          />
           <div className="mt-1 text-[10px] text-muted-foreground">líneas por tamaño de commit</div>
         </div>
       </TooltipTrigger>
@@ -55,35 +57,32 @@ export function SizeDistBar({ dist }: { dist: SizeBucket[] }) {
   );
 }
 
-/** Panel detallado (para el perfil): por franja, compara % de commits contra % de líneas. */
+/**
+ * Panel detallado (para el perfil): compara el reparto de COMMITS contra el de LÍNEAS por franja.
+ *
+ * Dos gráficas de columnas y no ocho barras horizontales apareadas. El contraste entre las dos es
+ * justo el dato: si "grande" es una rebanada chica en commits pero enorme en líneas, esta persona
+ * mete pocos commits muy gordos. Con dos ejes verticales lado a lado esa diferencia de forma se ve
+ * de un golpe; con barras acostadas había que leer ocho porcentajes.
+ *
+ * `sort={false}`: micro → grande es una escala ordinal y ordenarla por valor la destruye.
+ */
 export function SizeDistPanel({ dist }: { dist: SizeBucket[] }) {
   const totalLines = dist.reduce((s, b) => s + b.lines, 0);
   const totalCommits = dist.reduce((s, b) => s + b.commits, 0);
   if (!totalLines || !totalCommits) return null;
+  const axis = (pick: (b: SizeBucket) => number) =>
+    dist.map((b) => ({ label: META[b.key].label, value: pick(b), color: META[b.key].color }));
   return (
-    <div className="space-y-4">
-      {dist.map((b) => {
-        const commitPct = (100 * b.commits) / totalCommits;
-        const linePct = (100 * b.lines) / totalLines;
-        return (
-          <div key={b.key}>
-            <div className="flex items-baseline justify-between">
-              <span className="inline-flex items-center gap-2 text-sm font-medium">
-                <span className={cn('size-2.5 rounded-full', META[b.key].dot)} />
-                {META[b.key].label} <span className="text-xs font-normal text-muted-foreground">{META[b.key].range === '<30 líneas' ? META[b.key].range : `${META[b.key].range} líneas`}</span>
-              </span>
-            </div>
-            <div className="mt-1.5 grid grid-cols-[3.5rem_1fr_5.5rem] items-center gap-x-2 gap-y-1 text-[11px] tabular-nums text-muted-foreground">
-              <span>commits</span>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className={cn('h-full', META[b.key].bar)} style={{ width: `${commitPct}%` }} /></div>
-              <span className="text-right">{b.commits} ({Math.round(commitPct)}%)</span>
-              <span>líneas</span>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted"><div className={cn('h-full', META[b.key].bar)} style={{ width: `${linePct}%` }} /></div>
-              <span className="text-right">{compact(b.lines)} ({Math.round(linePct)}%)</span>
-            </div>
-          </div>
-        );
-      })}
+    <div className="grid gap-6 sm:grid-cols-2">
+      <div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">Commits por tamaño</div>
+        <Columns data={axis((b) => b.commits)} sort={false} hideZeros={false} height={170} valueFormat={(n) => String(n)} />
+      </div>
+      <div>
+        <div className="mb-2 text-xs font-medium text-muted-foreground">Líneas por tamaño</div>
+        <Columns data={axis((b) => b.lines)} sort={false} hideZeros={false} height={170} />
+      </div>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { sendEmail } from '../adapters/email.js';
 import { pushToDev, pushToEmail } from './push.js';
+import { emailAllowed, emailEnabled } from './switches.js';
 import { getOverview, getDeveloper, listInfra, previousPeriod, type Metric, type Period } from '../dashboard/queries.js';
 
 export interface DigestResult {
@@ -247,6 +248,7 @@ function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof 
  */
 export async function sendDevWeeklyDigests(): Promise<DigestResult> {
   if (!config.resend.apiKey) return { sent: 0, failed: 0, skipped: 'RESEND_API_KEY no configurado' };
+  if (!(await emailEnabled())) return { sent: 0, failed: 0, skipped: 'notificaciones por correo apagadas' };
 
   const period = lastWeekPeriod();
   const cmp = previousPeriod(period);
@@ -262,6 +264,7 @@ export async function sendDevWeeklyDigests(): Promise<DigestResult> {
   let failed = 0;
   for (const dev of devs) {
     if (!dev.email || exclude.has(dev.email.toLowerCase())) continue;
+    if (!(await emailAllowed(dev.id))) continue; // silenciado por esta persona
     const profile = await getDeveloper(dev.id, period, cmp);
     if (!profile) continue;
     // Sin trabajo que resumir esta semana → no se envía (evita correos vacíos).
@@ -290,6 +293,7 @@ export async function sendDevWeeklyDigests(): Promise<DigestResult> {
 export async function sendWeeklyDigest(): Promise<DigestResult> {
   if (!config.digest.recipients.length) return { sent: 0, failed: 0, skipped: 'sin destinatarios' };
   if (!config.resend.apiKey) return { sent: 0, failed: 0, skipped: 'RESEND_API_KEY no configurado' };
+  if (!(await emailEnabled())) return { sent: 0, failed: 0, skipped: 'notificaciones por correo apagadas' };
 
   const period = lastWeekPeriod();
   const [overview, infra] = await Promise.all([getOverview(period, previousPeriod(period)), listInfra()]);

@@ -140,6 +140,12 @@ An **email (Resend)** adapter with branded HTML templates: assignment, close, ch
 repo detected, and the weekly digest. Each notification is an idempotent effect fired by the drain;
 it claims a per-recipient key so a retried event never sends duplicates.
 
+**Switches (killswitch).** `roz.notification_switch` governs whether roz sends at all, with two
+scopes that multiply: **global** (the whole environment) and **per person**. Both are flipped from
+Settings in the dashboard, no redeploy. With a switch off the notice is **skipped silently** instead
+of throwing: the outbox event closes as `done` and the queue does not fill with dead letters — which
+is exactly what happened while Resend failed permanently (unverified domain, exhausted quota).
+
 ### 4. Second brain (on completion)
 Triggered by `work_item.done`, emitted when a task moves to **completed** — either manually in the
 dashboard or automatically when its PR is merged. roz creates/updates a **knowledge atom** with an
@@ -188,7 +194,55 @@ See `migrations/0001_roz_schema.sql`:
 - **commit** — history of reconciled commits (resolved project/dev) for the dashboard.
 - **knowledge_atom / atom_edge** — second brain: an addressable atom and the relationship graph.
 - **notification** — outgoing email (Resend) with send status and `provider_id`.
+- **notification_switch** — send switches: a `global` row (team killswitch) plus one per muted dev.
+  Sending requires both scopes to be on.
 - **outbox_event / idempotency_key** — the event core and idempotency.
+
+### The dashboard SPA (`web/`)
+
+Four pieces carry the feel of the app; each one came from a concrete "the app feels broken" symptom:
+
+- **Session outside React** (`web/src/auth/store.ts`, via `useSyncExternalStore`). supabase-js can
+  emit a TRANSIENT `SIGNED_OUT` when you come back to the tab (expired refresh token, two tabs
+  fighting over it). With the session in a context, that unmounted the whole dashboard. Now a sign-out
+  counts as real only if we asked for it or another tab cleared the session; anything else is
+  recovered silently with backoff (3 tries) while the user keeps working, and `RequireAuth` guarantees
+  that once you are in, no later state swaps the `<Outlet/>`.
+- **Shared stale-while-revalidate cache** (`web/src/lib/store.ts` + `useApi`, opt-in via `key`/`ttl`).
+  Every mount used to start at `loading`, so returning to a section always meant skeletons and a
+  refetch. The cache key embeds the user id and the map is dropped on account change (plus in-flight
+  responses are discarded): those are the three locks against serving another account's data. After a
+  mutation, use `invalidate(prefix)` rather than `reload()`.
+- **Persistent chrome** (`web/src/components/AppShell.tsx`, a route layout). `Layout` keeps its
+  signature and publishes title and actions into the header through a portal, so navigating between
+  sections no longer rebuilds the sidebar, header and queue pill.
+- **Mutations with feedback** (`web/src/lib/useMirror.ts` and `useAction.ts`): optimistic updates,
+  per-row or per-action `busy`, per-entity chaining, partial rollback and adoption of whatever entity
+  the backend returns. Extracted from what fixed Tasks, so no section has to rewrite it.
+
+### Design system (`web/src/styles.css`, `charts.tsx`, `bits.tsx`)
+
+Two more pieces, added when the charts were called out as too basic:
+
+- **One motion scale** (`:root` in `web/src/styles.css`). Durations, easings, distances, scales and
+  blurs come from [transitions.dev](https://transitions.dev), and the recipes live in the same file
+  under `t-*` classes. Two rules: `--ease-smooth-out` **is** Tailwind's `ease-spring` (the config
+  reads the token, so there is one value, not two), and a hardcoded value is only replaced when its
+  USE matches a documented use — "hover lift" and the landing's decorative loops keep their own
+  numbers on purpose. The recipes are written as `@keyframes` over Radix's `data-state` rather than
+  as transitions: Radix's Presence decides when to unmount by reading `animationName`, so with a
+  plain transition the closing animation is never seen. `prefers-reduced-motion` already turns
+  everything off globally.
+- **One component per concept.** `charts.tsx` is the only boundary with recharts; the visual recipe
+  is amicro's "mono" family, ported rather than copied (the originals hardcode their data and their
+  colors). Every colour comes from a token — no hex anywhere in the dataviz — so light and dark need
+  a single declaration. One shape rule, set by the user: comparing categories is
+  always **vertical columns** (`Columns`) — no horizontal bars anywhere, and the ranked list,
+  funnel, radar and the `Bar` primitive were deleted so they cannot creep back. Composition is
+  `Donut` / `StackedBar`; time is `AreaTrend`. `bits.tsx` holds the primitives that used to be
+  duplicated: one `ProgressBar` (was two), one `SegmentMeter` (was three), and `MetricCard`
+  absorbed the five different stat cards that each had their own API and only one of which
+  animated its number.
 
 ### Hybrid retrieval
 Postgres provides **full-text (keyword)** + **pgvector (semantic)** combined with reciprocal rank

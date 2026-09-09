@@ -1,16 +1,21 @@
 import { useMemo } from 'react';
 import { GitCommitHorizontal, Flame, Award, Zap, CalendarCheck } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/bits';
+import { HeatCell, HeatLegend } from '@/components/charts';
+import { MetricCard } from '@/components/MetricCard';
 import { useApi } from '@/lib/useApi';
 import { apiGet, type GithubContributions as Data } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 // Verde de contribución por nivel. LIGHT: los verdes reconocibles de GitHub. DARK: rampa derivada
 // del token --success (verde más mate/opaco, coherente con el tema), no los neón de GitHub.
-const LEVEL_CLASS = [
+//
+// Es la única escala de la app que no sale de la paleta del tema, y es a propósito: se leen como
+// "contribuciones de GitHub" justamente porque son esos verdes. Lo que sí se comparte con el resto
+// de la dataviz es el NODO (`HeatCell`): mismo radio, mismo realce al hover y la misma leyenda.
+const LEVEL_RAMP = [
   'bg-muted',
   'bg-[#9be9a8] dark:bg-success/25',
   'bg-[#40c463] dark:bg-success/45',
@@ -18,7 +23,7 @@ const LEVEL_CLASS = [
   'bg-[#216e39] dark:bg-success',
 ] as const;
 
-const CELL = 'aspect-square w-full rounded-[2px] ring-1 ring-inset ring-foreground/5';
+const CELL = 'aspect-square w-full ring-1 ring-inset ring-foreground/5';
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const WEEKDAYS = ['', 'Lun', '', 'Mié', '', 'Vie', '']; // GitHub solo etiqueta días alternos
 
@@ -29,7 +34,13 @@ function fmtDay(date: string) {
 
 /** Cuadrícula de contribuciones traída directo del perfil de GitHub (últimos 12 meses). */
 export function GithubContributions({ devId }: { devId: string }) {
-  const { data, loading, error } = useApi<Data>(() => apiGet(`/developers/${devId}/contributions`), [devId]);
+  // La cuadrícula viene de una llamada GraphQL a GitHub por 12 meses: cara y casi estática, así
+  // que 10 min de caché y volver al perfil no la vuelve a pedir.
+  const { data, loading, error } = useApi<Data>(
+    () => apiGet(`/developers/${devId}/contributions`),
+    [devId],
+    { key: '/developers/contributions', ttl: 600_000 },
+  );
 
   // Etiqueta de mes por columna: se muestra solo cuando cambia respecto a la semana previa.
   const monthLabels = useMemo(() => {
@@ -121,10 +132,13 @@ export function GithubContributions({ devId }: { devId: string }) {
                         <div key={i} className="flex min-w-0 flex-1 flex-col gap-[2px]">
                           {Array.from({ length: pad }).map((_, p) => <div key={`p${p}`} className="aspect-square w-full" />)}
                           {w.days.map((d) => (
-                            <div
+                            <HeatCell
                               key={d.date}
-                              className={cn(CELL, LEVEL_CLASS[d.level])}
-                              title={`${d.count} ${d.count === 1 ? 'contribución' : 'contribuciones'} · ${d.date}`}
+                              level={d.level}
+                              levels={4}
+                              ramp={LEVEL_RAMP}
+                              size={CELL}
+                              title={`${d.count} ${d.count === 1 ? 'contribución' : 'contribuciones'} · ${fmtDay(d.date)}`}
                             />
                           ))}
                         </div>
@@ -134,14 +148,7 @@ export function GithubContributions({ devId }: { devId: string }) {
                 </div>
               </div>
 
-              {/* Leyenda */}
-              <div className="mt-3 flex items-center justify-end gap-1 text-[10px] text-muted-foreground">
-                <span>Menos</span>
-                {LEVEL_CLASS.map((c, i) => (
-                  <div key={i} className={cn('size-3 rounded-[2px] ring-1 ring-inset ring-black/5 dark:ring-white/5', c)} />
-                ))}
-                <span>Más</span>
-              </div>
+              <HeatLegend levels={4} ramp={LEVEL_RAMP} className="mt-3 justify-end" />
             </div>
           )}
         </CardContent>
@@ -167,10 +174,10 @@ export function GithubContributions({ devId }: { devId: string }) {
         <Card className="min-w-0">
           <CardHeader><CardTitle>Resumen</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 lg:grid-cols-1">
-            <Stat icon={Flame} label="Racha actual" value={`${stats.current} ${stats.current === 1 ? 'día' : 'días'}`} />
-            <Stat icon={Award} label="Racha más larga" value={`${stats.longest} ${stats.longest === 1 ? 'día' : 'días'}`} />
-            <Stat icon={Zap} label="Mejor día" value={String(stats.best)} sub={stats.bestDate ? fmtDay(stats.bestDate) : undefined} />
-            <Stat icon={CalendarCheck} label="Días activos" value={String(stats.active)} />
+            <MetricCard layout="row" surface="plain" icon={Flame} label="Racha actual" value={`${stats.current} ${stats.current === 1 ? 'día' : 'días'}`} />
+            <MetricCard layout="row" surface="plain" icon={Award} label="Racha más larga" value={`${stats.longest} ${stats.longest === 1 ? 'día' : 'días'}`} />
+            <MetricCard layout="row" surface="plain" icon={Zap} label="Mejor día" value={stats.best} sub={stats.bestDate ? fmtDay(stats.bestDate) : undefined} />
+            <MetricCard layout="row" surface="plain" icon={CalendarCheck} label="Días activos" value={stats.active} />
           </CardContent>
         </Card>
       ) : null}
@@ -208,23 +215,6 @@ function ContributionsSkeleton() {
             ))}
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function Stat({ icon: Icon, label, value, sub }: { icon: LucideIcon; label: string; value: string; sub?: string }) {
-  return (
-    <div className="flex items-center gap-2.5">
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-        <Icon className="size-[18px]" />
-      </div>
-      <div className="min-w-0">
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-lg font-bold leading-none tabular-nums">{value}</span>
-          {sub && <span className="truncate text-[11px] text-muted-foreground">{sub}</span>}
-        </div>
-        <div className="mt-1 truncate text-xs text-muted-foreground">{label}</div>
       </div>
     </div>
   );

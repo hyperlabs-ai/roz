@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { toast } from 'sonner';
-import { ArrowLeft, GitCommitHorizontal, CircleCheck, Users, Plus, Minus, ExternalLink, X, GitBranch, RefreshCw, Check, CircleAlert, Search } from 'lucide-react';
+import { ArrowLeft, GitCommitHorizontal, CircleCheck, Users, Plus, Minus, ExternalLink, X, GitBranch, RefreshCw, Check, CircleAlert, Search, Loader2 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
-import { AreaTrend, RankBars } from '@/components/charts';
-import { UserAvatar, EmptyState, LineDelta } from '@/components/bits';
+import { AreaTrend, Columns } from '@/components/charts';
+import { MetricCard } from '@/components/MetricCard';
+import { UserAvatar, EmptyState, LineDelta, ErrorCard, Fresh, ProgressBar, RefreshButton, Revalidating } from '@/components/bits';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -16,27 +16,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useApi } from '@/lib/useApi';
+import { useMirror } from '@/lib/useMirror';
+import { useAction } from '@/lib/useAction';
+import { invalidate } from '@/lib/store';
 import { useSync } from '@/sync/SyncContext';
+import { isSyncDone, isSyncError } from '@/sync/status';
 import { apiGet, apiSend, type ProjectDetail as Detail, type RepoSyncStatus } from '@/lib/api';
 import { compact, relative } from '@/lib/format';
 import { usePeriod } from '@/lib/usePeriod';
 import { cn } from '@/lib/utils';
 import { PRIO_DOT } from '@/lib/labels';
-
-function MiniStat({ icon, label, value, valueClassName, className }: { icon: React.ReactNode; label: string; value: string; valueClassName?: string; className?: string }) {
-  return (
-    <Card className={className}>
-      <CardContent className="flex items-center gap-3 p-4">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">{icon}</div>
-        <div className="min-w-0">
-          <div className={cn('text-xl font-bold tabular-nums', valueClassName)}>{value}</div>
-          <div className="text-xs text-muted-foreground">{label}</div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function syncPct(s?: RepoSyncStatus): number | null {
   return s?.totalPages ? Math.min(100, Math.round((s.pages / s.totalPages) * 100)) : null;
@@ -48,19 +42,20 @@ function syncPct(s?: RepoSyncStatus): number | null {
  * "Listo ✓" efímero (solo si la corrida es reciente, para no dejar checks permanentes); en error,
  * una etiqueta roja con reintento. En reposo, la fila queda limpia y las acciones aparecen al hover.
  */
-function RepoRow({ repo, status, live, isAdmin, active, onResync, onRemove }: {
+function RepoRow({ repo, status, live, isAdmin, active, busy, onResync, onRemove }: {
   repo: string;
   status?: RepoSyncStatus;
   live: boolean;
   isAdmin: boolean;
   active: boolean;
+  busy: boolean;
   onResync: () => void;
   onRemove: () => void;
 }) {
   const name = repo.replace('hyperlabs-ai/', '');
   const pct = syncPct(status);
-  const isError = status?.status === 'error';
-  const justDone = status?.status === 'completada' && live;
+  const isError = !!status && isSyncError(status);
+  const justDone = !!status && isSyncDone(status) && live;
 
   return (
     <div className="group relative flex items-center gap-2 rounded-lg border bg-card px-2.5 py-2 transition-colors hover:border-primary/30 hover:bg-accent/40">
@@ -71,9 +66,9 @@ function RepoRow({ repo, status, live, isAdmin, active, onResync, onRemove }: {
 
       {active ? (
         <div className="flex shrink-0 items-center gap-1.5" title={`${status?.commits ?? 0} commits · ${status?.pages ?? 0}${status?.totalPages ? `/${status.totalPages}` : ''} páginas`}>
-          <div className={cn('h-1.5 w-12 overflow-hidden rounded-full bg-muted', pct == null && 'shimmer')}>
-            <div className="h-full rounded-full bg-primary transition-[width] duration-500 ease-spring" style={{ width: pct != null ? `${pct}%` : '35%' }} />
-          </div>
+          {/* `pct == null` cuando el backfill todavía no sabe cuántas páginas hay: indeterminado,
+              que es justo lo que `ProgressBar` pinta con el barrido en vez de un 35% inventado. */}
+          <ProgressBar pct={pct} className="h-1.5 w-12" />
           <span className="w-7 text-right text-[11px] tabular-nums text-muted-foreground">
             {status?.status === 'queued' ? '···' : pct != null ? `${pct}%` : status?.commits ?? 0}
           </span>
@@ -89,11 +84,21 @@ function RepoRow({ repo, status, live, isAdmin, active, onResync, onRemove }: {
       {isAdmin && (
         <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-accent/90 pl-1.5 opacity-0 shadow-sm backdrop-blur-sm transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
           {!active && (
-            <button onClick={onResync} title={isError ? 'Reintentar sincronización' : 'Re-sincronizar historial'} className="press rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-foreground">
-              <RefreshCw className="size-3.5" />
+            <button
+              onClick={onResync}
+              disabled={busy}
+              title={isError ? 'Reintentar sincronización' : 'Re-sincronizar historial'}
+              className="press rounded-md p-1.5 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-50"
+            >
+              <RefreshCw className={cn('size-3.5', busy && 'animate-spin')} />
             </button>
           )}
-          <button onClick={onRemove} title="Desvincular" className="press rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive">
+          <button
+            onClick={onRemove}
+            disabled={busy}
+            title="Desvincular"
+            className="press rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+          >
             <X className="size-3.5" />
           </button>
         </div>
@@ -104,10 +109,12 @@ function RepoRow({ repo, status, live, isAdmin, active, onResync, onRemove }: {
 
 /** Autocomplete propio para vincular un repo: input con búsqueda + lista flotante navegable con
  *  teclado. Reemplaza el <datalist> nativo (feo y con estilos del sistema). */
-function RepoCombobox({ available, linked, busy, onAdd }: {
+function RepoCombobox({ available, linked, busy, error, onAdd }: {
   available: string[];
   linked: string[];
   busy: boolean;
+  /** Falló traer la lista de la org: se dice, en vez de mostrar un combo vacío sin explicación. */
+  error: string | null;
   onAdd: (repo: string) => void;
 }) {
   const [q, setQ] = useState('');
@@ -159,6 +166,12 @@ function RepoCombobox({ available, linked, busy, onAdd }: {
         </div>
         <Button onClick={() => submit(q)} disabled={busy || !q.trim()}><Plus /> Vincular</Button>
       </div>
+      {error && (
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          No se pudo traer la lista de repos de la organización ({error}). Puedes escribir{' '}
+          <span className="font-mono">org/repo</span> a mano.
+        </p>
+      )}
       {open && matches.length > 0 && (
         <div className="animate-fade-in-up absolute z-20 mt-1.5 w-full overflow-hidden rounded-lg border bg-popover shadow-lg">
           <ul className="scrollbar-thin max-h-64 overflow-y-auto py-1">
@@ -187,16 +200,38 @@ export default function ProjectDetail() {
   const { user } = useAuth();
   const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const [period, setPeriod] = usePeriod();
-  const [busy, setBusy] = useState(false);
-  const [available, setAvailable] = useState<string[]>([]);
-  const { syncs, trigger, isActive } = useSync();
-  const { data, loading, reload } = useApi<Detail>(() => apiGet(`/projects/${id}`, period.range), [id, period.range.from, period.range.to]);
+  const [confirmRepo, setConfirmRepo] = useState<string | null>(null);
+  const action = useAction();
+  const { syncs, trigger, track, isActive } = useSync();
+  const { data, loading, refetching, error, reload } = useApi<Detail>(
+    () => apiGet(`/projects/${id}`, period.range),
+    [id, period.range.from, period.range.to],
+    { key: '/projects/detail', ttl: 60_000 },
+  );
 
-  // Autocomplete: repos de la org (solo admin; una vez).
+  // Espejo de los repos vinculados: vincular o desvincular sustituye UNA fila en vez de recargar la
+  // consulta más pesada de la página (historial, tendencia, contribuidores, tickets).
+  const repos = useMirror<string>(data?.repos, { key: (r) => r });
+
+  /**
+   * Autocomplete: repos de la org. En el backend son hasta 20 páginas SECUENCIALES a GitHub, y antes
+   * se pedían en CADA montaje de esta página aunque nadie fuera a vincular nada. Ahora va por la
+   * caché (10 min, compartida entre proyectos) y solo se pide cuando el panel de admin está visible.
+   */
+  const repoList = useApi<{ repos: string[] }>(
+    () => apiGet('/repos/available'),
+    [],
+    { key: '/repos/available', ttl: 600_000 },
+  );
+  const available = isAdmin ? repoList.data?.repos ?? [] : [];
+
+  // Cliente/Interno con override local, para que el botón responda al clic (ver `changeKind`).
+  const [kindOverride, setKindOverride] = useState<'client' | 'internal' | null>(null);
+  const kind = kindOverride ?? data?.project.kind ?? 'internal';
   useEffect(() => {
-    if (!isAdmin) return;
-    apiGet<{ repos: string[] }>('/repos/available').then((r) => setAvailable(r.repos)).catch(() => {});
-  }, [isAdmin]);
+    // El servidor ya confirma lo que pintamos: se suelta el override para no quedarnos pegados a él.
+    if (data && kindOverride && data.project.kind === kindOverride) setKindOverride(null);
+  }, [data, kindOverride]);
 
   // Estado de sync en vivo desde el widget global (no repolleamos la página aquí); el inicial del
   // payload sirve de fallback en el primer render.
@@ -210,60 +245,86 @@ export default function ProjectDetail() {
   useEffect(() => {
     for (const s of syncs) {
       const key = `${s.repo}:${s.updatedAt}`;
-      if (s.status === 'completada' && (data?.repos ?? []).includes(s.repo) && !doneSeen.current.has(key)) {
+      if (isSyncDone(s) && (data?.repos ?? []).includes(s.repo) && !doneSeen.current.has(key)) {
         doneSeen.current.add(key);
+        // El backfill acaba de escribir commits y líneas: se revalidan las vistas que los agregan.
+        // Silencioso (los datos actuales siguen en pantalla), no un reload con skeletons.
         reload();
+        invalidate('/projects');
+        invalidate('/overview');
+        invalidate('/developers');
       }
     }
   }, [syncs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function resyncRepo(repo: string) {
-    try {
-      await trigger(id!, repo);
-    } catch (e: any) {
-      toast.error('No se pudo re-sincronizar', { description: String(e.message ?? e) });
-    }
-  }
+  const resyncRepo = (repo: string) =>
+    action.run(`resync:${repo}`, () => trigger(id!, repo), {
+      success: { title: 'Re-sincronizando', description: 'El avance va abajo a la derecha.' },
+      error: 'No se pudo re-sincronizar',
+    });
 
-  async function linkRepo(repo: string) {
-    const v = repo.trim();
-    if (!v) return;
-    setBusy(true);
-    try {
-      await apiSend('POST', `/projects/${id}/repos`, { repo: v });
-      toast.success('Repo vinculado', { description: v });
-      reload();
-    } catch (e: any) {
-      toast.error('No se pudo vincular', { description: String(e.message ?? e) });
-    }
-    setBusy(false);
-  }
+  const linkRepo = (repo: string) =>
+    repos.create(
+      repo.trim(),
+      async () => {
+        const r = await apiSend<{ repo?: string }>('POST', `/projects/${id}/repos`, { repo: repo.trim() });
+        // El POST YA encoló el backfill (`src/routes/dashboard.ts`); `track` solo empieza a mirarlo
+        // — con `trigger` se encolaría un SEGUNDO backfill del mismo repo. Sin esto, vincular no
+        // mostraba progreso alguno y parecía que no había pasado nada, mientras el historial se
+        // traía en segundo plano.
+        const normalized = r.repo ?? repo.trim();
+        track(id!, normalized);
+        return normalized; // el backend lo normaliza (minúsculas, sin URL): se adopta esa forma
+      },
+      {
+        success: {
+          title: 'Repo vinculado',
+          description: 'Trayendo su historial — verás el avance abajo a la derecha (≈1 min por cada 100 commits).',
+        },
+        error: 'No se pudo vincular',
+      },
+    );
 
-  async function removeRepo(repo: string) {
-    try {
-      await apiSend('DELETE', `/projects/${id}/repos?repo=${encodeURIComponent(repo)}`);
-      toast.success('Repo desvinculado', { description: repo });
-      reload();
-    } catch (e: any) {
-      toast.error('No se pudo desvincular', { description: String(e.message ?? e) });
-    }
-  }
+  const removeRepo = (repo: string) =>
+    repos.remove(repo, () => apiSend('DELETE', `/projects/${id}/repos?repo=${encodeURIComponent(repo)}`), {
+      success: { title: 'Repo desvinculado', description: repo },
+      error: 'No se pudo desvincular',
+    }).then(() => invalidate('/projects'));
 
-  async function changeKind(kind: 'client' | 'internal') {
-    try {
-      await apiSend('PATCH', `/projects/${id}`, { kind });
-      toast.success(kind === 'client' ? 'Marcado como Cliente' : 'Marcado como Interno');
-      reload();
-    } catch (e: any) {
-      toast.error('No se pudo cambiar', { description: String(e.message ?? e) });
-    }
-  }
+  /** Cliente/Interno optimista: el botón cambia de texto en el frame del clic y vuelve solo si el
+   *  PATCH falla. Antes descartaba el proyecto que devuelve el endpoint y recargaba la página
+   *  entera, así que el botón seguía diciendo el valor viejo durante segundos. */
+  const changeKind = async (next: 'client' | 'internal') => {
+    const prev = kind;
+    if (next === prev) return;
+    setKindOverride(next);
+    const ok = await action.run('kind', async () => {
+      await apiSend('PATCH', `/projects/${id}`, { kind: next });
+      invalidate('/projects'); // la lista y este detalle se revalidan por prefijo, en silencio
+      return true;
+    }, {
+      success: next === 'client' ? 'Marcado como Cliente' : 'Marcado como Interno',
+      error: 'No se pudo cambiar',
+    });
+    if (!ok) setKindOverride(prev);
+  };
 
   return (
-    <Layout title={data?.project.name ?? 'Proyecto'} subtitle={data?.project.key} actions={<PeriodPicker value={period} onChange={setPeriod} />}>
+    <Layout
+      title={data?.project.name ?? 'Proyecto'}
+      subtitle={data?.project.key}
+      actions={
+        <>
+          <RefreshButton busy={refetching} onClick={reload} />
+          <PeriodPicker value={period} onChange={setPeriod} />
+        </>
+      }
+    >
       <Button asChild variant="ghost" size="sm" className="mb-4 -ml-2 text-muted-foreground">
         <Link to="/app/projects"><ArrowLeft /> Proyectos</Link>
       </Button>
+
+      {error && <ErrorCard message={error} className="mb-4" />}
 
       {loading || !data ? (
         <div className="space-y-4">
@@ -271,25 +332,31 @@ export default function ProjectDetail() {
           <Skeleton className="h-64" />
         </div>
       ) : (
-        <>
+        <Revalidating active={refetching}>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <MiniStat icon={<GitCommitHorizontal className="size-[18px]" />} label="Commits" value={String(data.totals.commits)} className="col-span-2 lg:col-span-1" />
-            <MiniStat icon={<Plus className="size-[18px] text-success" />} label="Líneas agregadas" value={compact(data.totals.additions)} valueClassName="text-success" />
-            <MiniStat icon={<Minus className="size-[18px] text-destructive" />} label="Líneas eliminadas" value={compact(data.totals.deletions)} valueClassName="text-destructive" />
-            <MiniStat icon={<CircleCheck className="size-[18px]" />} label="Tickets resueltos" value={String(data.totals.ticketsResolved)} />
-            <MiniStat icon={<Users className="size-[18px]" />} label="Contribuidores" value={String(data.totals.contributors)} />
+            {/* `layout="row"` es la forma que tenía MiniStat; ahora la da MetricCard, así que estas
+                cinco cifras ganan el count-up que solo tenían las de Overview. El tinte del icono
+                sale del token, no de una clase en el SVG. */}
+            <MetricCard layout="row" icon={<GitCommitHorizontal className="size-[18px]" />} label="Commits" value={data.totals.commits} className="col-span-2 lg:col-span-1" />
+            <MetricCard layout="row" icon={<Plus className="size-[18px]" />} label="Líneas agregadas" value={data.totals.additions} format={compact} colorVar="--success" tone="success" />
+            <MetricCard layout="row" icon={<Minus className="size-[18px]" />} label="Líneas eliminadas" value={data.totals.deletions} format={compact} colorVar="--destructive" tone="destructive" />
+            <MetricCard layout="row" icon={<CircleCheck className="size-[18px]" />} label="Tickets resueltos" value={data.totals.ticketsResolved} />
+            <MetricCard layout="row" icon={<Users className="size-[18px]" />} label="Contribuidores" value={data.totals.contributors} />
           </div>
 
           <Card className="mt-4">
             <CardHeader className="flex-row items-center justify-between space-y-0">
               <div className="flex items-center gap-2">
                 <CardTitle className="flex items-center gap-2"><GitBranch className="size-4" /> Repositorios</CardTitle>
-                <span className="text-sm text-muted-foreground">{data.repos.length}</span>
+                <span className="text-sm text-muted-foreground">{repos.items.length}</span>
               </div>
               {isAdmin ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">{data.project.kind === 'client' ? 'Cliente' : 'Interno'}</Button>
+                    <Button variant="outline" size="sm" disabled={action.busy('kind')}>
+                      {action.busy('kind') && <Loader2 className="animate-spin" />}
+                      {kind === 'client' ? 'Cliente' : 'Interno'}
+                    </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => changeKind('client')}>Cliente</DropdownMenuItem>
@@ -297,25 +364,28 @@ export default function ProjectDetail() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               ) : (
-                <Badge variant={data.project.kind === 'client' ? 'default' : 'secondary'}>
-                  {data.project.kind === 'client' ? 'Cliente' : 'Interno'}
+                <Badge variant={kind === 'client' ? 'default' : 'secondary'}>
+                  {kind === 'client' ? 'Cliente' : 'Interno'}
                 </Badge>
               )}
             </CardHeader>
             <CardContent>
-              {data.repos.length ? (
+              {repos.items.length ? (
                 <div className="grid gap-1.5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {data.repos.map((r) => (
-                    <RepoRow
-                      key={r}
-                      repo={r}
-                      status={statusFor(r)}
-                      live={liveSet.has(r)}
-                      isAdmin={isAdmin}
-                      active={isActive(r)}
-                      onResync={() => resyncRepo(r)}
-                      onRemove={() => removeRepo(r)}
-                    />
+                  {repos.items.map((r) => (
+                    // `rounded-lg` para que el anillo de "recién vinculado" calce con la fila.
+                    <Fresh key={r} fresh={repos.isFresh(r)} className="rounded-lg">
+                      <RepoRow
+                        repo={r}
+                        status={statusFor(r)}
+                        live={liveSet.has(r)}
+                        isAdmin={isAdmin}
+                        active={isActive(r)}
+                        busy={repos.isBusy(r) || action.busy(`resync:${r}`)}
+                        onResync={() => resyncRepo(r)}
+                        onRemove={() => setConfirmRepo(r)}
+                      />
+                    </Fresh>
                   ))}
                 </div>
               ) : (
@@ -323,7 +393,13 @@ export default function ProjectDetail() {
               )}
               {isAdmin && (
                 <div className="mt-4 border-t pt-4">
-                  <RepoCombobox available={available} linked={data.repos} busy={busy} onAdd={linkRepo} />
+                  <RepoCombobox
+                    available={available}
+                    linked={repos.items}
+                    busy={repos.busyCount > 0}
+                    error={repoList.error}
+                    onAdd={linkRepo}
+                  />
                 </div>
               )}
             </CardContent>
@@ -375,7 +451,12 @@ export default function ProjectDetail() {
                         className="flex items-center gap-2.5 rounded-md px-1 py-1.5 hover:bg-accent"
                       >
                         <span className={cn('size-2 shrink-0 rounded-full', PRIO_DOT[t.priority ?? ''] ?? 'bg-muted')} title={t.priority ?? 'sin prioridad'} />
-                        <span className="w-14 shrink-0 font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
+                        {/* Sin ancho fijo y sin envolver: `w-14` no alcanzaba para
+                            `HYPERFLOW-454` y el identificador partía en dos renglones, que es lo
+                            que rompía la fila. El título de al lado ya absorbe el sobrante con su
+                            `flex-1 truncate`, y truncar el identificador no es opción: lo que se
+                            recortaría es el número, que es justo lo que identifica al ticket. */}
+                        <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
                         <span className="min-w-0 flex-1 truncate text-sm">{t.name}</span>
                         {t.assignee && <UserAvatar url={t.assignee.avatarUrl} name={t.assignee.name} className="size-5 shrink-0" />}
                       </a>
@@ -384,20 +465,32 @@ export default function ProjectDetail() {
                 </CardContent>
               </Card>
 
-              <Card className="min-w-0">
+              <Card className="flex min-w-0 flex-col">
                 <CardHeader><CardTitle>Actividad por repo</CardTitle></CardHeader>
-                <CardContent>
+                <CardContent className="flex flex-1 flex-col">
                   {data.byRepo.length ? (
-                    <RankBars data={data.byRepo.map((r) => ({ label: r.repo, value: r.commits }))} color="hsl(var(--chart-4))" height={Math.max(data.byRepo.length * 30, 60)} />
+                    // El nombre corto del repo: `hyperlabs-ai/hyperflow-app` no cabe como
+                    // etiqueta de eje, y el prefijo es el mismo en todos, así que no distingue.
+                    <Columns
+                      fill
+                      topN={5}
+                      color="hsl(var(--chart-4))"
+                      data={data.byRepo.map((r) => ({ label: r.repo.split('/').pop() ?? r.repo, value: r.commits }))}
+                    />
                   ) : <EmptyState>Sin repos</EmptyState>}
                 </CardContent>
               </Card>
 
-              <Card className="min-w-0">
+              <Card className="flex min-w-0 flex-col">
                 <CardHeader><CardTitle>Tickets por estado</CardTitle></CardHeader>
-                <CardContent>
+                <CardContent className="flex flex-1 flex-col">
                   {data.ticketsByStatus.length ? (
-                    <RankBars data={data.ticketsByStatus.map((s) => ({ label: s.label, value: s.count }))} color="hsl(var(--chart-5))" height={Math.max(data.ticketsByStatus.length * 30, 60)} />
+                    <Columns
+                      fill
+                      sort={false}
+                      color="hsl(var(--chart-5))"
+                      data={data.ticketsByStatus.map((s) => ({ label: s.label, value: s.count }))}
+                    />
                   ) : <EmptyState>Sin tickets</EmptyState>}
                 </CardContent>
               </Card>
@@ -476,8 +569,35 @@ export default function ProjectDetail() {
               </CardContent>
             </Card>
           </div>
-        </>
+        </Revalidating>
       )}
+
+      {/* Desvincular un repo corta su vínculo con el proyecto (y su historial atribuido), así que
+          ahora se confirma. Antes era un clic directo, sin `busy`: un doble clic mandaba dos DELETE. */}
+      <AlertDialog open={!!confirmRepo} onOpenChange={(v) => !v && setConfirmRepo(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Desvincular {confirmRepo}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              El repo deja de contarse en este proyecto. Su historial ya reconciliado no se borra, y
+              puedes volver a vincularlo cuando quieras.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                const r = confirmRepo!;
+                void removeRepo(r).finally(() => setConfirmRepo(null));
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Desvincular
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }

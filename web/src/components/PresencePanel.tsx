@@ -97,7 +97,29 @@ function content(p: DevPresence): Content {
  * No renderiza nada si el dev no tiene calendario conectado: un hueco es más honesto que un "Libre"
  * que en realidad significa "no sé".
  */
-export function PresencePanel({ devId, className }: { devId: string; className?: string }) {
+export function PresencePanel({
+  devId,
+  variant = 'panel',
+  className,
+}: {
+  devId: string;
+  /**
+   * `panel` = el módulo de tres renglones (perfil del dev, donde tiene su propio espacio).
+   * `inline` = un renglón que se cuelga del bloque de identidad, para la lista de developers.
+   *
+   * El recorrido de esta decisión, porque explica por qué NO es una columna:
+   *  1. Panel completo en columna propia → 90px de alto reservados para todos, y un hueco enorme en
+   *     los devs sin calendario conectado.
+   *  2. Globo de una línea en columna propia → seguía habiendo columna, así que seguía habiendo
+   *     hueco, y encima 12rem no alcanzaban: el título se recortaba a "Chamb…" y no se leía nada.
+   *  3. Renglón dentro de la identidad → **no hay columna**. Usa el espacio VERTICAL que ya sobraba
+   *     bajo el @handle (nombre + handle son 40px de una fila de ~110), no le quita ancho a nada de
+   *     la derecha, y si el dev no tiene calendario simplemente no aparece: no hay pista vacía que
+   *     delate su ausencia, y las filas siguen alineadas porque su altura la fijan las métricas.
+   */
+  variant?: 'panel' | 'inline';
+  className?: string;
+}) {
   const presence = useDevPresence(devId);
   const { user } = useAuth();
   if (!presence) return null;
@@ -108,6 +130,36 @@ export function PresencePanel({ devId, className }: { devId: string; className?:
   // sería desconcertante — no es su conexión la que se administra ahí.
   const mine = !!user && user.devId === devId;
 
+  if (variant === 'inline') {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {/* Sin borde ni fondo: es un renglón de la identidad, no una tarjeta dentro de otra. Lo
+              que lo ata al calendario es el logo, y el estado lo dice el punto.
+
+              CÓMO AGUANTA UN TÍTULO LARGO (los de calendario lo son: "Diseño de Sistemas
+              Interactivos - Remoto"): el título es el ÚNICO elemento que puede encogerse — lleva
+              `min-w-0 truncate` — y todo lo demás es `shrink-0`. `min-w-0` en la fila y en cada
+              ancestro es lo que permite que la cadena baje de su ancho de contenido; sin uno solo
+              de esos, el texto empujaría la fila y desbordaría la tarjeta en vez de recortarse.
+              El texto completo queda en el `title` nativo y en el tooltip con la agenda. */}
+          <span className={cn('flex min-w-0 cursor-default items-center gap-2', className)}>
+            <GoogleCalendarMark className="size-3.5 shrink-0" />
+            <span
+              className={cn('size-1.5 shrink-0 rounded-full', busy ? 'bg-warning' : 'bg-success')}
+              aria-hidden
+            />
+            <span className="min-w-0 truncate text-xs font-medium" title={head}>{head}</span>
+            {when && (
+              <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">{when}</span>
+            )}
+          </span>
+        </TooltipTrigger>
+        <PresenceSchedule presence={presence} />
+      </Tooltip>
+    );
+  }
+
   return (
     <Tooltip>
       {/* El panel entero es el disparador. `asChild` para no meter un wrapper que rompa el ancho
@@ -115,10 +167,16 @@ export function PresencePanel({ devId, className }: { devId: string; className?:
       <TooltipTrigger asChild>
         <div
           className={cn(
-            // Misma familia visual que el panel de hyper points del perfil: caja redondeada, borde
-            // tenue del color del estado y fondo apenas tintado. Se integra en vez de competir.
-            'min-w-0 cursor-default rounded-xl border p-3',
-            busy ? 'border-warning/25 bg-warning/[0.06]' : 'border-success/25 bg-success/[0.06]',
+            // Superficie NEUTRA (`bg-muted/40 border`), la misma que los recuadros de métricas que
+            // van a su lado en la fila de developers. Antes el borde y el fondo iban tintados del
+            // color del estado y el título en ámbar o verde: dos señales de color para un dato
+            // secundario, que hacían de esta tarjeta lo más llamativo de la fila cuando lo
+            // importante son las cifras. El estado ahora lo dice un punto junto al rótulo.
+            //
+            // `h-full` + `flex-col`: la tarjeta se estira a la altura de la fila (el llamador le da
+            // `self-stretch`) y reparte su contenido, así que ya no queda flotando más corta que el
+            // bloque de métricas de al lado.
+            'flex h-full min-w-0 cursor-default flex-col gap-1.5 rounded-lg border bg-muted/40 p-3',
             className,
           )}
         >
@@ -150,6 +208,11 @@ export function PresencePanel({ devId, className }: { devId: string; className?:
             <span className="truncate text-[10px] font-medium tracking-wide text-muted-foreground">
               Google Calendar
             </span>
+            {/* La única señal de color del panel, y del tamaño de una señal. */}
+            <span
+              className={cn('size-1.5 shrink-0 rounded-full', busy ? 'bg-warning' : 'bg-success')}
+              title={busy ? 'En un evento' : 'Sin actividad en el calendario'}
+            />
             {when && (
               <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
                 {when}
@@ -159,16 +222,13 @@ export function PresencePanel({ devId, className }: { devId: string; className?:
 
           {/* A ras del borde de la tarjeta, con todo el ancho disponible. `break-words` además del
               clamp: un título sin espacios (una URL pegada) se desbordaría en lugar de partirse. */}
-          <p
-            className={cn(
-              'mt-1.5 line-clamp-2 break-words text-sm font-semibold leading-snug',
-              busy ? 'text-warning' : 'text-success',
-            )}
-          >
+          <p className="line-clamp-2 break-words text-sm font-semibold leading-snug text-foreground">
             {head}
           </p>
 
-          {foot && <p className="mt-1.5 line-clamp-1 break-words text-[11px] text-muted-foreground">{foot}</p>}
+          {/* `mt-auto`: el pie se va al fondo de la tarjeta estirada en vez de dejar el hueco
+              abajo, que es lo que hacía que la caja se viera desalineada con sus vecinas. */}
+          {foot && <p className="mt-auto line-clamp-1 break-words text-[11px] text-muted-foreground">{foot}</p>}
         </div>
       </TooltipTrigger>
       <PresenceSchedule presence={presence} />

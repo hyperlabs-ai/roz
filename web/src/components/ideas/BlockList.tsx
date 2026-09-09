@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ChevronRight, Trash2, StickyNote, MessagesSquare, Link2, BookMarked, HelpCircle, Check, ExternalLink } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ChevronRight, Trash2, StickyNote, MessagesSquare, Link2, BookMarked, HelpCircle, Check, ExternalLink, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -35,7 +35,18 @@ export interface BlockHandlers {
  * Las preguntas van en su propia sección: no son contenido, son deuda de definición — lo que
  * todavía no sabes de tu propia idea. Verlas juntas es el valor.
  */
-export function BlockList({ blocks, readOnly, handlers }: { blocks: IdeaBlock[]; readOnly?: boolean; handlers: BlockHandlers }) {
+export function BlockList({
+  blocks,
+  readOnly,
+  busyKind,
+  handlers,
+}: {
+  blocks: IdeaBlock[];
+  readOnly?: boolean;
+  /** ¿Se está creando un bloque de ese tipo? Deshabilita su botón (doble clic = dos bloques). */
+  busyKind?: (kind: string) => boolean;
+  handlers: BlockHandlers;
+}) {
   const questions = blocks.filter((b) => b.kind === 'pregunta');
   const rest = blocks.filter((b) => b.kind !== 'pregunta');
   const open = questions.filter((q) => !q.resolved).length;
@@ -48,8 +59,14 @@ export function BlockList({ blocks, readOnly, handlers }: { blocks: IdeaBlock[];
             Preguntas abiertas {open > 0 && <span className="ml-1 text-warning">· {open}</span>}
           </h3>
           {!readOnly && (
-            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => handlers.onAdd('pregunta')}>
-              <HelpCircle className="size-3.5" />
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              disabled={busyKind?.('pregunta')}
+              onClick={() => handlers.onAdd('pregunta')}
+            >
+              {busyKind?.('pregunta') ? <Loader2 className="size-3.5 animate-spin" /> : <HelpCircle className="size-3.5" />}
               <span className="ml-1">Añadir</span>
             </Button>
           )}
@@ -71,8 +88,15 @@ export function BlockList({ blocks, readOnly, handlers }: { blocks: IdeaBlock[];
               {(['nota', 'chat', 'link', 'referencia'] as const).map((k) => {
                 const Icon = KIND_ICON[k]!;
                 return (
-                  <Button key={k} size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => handlers.onAdd(k)}>
-                    <Icon className="size-3.5" />
+                  <Button
+                    key={k}
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    disabled={busyKind?.(k)}
+                    onClick={() => handlers.onAdd(k)}
+                  >
+                    {busyKind?.(k) ? <Loader2 className="size-3.5 animate-spin" /> : <Icon className="size-3.5" />}
                     <span className="ml-1">{BLOCK_KIND_LABEL[k]}</span>
                   </Button>
                 );
@@ -101,6 +125,12 @@ function BlockCard({ block, readOnly, handlers }: { block: IdeaBlock; readOnly?:
   const [title, setTitle] = useState(block.title ?? '');
   const [body, setBody] = useState(block.body ?? '');
   const [url, setUrl] = useState(block.url ?? '');
+
+  // Igual que en FeatureRow: si el PATCH falla y el padre revierte, el input debe volver al valor
+  // guardado y no quedarse mostrando lo que el servidor rechazó.
+  useEffect(() => setTitle(block.title ?? ''), [block.title]);
+  useEffect(() => setBody(block.body ?? ''), [block.body]);
+  useEffect(() => setUrl(block.url ?? ''), [block.url]);
   // Nace desplegado si está vacío (se acaba de crear y hay que escribirlo) o si es corto.
   const [expanded, setExpanded] = useState((block.body ?? '').length < LONG);
   const [editing, setEditing] = useState(!block.body && !readOnly);

@@ -142,6 +142,12 @@ Adapter de **email (Resend)** con plantillas HTML branded: asignación, cierre, 
 repo detectado y digest semanal. Cada notificación es un efecto idempotente disparado por el drain;
 reclama una llave por destinatario para no enviar duplicados aunque el evento se reintente.
 
+**Interruptores (killswitch).** `roz.notification_switch` gobierna si roz envía, con dos alcances
+que se multiplican: **global** (todo el entorno) y **por persona**. Se mueven desde Configuración en
+el dashboard, sin redeploy. Con el interruptor apagado el aviso se **omite en silencio** en vez de
+lanzar: el evento del outbox cierra en `done` y la cola no se llena de dead-letters — que es lo que
+pasaba cuando Resend fallaba de forma permanente (dominio sin verificar, cuota agotada).
+
 ### 4. Second brain (al completarse)
 Disparado por `work_item.done`, emitido cuando una tarea pasa a **completado** —sea manualmente en
 el dashboard o automáticamente al mergearse su PR—. roz crea/actualiza un **átomo de conocimiento**
@@ -190,7 +196,57 @@ Ver `migrations/0001_roz_schema.sql`:
 - **commit** — historial de commits reconciliados (proyecto/dev resueltos) para el dashboard.
 - **knowledge_atom / atom_edge** — second brain: átomo direccionable y grafo de relaciones.
 - **notification** — saliente email (Resend) con estado de envío y `provider_id`.
+- **notification_switch** — interruptores de envío: fila `global` (killswitch del equipo) y una por
+  dev que se silencia. Para enviar, ambos alcances tienen que estar encendidos.
 - **outbox_event / idempotency_key** — núcleo de eventos e idempotencia.
+
+### El SPA del dashboard (`web/`)
+
+Cuatro piezas sostienen la sensación de la app; se documentan porque cada una nació de un síntoma
+concreto de "la app se siente rota":
+
+- **Sesión fuera de React** (`web/src/auth/store.ts`, con `useSyncExternalStore`). supabase-js puede
+  emitir un `SIGNED_OUT` TRANSITORIO al volver a la pestaña (refresh token vencido, dos pestañas
+  peleando el token). Con la sesión en un contexto, eso desmontaba el dashboard entero. Ahora un
+  cierre solo se da por real si lo pedimos nosotros o si otra pestaña borró la sesión; el resto se
+  recupera en silencio con backoff (3 intentos) mientras el usuario sigue trabajando, y `RequireAuth`
+  garantiza que, una vez dentro, ningún estado posterior sustituye el `<Outlet/>`.
+- **Caché stale-while-revalidate compartida** (`web/src/lib/store.ts` + `useApi`, opt-in por
+  `key`/`ttl`). Antes cada montaje arrancaba en `loading` → volver a una sección era siempre
+  skeletons y refetch. La clave lleva el id del usuario dentro y se tira al cambiar de cuenta (más
+  el descarte de respuestas en vuelo): son los tres cerrojos que impiden servir datos de otra cuenta.
+  Tras una mutación se usa `invalidate(prefijo)`, no `reload()`.
+- **Chrome persistente** (`web/src/components/AppShell.tsx`, layout de ruta). `Layout` conserva su
+  firma y publica título y acciones en el header por portal, así que navegar entre secciones ya no
+  reconstruye sidebar, header ni el pulso de la cola.
+- **Mutaciones con retroalimentación** (`web/src/lib/useMirror.ts` y `useAction.ts`): update
+  optimista, `busy` por fila o por acción, encadenado por entidad, rollback parcial y adopción de la
+  entidad que devuelve el backend. Es la extracción de lo que arregló Tareas, para que ninguna
+  sección tenga que reescribirlo.
+
+### Sistema de diseño (`web/src/styles.css`, `charts.tsx`, `bits.tsx`)
+
+Dos piezas más, añadidas cuando el reporte fue que las gráficas eran muy básicas:
+
+- **Una sola escala de movimiento** (`:root` de `web/src/styles.css`). Duraciones, curvas,
+  distancias, escalas y desenfoques salen de [transitions.dev](https://transitions.dev), y las
+  recetas viven en el mismo archivo bajo clases `t-*`. Dos reglas: `--ease-smooth-out` **es** el
+  `ease-spring` de Tailwind (el config lee el token, así que hay un valor y no dos), y un valor
+  hardcodeado se sustituye solo cuando su USO corresponde a un uso documentado — el "hover lift" y
+  los bucles decorativos de la landing conservan sus números a propósito. Las recetas van como
+  `@keyframes` sobre el `data-state` de Radix y no como transiciones: el Presence de Radix decide
+  cuándo desmontar leyendo `animationName`, así que con una transición pura el cierre no se ve
+  nunca. La guarda de `prefers-reduced-motion` ya apaga todo de forma global.
+- **Un componente por concepto.** `charts.tsx` es la única frontera con recharts; el lenguaje visual
+  es la familia "mono" de amicro, portada y no copiada (los originales traen los datos y los colores
+  fijos dentro del archivo). Todo color sale de un token — cero hex en la dataviz —, así que claro y
+  oscuro necesitan una sola declaración. Una sola regla de forma, puesta por el usuario:
+  comparar categorías es SIEMPRE **columnas verticales** (`Columns`) — ninguna barra horizontal en
+  la app, y la lista rankeada, el embudo, el radar y la primitiva `Bar` se eliminaron para que no
+  vuelvan por inercia. Composición es `Donut` / `StackedBar`; tiempo es `AreaTrend`. En `bits.tsx`
+  están las primitivas que estaban duplicadas: un `ProgressBar` (había dos), un `SegmentMeter`
+  (había tres), y `MetricCard` absorbió las cinco tarjetas de estadística que tenían cinco APIs
+  distintas y de las que solo una animaba su cifra.
 
 ### Recuperación híbrida
 Postgres da **full-text (keyword)** + **pgvector (semántico)** combinados con *reciprocal rank

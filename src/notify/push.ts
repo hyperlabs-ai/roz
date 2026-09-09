@@ -6,6 +6,7 @@
 import { db } from '../db/supabase.js';
 import { config } from '../config.js';
 import { sendPush, pushEnabled, type PushPayload } from '../adapters/web-push.js';
+import { pushAllowed, pushEnabledGlobally } from './switches.js';
 import { renderServicePush, type ServiceTransition } from '../infra/alerts.js';
 
 interface SubRow {
@@ -63,11 +64,18 @@ const SELECT = 'id, dev_id, endpoint, p256dh, auth';
 // Núcleo de entrega: manda `payload` a un set de suscripciones, registra en roz.notification y
 // limpia las caducadas (404/410). No lanza; el caller decide el best-effort.
 async function deliver(subs: SubRow[], payload: PushPayload, template: string): Promise<{ sent: number; failed: number }> {
+  // Interruptores (roz.notification_switch): el global apaga el push de todo el entorno; el de cada
+  // dev lo silencia en TODOS sus dispositivos. El toggle por dispositivo es la suscripción misma.
+  // Se filtra aquí, el único punto por el que pasan todos los envíos.
+  if (!(await pushEnabledGlobally())) return { sent: 0, failed: 0 };
+  const targets: SubRow[] = [];
+  for (const sub of subs) if (await pushAllowed(sub.dev_id)) targets.push(sub);
+
   const supabase = db();
   const logBody = `${payload.title} — ${payload.body}`;
   let sent = 0;
   let failed = 0;
-  for (const s of subs) {
+  for (const s of targets) {
     const res = await sendPush({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth }, payload);
     if (res.ok) {
       sent++;

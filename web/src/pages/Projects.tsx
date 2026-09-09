@@ -1,11 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { toast } from 'sonner';
 import { FolderGit2, ChevronRight, Plus, MoreVertical, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
-import { UserAvatar, EmptyState, LineDelta, ErrorCard } from '@/components/bits';
+import { UserAvatar, EmptyState, LineDelta, ErrorCard, Fresh, RefreshButton, Revalidating } from '@/components/bits';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +22,8 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useApi } from '@/lib/useApi';
+import { useMirror } from '@/lib/useMirror';
+import { invalidate } from '@/lib/store';
 import { apiGet, apiSend, type ProjectListItem, type ProjectKind } from '@/lib/api';
 import { compact } from '@/lib/format';
 import { usePeriod } from '@/lib/usePeriod';
@@ -42,10 +43,15 @@ export default function Projects() {
   const { user } = useAuth();
   const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const nav = useNavigate();
-  const { data, loading, error, reload } = useApi<{ projects: ProjectListItem[] }>(
+  const { data, loading, refetching, error, reload } = useApi<{ projects: ProjectListItem[] }>(
     () => apiGet('/projects', period.range),
     [period.range.from, period.range.to],
+    { key: '/projects', ttl: 60_000 },
   );
+
+  // Espejo: crear o borrar se ve en el frame del clic, sin recargar la lista (que es cara, va con
+  // período y se reordena por commits).
+  const projects = useMirror<ProjectListItem>(data?.projects, { key: (x) => x.projectId });
 
   // Reordenamiento por arrastre (drag-and-drop). El orden se guarda por navegador y sobrevive
   // recargas y cambios de período. Los proyectos nuevos (sin posición guardada) van al final.
@@ -62,20 +68,88 @@ export default function Projects() {
     dragImgRef.current = img;
   }, []);
 
+  // OJO con las deps: antes dependía del ARRAY `data.projects`, que es nuevo en cada revalidación,
+  // así que `setOrder` corría tras cada mutación → cambiaba el índice de cada tarjeta → cambiaba su
+  // `animation-delay` de `stagger-children` → la grilla ENTERA volvía a animarse en cascada. Con la
+  // lista de ids serializada, solo corre cuando de verdad hay proyectos nuevos o menos.
+  const ids = projects.items.map((x) => x.projectId).join(',');
   useEffect(() => {
-    const ids = data?.projects.map((p) => p.projectId) ?? [];
-    if (!ids.length) return;
+    const list = ids ? ids.split(',') : [];
+    if (!list.length) return;
     const saved = loadOrder();
-    setOrder([...saved.filter((id) => ids.includes(id)), ...ids.filter((id) => !saved.includes(id))]);
-  }, [data?.projects]);
+    // Lo NUEVO va primero, no al final. El backend ordena por commits desc, así que un proyecto
+    // recién creado (0 commits) caía en la última posición de la grilla — bajo el fold: el toast
+    // decía "creado" y en pantalla no pasaba nada.
+    setOrder([...list.filter((id) => !saved.includes(id)), ...saved.filter((id) => list.includes(id))]);
+  }, [ids]);
 
   useEffect(() => { if (order.length) saveOrder(order); }, [order]);
 
   const ordered = useMemo(() => {
-    const map = new Map((data?.projects ?? []).map((p) => [p.projectId, p]));
+    const map = new Map(projects.items.map((x) => [x.projectId, x]));
     const list = order.map((id) => map.get(id)).filter(Boolean) as ProjectListItem[];
-    return list.length ? list : (data?.projects ?? []);
-  }, [order, data?.projects]);
+    return list.length ? list : projects.items;
+  }, [order, projects.items]);
+
+  // `stagger-children` solo en el primer pintado: es una animación de ENTRADA, y redispararla en
+  // cada revalidación es el parpadeo en cascada que se reportó.
+  const [stagger, setStagger] = useState(true);
+  useEffect(() => {
+    const t = setTimeout(() => setStagger(false), 700);
+    return () => clearTimeout(t);
+  }, []);
+
+  const createProject = (input: { name: string; key?: string; kind: ProjectKind; color: string | null }) =>
+    projects.create(
+      {
+        projectId: `nuevo:${input.name}`,
+        name: input.name,
+        key: (input.key || input.name.slice(0, 6)).toUpperCase(),
+        kind: input.kind,
+        color: input.color,
+        // Un proyecto nuevo no tiene actividad: ceros explícitos, y la revalidación los rellena.
+        commits: 0,
+        additions: 0,
+        deletions: 0,
+        contributors: [],
+        repos: [],
+        ticketsResolved: 0,
+      },
+      async () => {
+        const r = await apiSend<{ project: { id: string; name: string; key: string; kind: ProjectKind; color: string | null } }>(
+          'POST', '/projects', { name: input.name, key: input.key || undefined, kind: input.kind, color: input.color },
+        );
+        // Se adopta lo que devuelve el backend (la `key` la puede haber generado él).
+        return {
+          projectId: r.project.id,
+          name: r.project.name,
+          key: r.project.key,
+          kind: r.project.kind,
+          color: r.project.color,
+          commits: 0,
+          additions: 0,
+          deletions: 0,
+          contributors: [],
+          repos: [],
+          ticketsResolved: 0,
+        };
+      },
+      { success: { title: 'Proyecto creado', description: input.name } },
+    ).then((created) => {
+      invalidate('/overview'); // el resumen cuenta proyectos
+      return created;
+    });
+
+  const updateProject = (pr: ProjectListItem, patch: { name: string; key: string; kind: ProjectKind; color: string | null }) =>
+    projects.patch(pr, patch, async () => {
+      await apiSend('PATCH', `/projects/${pr.projectId}`, patch);
+    }, { success: { title: 'Proyecto actualizado', description: patch.name } });
+
+  const deleteProject = (pr: ProjectListItem) =>
+    projects.remove(pr, () => apiSend('DELETE', `/projects/${pr.projectId}`), {
+      success: { title: 'Proyecto eliminado', description: pr.name },
+      error: 'No se pudo eliminar',
+    }).then(() => invalidate('/overview'));
 
   // Reorden en vivo: al pasar por encima de otra tarjeta, la arrastrada toma su posición (colisión).
   function liveReorder(overId: string) {
@@ -98,6 +172,7 @@ export default function Projects() {
       subtitle="Actividad de código por proyecto"
       actions={
         <div className="flex items-center gap-2">
+          <RefreshButton busy={refetching} onClick={reload} />
           {isAdmin && <Button onClick={() => setCreateOpen(true)}><Plus /> Nuevo proyecto</Button>}
           <PeriodPicker value={period} onChange={setPeriod} />
         </div>
@@ -107,7 +182,7 @@ export default function Projects() {
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-40" />)}</div>
-      ) : !data?.projects.length ? (
+      ) : !projects.items.length ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-10">
             <EmptyState icon={<FolderGit2 className="size-6" />}>No hay proyectos con actividad en este período</EmptyState>
@@ -115,7 +190,7 @@ export default function Projects() {
           </CardContent>
         </Card>
       ) : (
-        <div className="stagger-children grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <Revalidating active={refetching} className={cn('grid gap-4 md:grid-cols-2 lg:grid-cols-3', stagger && 'stagger-children')}>
           {ordered.map((p) => (
             <div
               key={p.projectId}
@@ -133,13 +208,22 @@ export default function Projects() {
                 dragging === p.projectId && 'z-10 scale-[1.03] shadow-xl ring-2 ring-primary',
               )}
             >
-              <ProjectCard p={p} isAdmin={isAdmin} onChanged={reload} onOpen={() => nav(`/app/projects/${p.projectId}`)} />
+              <Fresh fresh={projects.isFresh(p.projectId)}>
+                <ProjectCard
+                  p={p}
+                  isAdmin={isAdmin}
+                  busy={projects.isBusy(p.projectId)}
+                  onUpdate={updateProject}
+                  onDelete={deleteProject}
+                  onOpen={() => nav(`/app/projects/${p.projectId}`)}
+                />
+              </Fresh>
             </div>
           ))}
-        </div>
+        </Revalidating>
       )}
 
-      <ProjectDialog open={createOpen} onOpenChange={setCreateOpen} onSaved={reload} />
+      <ProjectDialog open={createOpen} onOpenChange={setCreateOpen} onCreate={createProject} />
     </Layout>
   );
 }
@@ -168,7 +252,21 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${f(0)}${f(8)}${f(4)}`;
 }
 
-function ProjectCard({ p, isAdmin, onChanged, onOpen }: { p: ProjectListItem; isAdmin: boolean; onChanged: () => void; onOpen: () => void }) {
+function ProjectCard({
+  p,
+  isAdmin,
+  busy,
+  onUpdate,
+  onDelete,
+  onOpen,
+}: {
+  p: ProjectListItem;
+  isAdmin: boolean;
+  busy: boolean;
+  onUpdate: (p: ProjectListItem, patch: { name: string; key: string; kind: ProjectKind; color: string | null }) => Promise<void>;
+  onDelete: (p: ProjectListItem) => Promise<void>;
+  onOpen: () => void;
+}) {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -177,7 +275,7 @@ function ProjectCard({ p, isAdmin, onChanged, onOpen }: { p: ProjectListItem; is
 
   return (
     <>
-      <Card interactive className="group cursor-grab active:cursor-grabbing" onClick={onOpen}>
+      <Card interactive className={cn('group cursor-grab active:cursor-grabbing', busy && 'opacity-60')} onClick={onOpen}>
         <CardContent className="p-5">
           <div className="flex items-start justify-between">
             <div className="flex min-w-0 items-center gap-2.5">
@@ -245,8 +343,8 @@ function ProjectCard({ p, isAdmin, onChanged, onOpen }: { p: ProjectListItem; is
         </CardContent>
       </Card>
 
-      <ProjectDialog project={p} open={editOpen} onOpenChange={setEditOpen} onSaved={onChanged} />
-      <DeleteProject project={p} open={deleteOpen} onOpenChange={setDeleteOpen} onDeleted={onChanged} />
+      <ProjectDialog project={p} open={editOpen} onOpenChange={setEditOpen} onUpdate={onUpdate} />
+      <DeleteProject project={p} open={deleteOpen} onOpenChange={setDeleteOpen} onDelete={onDelete} />
     </>
   );
 }
@@ -261,7 +359,19 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 // ---- Dialog crear / editar proyecto ----
-function ProjectDialog({ project, open, onOpenChange, onSaved }: { project?: ProjectListItem; open: boolean; onOpenChange: (v: boolean) => void; onSaved: () => void }) {
+function ProjectDialog({
+  project,
+  open,
+  onOpenChange,
+  onCreate,
+  onUpdate,
+}: {
+  project?: ProjectListItem;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onCreate?: (input: { name: string; key?: string; kind: ProjectKind; color: string | null }) => Promise<unknown>;
+  onUpdate?: (p: ProjectListItem, patch: { name: string; key: string; kind: ProjectKind; color: string | null }) => Promise<void>;
+}) {
   const editing = !!project;
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
@@ -269,33 +379,30 @@ function ProjectDialog({ project, open, onOpenChange, onSaved }: { project?: Pro
   const [color, setColor] = useState(''); // '' = automático (color generado por la key)
   const [busy, setBusy] = useState(false);
 
-  // Al abrir, (re)inicializa el formulario con los valores del proyecto (o vacío al crear).
+  // Al abrir, (re)inicializa el formulario. Dep en el ID, NUNCA en el objeto: la fila se renueva en
+  // cada revalidación y depender de ella reescribiría el formulario mientras escribes.
   useEffect(() => {
-    if (open) {
-      setName(project?.name ?? '');
-      setKey(project?.key ?? '');
-      setKind(project?.kind ?? 'internal');
-      setColor(project?.color ?? '');
-    }
-  }, [open, project]);
+    if (!open) return;
+    setName(project?.name ?? '');
+    setKey(project?.key ?? '');
+    setKind(project?.kind ?? 'internal');
+    setColor(project?.color ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, project?.projectId]);
 
   async function save() {
-    if (!name.trim()) return;
+    const n = name.trim();
+    if (!n) return;
     setBusy(true);
-    try {
-      if (editing) {
-        await apiSend('PATCH', `/projects/${project!.projectId}`, { name: name.trim(), key: key.trim() || project!.key, kind, color: color || null });
-        toast.success('Proyecto actualizado', { description: name.trim() });
-      } else {
-        await apiSend('POST', '/projects', { name: name.trim(), key: key.trim() || undefined, kind, color: color || null });
-        toast.success('Proyecto creado', { description: name.trim() });
-      }
-      onOpenChange(false);
-      onSaved();
-    } catch (e: any) {
-      toast.error('No se pudo guardar', { description: String(e.message ?? e) });
+    // La inserción/adopción optimista la hace el espejo del padre; aquí solo se describe la
+    // intención y se cierra al terminar.
+    if (editing && onUpdate) {
+      await onUpdate(project!, { name: n, key: key.trim() || project!.key, kind, color: color || null });
+    } else if (onCreate) {
+      await onCreate({ name: n, key: key.trim() || undefined, kind, color: color || null });
     }
     setBusy(false);
+    onOpenChange(false);
   }
 
   return (
@@ -367,7 +474,17 @@ function ProjectDialog({ project, open, onOpenChange, onSaved }: { project?: Pro
 }
 
 // ---- Confirmación de borrado estilo GitHub (escribe el nombre para habilitar) ----
-function DeleteProject({ project, open, onOpenChange, onDeleted }: { project: ProjectListItem; open: boolean; onOpenChange: (v: boolean) => void; onDeleted: () => void }) {
+function DeleteProject({
+  project,
+  open,
+  onOpenChange,
+  onDelete,
+}: {
+  project: ProjectListItem;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onDelete: (p: ProjectListItem) => Promise<void>;
+}) {
   const [confirm, setConfirm] = useState('');
   const [busy, setBusy] = useState(false);
   const matches = confirm.trim() === project.name;
@@ -377,15 +494,11 @@ function DeleteProject({ project, open, onOpenChange, onDeleted }: { project: Pr
   async function del() {
     if (!matches) return;
     setBusy(true);
-    try {
-      await apiSend('DELETE', `/projects/${project.projectId}`);
-      toast.success('Proyecto eliminado', { description: project.name });
-      onOpenChange(false);
-      onDeleted();
-    } catch (e: any) {
-      toast.error('No se pudo eliminar', { description: String(e.message ?? e) });
-    }
+    // La tarjeta desaparece al confirmar (el espejo la quita) y vuelve a su sitio si el DELETE
+    // falla. Antes se cerraba el diálogo y la tarjeta seguía ahí hasta que acabara el refetch.
+    await onDelete(project);
     setBusy(false);
+    onOpenChange(false);
   }
 
   return (

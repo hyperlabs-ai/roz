@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react';
 import { Ticket as TicketIcon, CircleAlert, UserX, CircleDot, CircleCheck, GitPullRequest, GitMerge } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { MetricCard } from '@/components/MetricCard';
-import { RankBars, Donut } from '@/components/charts';
-import { UserAvatar, EmptyState, ErrorCard } from '@/components/bits';
+import { Columns, Donut } from '@/components/charts';
+import { UserAvatar, EmptyState, ErrorCard, Revalidating } from '@/components/bits';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -14,6 +14,7 @@ import {
   PRIO_COLOR_VAR as PRIO_COLOR,
   PRIO_LABEL as PRIO_ES,
   stateColorVar as STATE_COLOR,
+  stateRank,
   SOURCE_LABEL,
   SOURCE_COLOR,
 } from '@/lib/labels';
@@ -32,7 +33,12 @@ export default function Tickets() {
   const [priority, setPriority] = useState(ALL);
   const [scope, setScope] = useState<'open' | 'all'>('open');
 
-  const filters = useApi<TicketFilterOptions>(() => apiGet('/tickets/filters'), []);
+  // Las opciones de filtro son casi estáticas y se piden también en Tareas: 10 min de caché y una
+  // sola petición por sesión.
+  const filters = useApi<TicketFilterOptions>(() => apiGet('/tickets/filters'), [], {
+    key: '/tickets/filters',
+    ttl: 600_000,
+  });
   const qs = useMemo(() => {
     const p = new URLSearchParams();
     if (projectId !== ALL) p.set('projectId', projectId);
@@ -43,7 +49,12 @@ export default function Tickets() {
     return p.toString();
   }, [projectId, state, assignee, priority, scope]);
 
-  const { data, loading, error } = useApi<TicketsResponse>(() => apiGet(`/tickets?${qs}`), [qs]);
+  // La consulta más cara de la app (hasta 1500 filas + atribución + esfuerzo). Con caché, volver a
+  // un filtro que ya viste es instantáneo.
+  const { data, loading, refetching, error } = useApi<TicketsResponse>(() => apiGet(`/tickets?${qs}`), [qs], {
+    key: '/tickets',
+    ttl: 30_000,
+  });
 
   return (
     <Layout
@@ -75,7 +86,10 @@ export default function Tickets() {
       {loading || !data ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>
       ) : (
-        <>
+        /* Cambiar un filtro refetchea: los KPIs y las gráficas viejas se atenúan hasta que llegan
+           los nuevos. Antes seguían mostrando los números del filtro ANTERIOR, sin ninguna señal:
+           leías datos que no correspondían al filtro que ya veías seleccionado. */
+        <Revalidating active={refetching}>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
             <MetricCard label="Total" value={data.summary.total} icon={TicketIcon} colorVar="--chart-1" className="col-span-2 lg:col-span-1" />
             <MetricCard label="En curso" value={data.summary.inProgress} icon={CircleDot} colorVar="--chart-2" />
@@ -84,25 +98,51 @@ export default function Tickets() {
             <MetricCard label="Sin asignar" value={data.summary.unassigned} icon={UserX} colorVar="--chart-5" />
           </div>
 
-          <div className="mt-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-            <Card className="min-w-0">
+          {/* Dos tarjetas por fila, no cuatro: con cuatro quedaban ~290px a cada una, o sea 48px
+              por etiqueta, y los nombres se recortaban a "Hype…" — dos proyectos distintos con la
+              MISMA etiqueta. La rejilla anterior estaba pensada para barras finas, que no necesitan
+              ancho por categoría; una gráfica de columnas sí.
+
+              Las tarjetas SE ESTIRAN a la altura de su fila (fondos alineados) y las gráficas van
+              en modo `fill`, así que el alto de más se lo queda la gráfica en vez de volverse
+              hueco. Cada fila del grid se mide por separado, por eso las dos donas de abajo no
+              arrastran la altura de las columnas de arriba. */}
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <Card className="flex min-w-0 flex-col">
               <CardHeader><CardTitle>Por proyecto</CardTitle></CardHeader>
-              <CardContent><RankBars data={data.byProject} height={180} /></CardContent>
+              <CardContent className="flex flex-1 flex-col"><Columns data={data.byProject} fill topN={6} /></CardContent>
             </Card>
-            <Card className="min-w-0">
+            <Card className="flex min-w-0 flex-col">
               <CardHeader><CardTitle>Por estado</CardTitle></CardHeader>
-              <CardContent><RankBars data={data.byState.map((s) => ({ ...s, color: STATE_COLOR(s.label) }))} height={180} /></CardContent>
+              {/* Columnas en ORDEN DE PIPELINE (`sort={false}` + `stateRank`), no por valor: los
+                  estados son una secuencia y verlos desordenados no dice nada. El backend agrupa
+                  con un contador, así que el orden en que llegan depende de los tickets que había.
+
+                  Aquí estuvo un embudo y se quitó: calculaba "conversión" entre estados que no son
+                  etapas consecutivas del mismo flujo, y con 521 completadas sobre 21 por hacer
+                  imprimía un 2481% que no significaba nada. */}
+              <CardContent className="flex flex-1 flex-col">
+                <Columns
+                  fill
+                  sort={false}
+                  data={[...data.byState]
+                    .sort((a, b) => stateRank(a.label) - stateRank(b.label))
+                    .map((s) => ({ ...s, color: STATE_COLOR(s.label) }))}
+                />
+              </CardContent>
             </Card>
             <Card className="min-w-0">
               <CardHeader><CardTitle>Por prioridad</CardTitle></CardHeader>
               <CardContent>
-                <Donut data={data.byPriority.map((p) => ({ label: PRIO_ES[p.label] ?? p.label, value: p.value, color: PRIO_COLOR[p.label] ?? 'hsl(var(--muted-foreground))' }))} height={210} />
+                {/* Leyenda al lado: en una tarjeta de media fila, la dona debajo de su leyenda
+                    dejaba el anillo chico en medio de dos huecos. */}
+                <Donut data={data.byPriority.map((p) => ({ label: PRIO_ES[p.label] ?? p.label, value: p.value, color: PRIO_COLOR[p.label] ?? 'hsl(var(--muted-foreground))' }))} height={170} layout="side" centerLabel="tickets" />
               </CardContent>
             </Card>
             <Card className="min-w-0">
               <CardHeader><CardTitle>Por origen</CardTitle></CardHeader>
               <CardContent>
-                <Donut data={data.bySource.map((s) => ({ label: SOURCE_LABEL[s.label] ?? s.label, value: s.value, color: SOURCE_COLOR[s.label] ?? 'hsl(var(--muted-foreground))' }))} height={210} />
+                <Donut data={data.bySource.map((s) => ({ label: SOURCE_LABEL[s.label] ?? s.label, value: s.value, color: SOURCE_COLOR[s.label] ?? 'hsl(var(--muted-foreground))' }))} height={170} layout="side" centerLabel="tickets" />
               </CardContent>
             </Card>
           </div>
@@ -162,7 +202,7 @@ export default function Tickets() {
               </CardContent>
             </Card>
           </div>
-        </>
+        </Revalidating>
       )}
     </Layout>
   );

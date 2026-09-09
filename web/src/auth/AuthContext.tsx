@@ -1,7 +1,8 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { supabase } from '../lib/supabase';
 import { apiGet, ApiError, type AuthedUser } from '../lib/api';
+import { resetScope } from '../lib/store';
+import { useAuthSnapshot, signOut as storeSignOut } from './store';
 
 interface AuthState {
   session: Session | null;
@@ -10,42 +11,36 @@ interface AuthState {
   resolving: boolean;    // hay sesión y aún no sabemos si el backend la acepta
   denied: string | null; // el backend rechazó a este usuario (no está en roz.dev, dominio, etc.)
   failed: string | null; // /me no respondió (red, 500): no es un "no", es que no sabemos
+  recovering: boolean;   // se perdió el token y se está recuperando en silencio (ver auth/store.ts)
   retry: () => void;
   signOut: () => Promise<void>;
 }
 
 const Ctx = createContext<AuthState>({
   session: null, user: null, loading: true, resolving: false, denied: null, failed: null,
-  retry: () => {}, signOut: async () => {},
+  recovering: false, retry: () => {}, signOut: async () => {},
 });
 
+/**
+ * La SESIÓN vive fuera de React (`auth/store.ts`); aquí solo se le añade el perfil que resuelve el
+ * backend en /me. Este provider es una fachada delgada para que los ~14 consumidores de `useAuth()`
+ * no cambien.
+ */
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const { session, loading, recovering } = useAuthSnapshot();
   const [user, setUser] = useState<AuthedUser | null>(null);
-  const [loading, setLoading] = useState(true);
   const [resolving, setResolving] = useState(false);
   const [denied, setDenied] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
-    // supabase-js re-emite SIGNED_IN / TOKEN_REFRESHED cada vez que la pestaña vuelve a estar
-    // visible, y entrega un OBJETO NUEVO aunque la sesión sea exactamente la misma. Guardarlo tal
-    // cual cambiaba la identidad de `session` → se re-disparaba /me → `resolving` → RequireAuth
-    // pintaba el spinner en lugar del <Outlet/>: el dashboard entero se DESMONTABA y cada página
-    // volvía a cargar desde cero al regresar de otra pestaña (perdiendo scroll, filtros abiertos y
-    // lo que estuvieras escribiendo en un modal). Solo se propaga si de verdad cambió el token.
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession((prev) =>
-        prev?.access_token === s?.access_token && prev?.user?.id === s?.user?.id ? prev : s,
-      );
-    });
-    return () => sub.subscription.unsubscribe();
-  }, []);
+  const sessionUserId = session?.user?.id ?? null;
+
+  // Aislamiento de la caché entre cuentas. Va en el CUERPO DE RENDER, no en un efecto: un efecto
+  // corre después de que los hijos ya renderizaron, así que quedaría un frame con los datos del
+  // usuario anterior pintados en pantalla. Es un compare-and-set idempotente, seguro con el doble
+  // render de StrictMode.
+  resetScope(sessionUserId);
 
   // Con sesión, el backend resuelve el perfil — y decide si esta persona puede entrar. Tener
   // credenciales válidas de Supabase no basta: hay que estar registrado como dev en roz.
@@ -53,9 +48,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Depende del ID de usuario, NO del objeto `session`: el token se renueva solo cada ~50 min y
   // volver a preguntar /me por eso no aporta nada (el perfil no cambió) y sí desmontaba la página
   // que estuvieras usando. Cambiar de cuenta sí cambia el id y vuelve a resolver.
-  const sessionUserId = session?.user?.id ?? null;
   useEffect(() => {
-    if (!session) {
+    if (!sessionUserId) {
       setUser(null);
       setDenied(null);
       setFailed(null);
@@ -88,18 +82,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionUserId, attempt]);
 
-  const signOut = async () => {
-    await supabase.auth.signOut();
+  const retry = useCallback(() => setAttempt((a) => a + 1), []);
+  const signOut = useCallback(async () => {
+    await storeSignOut(); // el store limpia sesión y token; la caché la tira `resetScope`
     setUser(null);
     setDenied(null);
     setFailed(null);
-  };
+  }, []);
 
-  return (
-    <Ctx.Provider value={{ session, user, loading, resolving, denied, failed, retry: () => setAttempt((a) => a + 1), signOut }}>
-      {children}
-    </Ctx.Provider>
+  // Memoizado: sin esto el value era un objeto literal nuevo en cada render, así que un refresh de
+  // token re-renderizaba a los 14 consumidores de useAuth() sin que nada hubiera cambiado.
+  const value = useMemo<AuthState>(
+    () => ({ session, user, loading, resolving, denied, failed, recovering, retry, signOut }),
+    [session, user, loading, resolving, denied, failed, recovering, retry, signOut],
   );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export const useAuth = () => useContext(Ctx);

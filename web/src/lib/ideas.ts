@@ -173,7 +173,15 @@ export function definitionScore(idea: DefinitionInput): DefinitionScore {
   return { pct: Math.round((done.length / DEFINITION_CHECKS.length) * 100), done, missing };
 }
 
-/** Color de la barra por tramo. Nunca colores crudos: tokens del tema. */
+/** Color por tramo, como color y no como clase: las gráficas reciben colores, no clases. */
+export function definitionColor(pct: number): string {
+  if (pct >= 100) return 'hsl(var(--success))';
+  if (pct >= 50) return 'hsl(var(--chart-1))';
+  if (pct > 0) return 'hsl(var(--chart-4))';
+  return 'hsl(var(--muted-foreground) / 0.4)';
+}
+
+/** El mismo tramo, como clase de Tailwind. Nunca colores crudos: tokens del tema. */
 export function definitionBarClass(pct: number): string {
   if (pct >= 100) return 'bg-success';
   if (pct >= 50) return 'bg-chart-1';

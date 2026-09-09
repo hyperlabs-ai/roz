@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ErrorCard } from '@/components/bits';
 import { apiGet, apiSend, type DeveloperCredentials } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -23,7 +24,8 @@ export function DeveloperDialog({
   devId?: string | null;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onSaved: () => void;
+  /** Recibe lo que devolvió el backend, para que el padre sustituya/inserte esa fila. */
+  onSaved: (developer: { id: string; name: string }, mode: 'create' | 'update') => void;
 }) {
   const editing = !!devId;
   const [name, setName] = useState('');
@@ -34,6 +36,7 @@ export function DeveloperDialog({
   const [active, setActive] = useState('true');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -41,6 +44,7 @@ export function DeveloperDialog({
     setName(''); setEmail(''); setGithubLogin(''); setGithubEmail(''); setAvailability('1'); setActive('true');
     if (!devId) return;
     setLoading(true);
+    setLoadError(null);
     apiGet<{ developer: DeveloperCredentials }>(`/developers/${devId}/credentials`)
       .then(({ developer: d }) => {
         setName(d.name ?? '');
@@ -50,6 +54,9 @@ export function DeveloperDialog({
         setAvailability(String(d.availability ?? 1));
         setActive(String(d.active));
       })
+      // Sin este catch la promesa quedaba rechazada sin manejar y el formulario se mostraba EN
+      // BLANCO, indistinguible de un dev sin datos: guardarlo así le habría borrado sus credenciales.
+      .catch((e: unknown) => setLoadError(String((e as Error)?.message ?? e)))
       .finally(() => setLoading(false));
   }, [open, devId]);
 
@@ -68,12 +75,14 @@ export function DeveloperDialog({
       if (editing) {
         const { developer } = await apiSend<{ developer: { id: string; name: string } }>('PATCH', `/developers/${devId}`, body);
         toast.success('Credenciales actualizadas', { description: developer.name });
+        onOpenChange(false);
+        onSaved(developer, 'update');
       } else {
         const { developer } = await apiSend<{ developer: { id: string; name: string } }>('POST', '/developers', body);
         toast.success('Developer creado', { description: developer.name });
+        onOpenChange(false);
+        onSaved(developer, 'create');
       }
-      onOpenChange(false);
-      onSaved();
     } catch (e: any) {
       toast.error(editing ? 'No se pudo guardar' : 'No se pudo crear', { description: String(e.message ?? e) });
     }
@@ -93,6 +102,11 @@ export function DeveloperDialog({
         </DialogHeader>
 
         <div className="space-y-3">
+          {/* Si la precarga falló, se dice: un formulario vacío parece un dev sin datos, y guardarlo
+              así le borraría sus credenciales. */}
+          {loadError && (
+            <ErrorCard message={`No se pudieron traer sus credenciales (${loadError}). Ciérralo y vuelve a abrirlo.`} />
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="dev-name">Nombre</Label>
             <Input id="dev-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="ej. Fernando Dévora" />

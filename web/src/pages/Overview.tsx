@@ -4,8 +4,8 @@ import { GitCommitHorizontal, CircleCheck, Users, Timer, Code2, TriangleAlert, S
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
 import { MetricCard } from '@/components/MetricCard';
-import { AreaTrend, RankBars, Donut } from '@/components/charts';
-import { UserAvatar, EmptyState, ProgressBar, ErrorCard } from '@/components/bits';
+import { AreaTrend, Columns, Donut, StackedBar } from '@/components/charts';
+import { UserAvatar, EmptyState, ErrorCard, RefreshButton } from '@/components/bits';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApi } from '@/lib/useApi';
@@ -21,13 +21,23 @@ export default function Overview() {
   const [period, setPeriod] = usePeriod();
   const nav = useNavigate();
   const compare = useMemo(() => comparisonRange(period.range, period.compare, period.preset), [period.range, period.compare, period.preset]);
-  const { data, loading, error } = useApi<OverviewData>(
+  const { data, loading, refetching, error, reload } = useApi<OverviewData>(
     () => apiGet('/overview', period.range, compare),
     [period.range.from, period.range.to, compare?.from, compare?.to],
+    { key: '/overview', ttl: 60_000 },
   );
 
   return (
-    <Layout title="Resumen" subtitle="El pulso del equipo en un vistazo" actions={<PeriodPicker value={period} onChange={setPeriod} />}>
+    <Layout
+      title="Resumen"
+      subtitle="El pulso del equipo en un vistazo"
+      actions={
+        <>
+          <RefreshButton busy={refetching} onClick={reload} />
+          <PeriodPicker value={period} onChange={setPeriod} />
+        </>
+      }
+    >
       {error && <ErrorCard message={error} className="mb-4" />}
 
       {loading || !data ? (
@@ -38,9 +48,9 @@ export default function Overview() {
         <>
           {/* KPIs */}
           <div className="stagger-children grid grid-cols-2 gap-4 lg:grid-cols-5">
-            <MetricCard label="Commits" value={data.kpis.commits.value} metric={data.kpis.commits} icon={GitCommitHorizontal} colorVar="--chart-1" />
+            <MetricCard label="Commits" value={data.kpis.commits.value} metric={data.kpis.commits} icon={GitCommitHorizontal} colorVar="--chart-1" trend={data.trend} trendKey="commits" />
             <MetricCard label="Líneas cambiadas" value={data.kpis.linesChanged.value} metric={data.kpis.linesChanged} icon={Code2} format={compact} colorVar="--chart-4" className="order-first col-span-2 lg:order-none lg:col-span-1" />
-            <MetricCard label="Tickets resueltos" value={data.kpis.ticketsResolved.value} metric={data.kpis.ticketsResolved} icon={CircleCheck} colorVar="--chart-3" />
+            <MetricCard label="Tickets resueltos" value={data.kpis.ticketsResolved.value} metric={data.kpis.ticketsResolved} icon={CircleCheck} colorVar="--chart-3" trend={data.trend} trendKey="ticketsResolved" />
             <MetricCard label="Contribuidores" value={data.kpis.activeContributors.value} metric={data.kpis.activeContributors} icon={Users} colorVar="--chart-2" />
             <MetricCard label="Cycle time" value={data.kpis.avgCycleTimeHours.value} metric={data.kpis.avgCycleTimeHours} icon={Timer} invert format={hours} colorVar="--chart-5" />
           </div>
@@ -48,15 +58,23 @@ export default function Overview() {
           {/* Estado de infraestructura (primer vistazo) */}
           <InfraHealth onOpen={() => nav('/app/infra')} />
 
-          {/* Actividad + Cliente vs Interno */}
+          {/* Actividad + Cliente vs Interno.
+
+              Las tarjetas de una fila SE ESTIRAN a la altura de la más alta (comportamiento por
+              defecto del grid), porque los fondos alineados es como debe verse una fila. El hueco
+              que eso producía no se arregla dejando de estirar —eso solo desalinea— sino haciendo
+              que la GRÁFICA se quede el alto de más: de ahí el `fill` de `AreaTrend` y `Columns`,
+              con `flex flex-col` en la Card y `flex-1` en el CardContent para que haya una cadena
+              de alturas definida. */}
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
+            <Card className="flex flex-col lg:col-span-2">
               <CardHeader>
                 <CardTitle>Actividad del período</CardTitle>
                 <CardDescription>Commits y tickets resueltos por día</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-1 flex-col">
                 <AreaTrend
+                  fill
                   data={data.trend}
                   series={[
                     { key: 'commits', name: 'Commits', color: 'hsl(var(--chart-1))' },
@@ -77,6 +95,7 @@ export default function Overview() {
                     { label: 'Cliente', value: data.split.client.commits, color: 'hsl(var(--chart-1))' },
                     { label: 'Interno', value: data.split.internal.commits, color: 'hsl(var(--chart-4))' },
                   ]}
+                  centerLabel="commits"
                 />
                 <div className="mt-2 grid grid-cols-2 gap-2 text-center text-xs">
                   <SplitStat icon={<Briefcase className="size-3.5" />} label="Cliente" tickets={data.split.client.ticketsResolved} />
@@ -88,22 +107,28 @@ export default function Overview() {
 
           {/* Contribución por proyecto + por developer */}
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <Card>
+            <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle>Contribución por proyecto</CardTitle>
                 <CardDescription>Dónde se invierte el esfuerzo</CardDescription>
               </CardHeader>
-              <CardContent>
-                <RankBars data={data.byProject.slice(0, 8).map((p) => ({ label: p.name, value: p.commits + p.ticketsResolved }))} height={230} />
+              <CardContent className="flex flex-1 flex-col">
+                <Columns
+                  fill
+                  topN={6}
+                  data={data.byProject.map((p) => ({ label: p.name, value: p.commits + p.ticketsResolved }))}
+                />
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle>Contribución por developer</CardTitle>
                 <CardDescription>Commits + tickets resueltos en el período</CardDescription>
               </CardHeader>
-              <CardContent>
+              {/* Una tabla no se llena (sus filas miden lo que miden), pero sí se centra: así el
+                  alto que sobra al igualar la fila no queda todo al pie. */}
+              <CardContent className="flex flex-1 flex-col justify-center">
                 {data.byDeveloper.length ? (
                   <div className="-mx-2">
                     {/* Cabecera de columnas: deja claro qué es cada número */}
@@ -140,23 +165,31 @@ export default function Overview() {
 
           {/* Tickets completados: por developer (ponderado) + por prioridad */}
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
-            <Card>
+            <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle>Tickets completados</CardTitle>
                 <CardDescription>Completados en el período por developer, ponderados por prioridad</CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex flex-1 flex-col">
                 <Workload rows={data.workload} onPick={(id) => nav(`/app/developers/${id}`)} />
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle>Completados por prioridad</CardTitle>
                 <CardDescription>Tickets resueltos en el período según su prioridad</CardDescription>
               </CardHeader>
-              <CardContent>
-                <RankBars data={data.completedByPriority.map((p) => ({ label: PRIO_LABEL[p.priority] ?? p.priority, value: p.count, color: PRIO_COLOR_VAR[p.priority] ?? 'hsl(var(--muted-foreground))' }))} />
+              <CardContent className="flex flex-1 flex-col">
+                <Columns
+                  fill
+                  sort={false}
+                  data={data.completedByPriority.map((p) => ({
+                    label: PRIO_LABEL[p.priority] ?? p.priority,
+                    value: p.count,
+                    color: PRIO_COLOR_VAR[p.priority] ?? 'hsl(var(--muted-foreground))',
+                  }))}
+                />
               </CardContent>
             </Card>
           </div>
@@ -227,9 +260,14 @@ function squareLayout(total: number): { cols: number; count: number } {
 // no llena filas completas, se muestran solo los primeros que sí las completan. Lee /infra.
 function InfraHealth({ onOpen }: { onOpen: () => void }) {
   const isMobile = useIsMobile();
-  const { data, loading } = useApi<InfraResponse>(() => apiGet('/infra'), []);
+  // MISMA clave que la página de Infraestructura: navegar Resumen → Infra (o al revés) reusa la
+  // respuesta en vez de repetir una consulta que en el backend es un N+1 de snapshots.
+  const { data, loading } = useApi<InfraResponse>(() => apiGet('/infra'), [], { key: '/infra', ttl: 60_000 });
   // Ventana propia del status page (histórico retenido), NO el período del dashboard.
-  const { data: uptime } = useApi<InfraUptimeResponse>(() => apiGet('/infra/uptime'), []);
+  const { data: uptime } = useApi<InfraUptimeResponse>(() => apiGet('/infra/uptime'), [], {
+    key: '/infra/uptime',
+    ttl: 300_000,
+  });
   const allProjects = (data?.projects ?? []).filter((p) => p.services.length);
   const services = allProjects.flatMap((p) => p.services);
   if (!loading && !services.length) return null; // sin servicios vinculados → no mostrar
@@ -332,7 +370,10 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                         <div
                           key={b.start}
                           title={`${b.start.slice(0, 10)} ${b.start.slice(11, 16)} · ${INFRA_STATUS[b.status]?.label ?? b.status}${b.total ? ` (${b.up}/${b.total} ok)` : ' · sin datos'}`}
-                          className={cn('min-w-px flex-1 rounded-[1.5px] transition-colors sm:min-w-[2px]', UPTIME_BAR[b.status] ?? 'bg-muted')}
+                          className={cn(
+                            'min-w-px flex-1 rounded-full transition-[colors,transform] duration-fast ease-spring hover:scale-y-110 sm:min-w-[2px]',
+                            UPTIME_BAR[b.status] ?? 'bg-muted',
+                          )}
                         />
                       ))}
                     </div>
@@ -347,16 +388,14 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                 ) : (
                   /* Fallback (aún sin histórico de snapshots): proporción por estado actual + leyenda. */
                   <>
-                    <div className="flex h-2 gap-0.5 overflow-hidden rounded-full">
-                      {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
-                        <div
-                          key={st}
-                          className={cn('h-full first:rounded-l-full last:rounded-r-full', INFRA_STATUS[st].dot)}
-                          style={{ width: `${(counts[st] / services.length) * 100}%` }}
-                          title={`${counts[st]} ${INFRA_STATUS[st].label}`}
-                        />
-                      ))}
-                    </div>
+                    <StackedBar
+                      height={8}
+                      data={INFRA_ORDER.filter((st) => counts[st]).map((st) => ({
+                        label: INFRA_STATUS[st].label,
+                        value: counts[st]!,
+                        color: `hsl(var(--${st === 'healthy' ? 'success' : st === 'degraded' ? 'warning' : st === 'down' ? 'destructive' : 'muted-foreground'}))`,
+                      }))}
+                    />
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
                       {INFRA_ORDER.filter((st) => counts[st]).map((st) => (
                         <span key={st} className="inline-flex items-center gap-1.5 text-xs">
@@ -466,20 +505,31 @@ function SplitStat({ icon, label, tickets }: { icon: React.ReactNode; label: str
   );
 }
 
+/**
+ * Carga de trabajo por developer, como columnas con el avatar en el eje.
+ *
+ * La columna dibuja el ponderado por prioridad (que es la métrica de la tarjeta) y la etiqueta
+ * imprime los tickets sin ponderar, porque son dos cosas distintas y antes se leían como si la
+ * barra midiera el conteo. Se recorta a seis: con ocho avatares las etiquetas se solapan.
+ */
 function Workload({ rows, onPick }: { rows: OverviewData['workload']; onPick: (id: string) => void }) {
   if (!rows.length) return <EmptyState>Nadie completó tickets en este período</EmptyState>;
-  const max = Math.max(...rows.map((r) => r.weighted));
   return (
-    <div className="space-y-3">
-      {rows.slice(0, 8).map((r) => (
-        <div key={r.devId} className="row-nudge -mx-2 flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1 hover:bg-accent/50" onClick={() => onPick(r.devId)}>
-          <UserAvatar url={r.avatarUrl} name={r.name} className="size-7" />
-          <div className="w-20 shrink-0 truncate text-sm">{r.name}</div>
-          <ProgressBar pct={(r.weighted / max) * 100} className="flex-1" barClassName="bg-chart-1" />
-          <div className="w-20 shrink-0 text-right text-xs text-muted-foreground">{r.completedTickets} completados</div>
-        </div>
-      ))}
-    </div>
+    <Columns
+      fill
+      topN={6}
+      valueFormat={(n) => String(Math.round(n))}
+      data={rows.map((r) => ({
+        label: r.name.split(' ')[0] ?? r.name,
+        value: r.weighted,
+        avatarUrl: r.avatarUrl,
+        sub: `${r.completedTickets} ticket${r.completedTickets === 1 ? '' : 's'}`,
+      }))}
+      onPick={(d) => {
+        const row = rows.find((r) => (r.name.split(' ')[0] ?? r.name) === d.label);
+        if (row) onPick(row.devId);
+      }}
+    />
   );
 }
 

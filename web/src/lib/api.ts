@@ -1,10 +1,52 @@
+import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type { Range } from './period';
 
+// ---- Token de acceso, cacheado en memoria ----
+// Antes cada petición hacía `supabase.auth.getSession()`. Parece inofensivo (lee de localStorage),
+// pero auth-js lo serializa detrás de un lock interno, y al volver a la pestaña ese lock lo tiene su
+// propio refresh: la ráfaga de peticiones que dispara el dashboard al regresar se quedaba encolada
+// esperando. Aquí el token lo EMPUJA el store de auth en cada cambio de sesión, así que el caso
+// normal no toca auth-js en absoluto.
+let cachedToken: string | null = null;
+let expiresAtSec = 0;
+// Margen: nunca mandar un token que caduque en vuelo.
+const SKEW_SEC = 30;
+
+/** Lo llama `auth/store.ts` en cada cambio de sesión (incluida la inicial y el cierre). */
+export function setAuthToken(session: Session | null): void {
+  cachedToken = session?.access_token ?? null;
+  expiresAtSec = session?.expires_at ?? 0;
+}
+
+/** Invalida el token cacheado. Se usa tras un 401 para forzar una relectura. */
+export function clearAuthToken(): void {
+  cachedToken = null;
+  expiresAtSec = 0;
+}
+
 async function authHeader(): Promise<Record<string, string>> {
+  if (cachedToken && expiresAtSec - SKEW_SEC > Date.now() / 1000) {
+    return { authorization: `Bearer ${cachedToken}` };
+  }
+  // Camino lento: arranque en frío (una petición antes del primer efecto del provider) o token
+  // vencido. Se relee UNA vez y se vuelve a cachear.
   const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  return token ? { authorization: `Bearer ${token}` } : {};
+  setAuthToken(data.session);
+  return cachedToken ? { authorization: `Bearer ${cachedToken}` } : {};
+}
+
+/**
+ * Ejecuta la petición y, si el token cacheado ya no vale (401), lo tira y reintenta UNA vez.
+ * Sin este reintento, un token desfasado convertiría la app entera en una tormenta de 401 y todas
+ * las pantallas se vaciarían a la vez. El reintento es único por construcción: `run` se llama a lo
+ * sumo dos veces, así que no hay forma de entrar en bucle.
+ */
+async function withAuth(run: (headers: Record<string, string>) => Promise<Response>): Promise<Response> {
+  const res = await run(await authHeader());
+  if (res.status !== 401 || !cachedToken) return res;
+  clearAuthToken();
+  return run(await authHeader());
 }
 
 /** Error de la API que conserva el status y el código del backend. Sin esto, quien llama solo
@@ -35,16 +77,18 @@ function qs(range?: Range, compare?: Range | null): string {
 }
 
 export async function apiGet<T>(path: string, range?: Range, compare?: Range | null): Promise<T> {
-  const res = await fetch(`/api/dashboard${path}${qs(range, compare)}`, { headers: await authHeader() });
+  const res = await withAuth((headers) => fetch(`/api/dashboard${path}${qs(range, compare)}`, { headers }));
   return handle<T>(res);
 }
 
 export async function apiSend<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`/api/dashboard${path}`, {
-    method,
-    headers: { 'content-type': 'application/json', ...(await authHeader()) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const res = await withAuth((headers) =>
+    fetch(`/api/dashboard${path}`, {
+      method,
+      headers: { 'content-type': 'application/json', ...headers },
+      body: body ? JSON.stringify(body) : undefined,
+    }),
+  );
   return handle<T>(res);
 }
 
@@ -52,11 +96,7 @@ export async function apiSend<T>(method: string, path: string, body?: unknown): 
 export async function apiUpload<T>(path: string, file: File, field = 'file'): Promise<T> {
   const form = new FormData();
   form.append(field, file);
-  const res = await fetch(`/api/dashboard${path}`, {
-    method: 'POST',
-    headers: { ...(await authHeader()) },
-    body: form,
-  });
+  const res = await withAuth((headers) => fetch(`/api/dashboard${path}`, { method: 'POST', headers, body: form }));
   return handle<T>(res);
 }
 
@@ -149,9 +189,21 @@ export interface CommitHistoryItem {
   committedAt: string | null; additions: number | null; deletions: number | null; repo: string; url: string | null;
 }
 
+/**
+ * Estados de `roz.project_repo.sync_status` (migración 0014). El backend los escribe crudos en
+ * `src/reconcile/backfill.ts` — OJO: el terminal es `'done'`, NO `'completada'`. Ese literal es del
+ * dominio de TAREAS (`lib/labels.ts`) y estuvo aquí por copy-paste: como el tipo terminaba en
+ * `| string`, comparar contra él compilaba sin chistar y el front nunca reconocía una
+ * sincronización terminada (ni pintaba el ✓, ni recargaba el detalle del proyecto).
+ *
+ * `(string & {})` mantiene el autocompletado de la unión y sigue aceptando en runtime un estado
+ * nuevo del backend, pero un literal que NO esté en la unión ya no compila.
+ */
+export type RepoSyncState = 'idle' | 'queued' | 'syncing' | 'done' | 'error';
+
 export interface RepoSyncStatus {
   repo: string;
-  status: 'idle' | 'queued' | 'syncing' | 'completada' | 'error' | string;
+  status: RepoSyncState | (string & {});
   pages: number;
   commits: number;
   totalPages: number | null;
@@ -478,4 +530,31 @@ export interface CalendarConnection {
   /** 'active' | 'revoked' | 'error' — `revoked` es el que pide reconectar. */
   status: string | null;
   lastSyncedAt: string | null;
+}
+
+// ---- Interruptores de notificaciones (espejo manual de src/notify/switches.ts) ----
+// Mismos nombres que devuelve el backend, exacto: un campo mal escrito compila igual y llega
+// `undefined` en runtime (se vería como "apagado" sin estarlo).
+
+export interface NotificationSwitch {
+  emailEnabled: boolean;
+  pushEnabled: boolean;
+  /** Quién movió el interruptor global y cuándo (null si nadie lo ha tocado). */
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
+export interface NotificationSwitches {
+  /** Killswitch de todo el entorno: apaga el correo (Resend) y/o el push para el equipo entero. */
+  global: NotificationSwitch;
+  /** Mis propios avisos. */
+  me: { emailEnabled: boolean; pushEnabled: boolean };
+  /** Cuántas personas se silenciaron por su cuenta. */
+  mutedDevs: number;
+}
+
+/** Cambio parcial: se manda emailEnabled y/o pushEnabled. */
+export interface SwitchPatch {
+  emailEnabled?: boolean;
+  pushEnabled?: boolean;
 }

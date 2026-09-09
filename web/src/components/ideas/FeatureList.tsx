@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Plus, Trash2, ChevronUp, ChevronDown, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -103,6 +103,12 @@ function FeatureRow({
   const [title, setTitle] = useState(feature.title);
   const [detail, setDetail] = useState(feature.detail ?? '');
   const [openDetail, setOpenDetail] = useState(false);
+
+  // Resincronización con lo que manda el padre. Sin esto, cuando un PATCH fallaba y el padre
+  // revertía la fila, el input SEGUÍA mostrando el texto rechazado: el usuario creía que su cambio
+  // estaba guardado cuando el servidor lo había rechazado.
+  useEffect(() => setTitle(feature.title), [feature.title]);
+  useEffect(() => setDetail(feature.detail ?? ''), [feature.detail]);
   const out = feature.priority === 'descartada';
 
   return (

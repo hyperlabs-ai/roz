@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useAuth } from '@/auth/AuthContext';
 import { apiSend } from '@/lib/api';
@@ -25,16 +25,31 @@ export function AvailabilityControl({ devId, value, onSaved }: { devId: string; 
   const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const [val, setVal] = useState(Math.round(value * 100)); // 0–100 mientras se arrastra
   const [busy, setBusy] = useState(false);
+  /** Último valor confirmado por el servidor: evita PATCHear un valor que no cambió. */
+  const saved = useRef(Math.round(value * 100));
+
+  // Resincronización con la prop. Sin esto, el slider guardaba su primer valor PARA SIEMPRE: si la
+  // disponibilidad cambiaba por otra vía (el selector del diálogo de credenciales, otra persona, un
+  // refetch del perfil), el slider seguía mostrando el valor viejo y se contradecía con el resto de
+  // la pantalla.
+  useEffect(() => {
+    const next = Math.round(value * 100);
+    saved.current = next;
+    setVal(next);
+  }, [value]);
 
   async function commit(pct: number) {
+    // Un clic sin arrastrar disparaba PATCH + toast igual. Ahora solo se guarda lo que cambió.
+    if (pct === saved.current) return;
     setBusy(true);
     try {
       await apiSend('PATCH', `/developers/${devId}/availability`, { availability: pct / 100 });
+      saved.current = pct;
       toast.success('Disponibilidad actualizada', { description: `${pct}% — afecta la asignación de roz` });
       onSaved?.(pct / 100);
     } catch (e: any) {
       toast.error('No se pudo guardar', { description: String(e.message ?? e) });
-      setVal(Math.round(value * 100)); // revertir
+      setVal(saved.current); // revertir a lo último confirmado
     }
     setBusy(false);
   }
