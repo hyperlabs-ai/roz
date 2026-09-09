@@ -39,6 +39,7 @@ import {
 import { getTeamPresence } from '../calendar/presence.js';
 import { pushEnabled } from '../adapters/web-push.js';
 import { savePushSubscription, deletePushSubscription } from '../notify/push.js';
+import { listSwitches, setDevSwitch, setGlobalSwitch } from '../notify/switches.js';
 import { getContributionCalendar, getRepo, listOrgRepos } from '../adapters/github.js';
 import { enqueueRepoBackfill } from '../reconcile/backfill.js';
 import {
@@ -334,7 +335,10 @@ dashboardRoutes.post('/projects/:id/repos', requireAdmin, async (c) => {
     const repo = await addProjectRepo(projectId, parsed.data.repo, githubId);
     // Vincular en vivo solo trackea hacia adelante; recupera el historial reciente (BACKFILL_DAYS).
     await enqueueRepoBackfill(repo, projectId).catch(() => {});
-    return c.json({ ok: true });
+    // Devuelve el repo NORMALIZADO (owner/name en minúsculas, sin URL): el dashboard inserta esa
+    // fila tal cual quedó guardada. Sin esto, escribir "Roz" pintaba una fila que no calzaba con la
+    // que devuelve el siguiente GET, y se veía un duplicado fantasma hasta recargar.
+    return c.json({ ok: true, repo }, 201);
   } catch (err) {
     return fail(c, err);
   }
@@ -622,6 +626,60 @@ dashboardRoutes.post('/push/unsubscribe', async (c) => {
   try {
     await deletePushSubscription(parsed.data.endpoint!); // requerido garantizado por el schema
     return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// ---- Interruptores de notificaciones ----
+// Dos alcances: el de la persona ("mis avisos") y el killswitch del equipo, que apaga TODO el
+// correo (Resend) y/o el push de roz para el entorno completo — sin redeploy y sin tocar env.
+// Para enviar, ambos tienen que estar encendidos.
+dashboardRoutes.get('/notifications/switches', async (c) => {
+  const user = c.get('user')!;
+  try {
+    const { global, devs } = await listSwitches();
+    const mine = devs.find((d) => d.devId === user.devId);
+    return c.json({
+      global,
+      // Sin fila propia, el default es encendido (roz notifica salvo que alguien lo apague).
+      me: { emailEnabled: mine?.emailEnabled ?? true, pushEnabled: mine?.pushEnabled ?? true },
+      // Cuántas personas se silenciaron por su cuenta: explica un "no me llegó" sin que haya
+      // ninguna falla del proveedor.
+      mutedDevs: devs.filter((d) => !d.emailEnabled || !d.pushEnabled).length,
+    });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Al menos un canal en el body: un PATCH vacío no cambiaría nada pero sí reescribiría
+// updated_by/updated_at, dejando un registro de un apagado que nadie hizo.
+const SwitchPatchBody = z
+  .object({ emailEnabled: z.boolean().optional(), pushEnabled: z.boolean().optional() })
+  .refine((v) => v.emailEnabled !== undefined || v.pushEnabled !== undefined, {
+    message: 'manda emailEnabled y/o pushEnabled',
+  });
+
+dashboardRoutes.patch('/notifications/switches/global', requireAdmin, async (c) => {
+  const parsed = SwitchPatchBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  const user = c.get('user')!;
+  try {
+    return c.json({ global: await setGlobalSwitch(parsed.data, user.email) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.patch('/notifications/switches/me', async (c) => {
+  const parsed = SwitchPatchBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  const user = c.get('user')!;
+  try {
+    // El dev sale de la sesión, nunca del body: si viniera del cliente, cualquiera podría
+    // silenciar los avisos de otra persona.
+    return c.json({ me: await setDevSwitch(user.devId, parsed.data, user.email) });
   } catch (err) {
     return fail(c, err);
   }

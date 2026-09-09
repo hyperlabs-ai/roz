@@ -5,6 +5,7 @@
 import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { sendEmail } from '../adapters/email.js';
+import { emailAllowed, emailEnabled } from '../notify/switches.js';
 
 const PROVIDER_NAME: Record<string, string> = { vercel: 'Vercel', railway: 'Railway', supabase: 'Supabase' };
 
@@ -149,6 +150,7 @@ export function renderServicePush(t: ServiceTransition): { title: string; body: 
 export async function notifyServiceTransitions(transitions: ServiceTransition[]): Promise<{ sent: number; failed: number }> {
   if (!transitions.length) return { sent: 0, failed: 0 };
   if (!config.resend.apiKey) return { sent: 0, failed: 0 };
+  if (!(await emailEnabled())) return { sent: 0, failed: 0 }; // killswitch de equipo
 
   const supabase = db();
   const { data } = await supabase.from('dev').select('id, name, email').eq('active', true).not('email', 'is', null);
@@ -162,6 +164,7 @@ export async function notifyServiceTransitions(transitions: ServiceTransition[])
     const template = t.kind === 'down' ? 'infra_service_down' : 'infra_service_up';
     for (const dev of devs) {
       if (!dev.email) continue;
+      if (!(await emailAllowed(dev.id))) continue; // silenciado por esta persona
       try {
         const res = await sendEmail({ to: dev.email, subject, html, text });
         await supabase.from('notification').insert({ channel: 'email', to_dev_id: dev.id, to_address: dev.email, template, body: text, status: 'sent', provider_id: res.id });
