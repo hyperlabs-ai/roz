@@ -1,6 +1,6 @@
 import { createContext, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigationType } from 'react-router-dom';
-import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb, Activity } from 'lucide-react';
+import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb, Activity, Gauge } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { usePush } from '@/push/PushContext';
 import { useTheme } from '@/components/theme';
@@ -39,6 +39,7 @@ export const ShellSlotsContext = createContext<ShellSlots | null>(null);
 const NAV = [
   { to: '/app', label: 'Resumen', icon: LayoutDashboard, end: true },
   { to: '/app/developers', label: 'Developers', icon: Users, end: false },
+  { to: '/app/capacity', label: 'Capacidad', icon: Gauge, end: false },
   { to: '/app/activity', label: 'Actividad', icon: Activity, end: false },
   { to: '/app/projects', label: 'Proyectos', icon: FolderGit2, end: false },
   { to: '/app/infra', label: 'Infraestructura', icon: Server, end: false },

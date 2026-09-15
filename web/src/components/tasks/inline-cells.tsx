@@ -21,6 +21,25 @@ import { cn } from '@/lib/utils';
 
 export const NONE = '__none__'; // centinela: los Select de Radix no aceptan value=""
 
+/**
+ * Responsables de una tarea con el PRINCIPAL al frente.
+ *
+ * Vive junto a AssigneesCell porque es el mismo contrato que esa celda documenta y guarda: el
+ * backend ya los devuelve asi (`orderedAssignees` en getTickets) y `updateTask` toma `[0]` como
+ * primario. Lo consumen la tabla y el tablero, que necesitan saber quien encabeza la tarea para
+ * pintarla y para agrupar por responsable.
+ */
+export function assigneesOf(t: {
+  assignees?: { id: string; name: string; avatarUrl: string | null }[] | null;
+  assignee?: { id: string; name: string; avatarUrl: string | null } | null;
+}) {
+  const list = t.assignees?.length ? t.assignees : t.assignee ? [t.assignee] : [];
+  const primaryId = t.assignee?.id;
+  if (!primaryId || list.length < 2) return list;
+  const primary = list.filter((a) => a.id === primaryId);
+  return primary.length ? [...primary, ...list.filter((a) => a.id !== primaryId)] : list;
+}
+
 // Disparador compartido: invisible en reposo, con fondo al hover. Sin esto cada celda tendría su
 // propio borde y la tabla parecería una hoja de cálculo.
 // En escritorio la celda llena su columna (`w-full`), y así toda la columna es clicable. En móvil
