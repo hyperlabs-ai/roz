@@ -227,3 +227,52 @@ export const DEV_PRESENCE: Record<string, { label: string; dot: string; pill: st
   free: { label: 'Sin actividad', dot: 'bg-success', pill: 'bg-success/12 text-success' },
   unknown: { label: 'Sin calendario', dot: 'bg-muted-foreground/40', pill: 'bg-muted text-muted-foreground' },
 };
+
+// ---- Capacidad del equipo ----
+// El puesto y la dedicación van SEPARADOS a propósito (ver migración 0029): mezclarlos impediría
+// expresar un intern de tiempo completo o un PM de medio tiempo.
+
+export const ROLE_LABEL: Record<string, string> = {
+  ceo: 'CEO',
+  pm: 'Project Manager',
+  account_manager: 'Account Manager',
+  dev: 'Developer',
+  designer: 'Diseño',
+  intern: 'Intern',
+};
+
+export const ROLE_OPTIONS = ['ceo', 'pm', 'account_manager', 'dev', 'designer', 'intern']
+  .map((value) => ({ value, label: ROLE_LABEL[value] }));
+
+export const COMMITMENT_LABEL: Record<string, string> = {
+  full_time: 'Tiempo completo',
+  part_time: 'Medio tiempo',
+};
+
+/** Forma corta, para la celda densa donde ya se ve el rol al lado. */
+export const COMMITMENT_SHORT: Record<string, string> = {
+  full_time: 'Full-time',
+  part_time: 'Part-time',
+};
+
+export const COMMITMENT_OPTIONS = ['full_time', 'part_time']
+  .map((value) => ({ value, label: COMMITMENT_LABEL[value] }));
+
+export const ASSIGNMENT_KIND_LABEL: Record<string, string> = {
+  principal: 'Principal',
+  secondary: 'Secundario',
+};
+
+/**
+ * Estado de carga. Mismo shape que QUEUE_HEALTH y DEV_PRESENCE, para que las tres se lean igual.
+ *
+ * `saturada` es destructivo y no de aviso: pasar del 100% no es un matiz, es trabajo prometido que
+ * no cabe en la semana de esa persona.
+ */
+export const LOAD_STATE: Record<string, { label: string; dot: string; pill: string; tone: 'primary' | 'success' | 'warning' | 'destructive' }> = {
+  libre: { label: 'Disponible', dot: 'bg-success', pill: 'bg-success/12 text-success', tone: 'success' },
+  disponible: { label: 'Con holgura', dot: 'bg-chart-1', pill: 'bg-chart-1/12 text-chart-1', tone: 'primary' },
+  optima: { label: 'Carga óptima', dot: 'bg-primary', pill: 'bg-primary/12 text-primary', tone: 'primary' },
+  completa: { label: 'Carga completa', dot: 'bg-warning', pill: 'bg-warning/12 text-warning', tone: 'warning' },
+  saturada: { label: 'Saturada', dot: 'bg-destructive', pill: 'bg-destructive/12 text-destructive', tone: 'destructive' },
+};

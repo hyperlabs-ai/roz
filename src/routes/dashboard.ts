@@ -9,6 +9,10 @@ import { config } from '../config.js';
 import { AppError } from '../utils/errors.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
 import {
+  ROLES, COMMITMENTS, ASSIGNMENT_KINDS,
+  getCapacity, updateDevCapacity, createAssignment, updateAssignment, deleteAssignment,
+} from '../dashboard/capacity.js';
+import {
   IDEA_STATUS_OPTIONS,
   FEATURE_PRIORITY_OPTIONS,
   BLOCK_KIND_OPTIONS,
@@ -1188,6 +1192,82 @@ dashboardRoutes.delete('/devs/:devId/skills/:skillId', requireAdmin, async (c) =
   try {
     await removeDevSkill(c.req.param('devId'), c.req.param('skillId'));
     return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// ---------------------------------------------------------------- Capacidad del equipo
+// Lectura abierta al equipo (como la cola o la presencia): saber quién está saturado es de todos.
+// La escritura exige admin — es el reparto de trabajo, no una preferencia personal.
+
+const CapacityDevPatch = z.object({
+  role: z.enum(ROLES).optional(),
+  commitment: z.enum(COMMITMENTS).optional(),
+  profile: z.string().max(200).nullable().optional(),
+  // null = volver a heredar el default de su dedicación, que no es lo mismo que "0 horas".
+  weeklyHours: z.number().int().min(1).max(80).nullable().optional(),
+  continuousWork: z.string().max(2000).nullable().optional(),
+  loadNote: z.string().max(300).nullable().optional(),
+}).strict();
+
+const AssignmentBody = z.object({
+  kind: z.enum(ASSIGNMENT_KINDS).optional(),
+  projectId: z.string().uuid().nullable().optional(),
+  repoId: z.string().uuid().nullable().optional(),
+  focus: z.string().max(300).nullable().optional(),
+  // Tope de 100 POR FILA, igual que el check de la migración: una asignación no puede llevarse más
+  // del 100% de una persona. La sobrecarga que la pantalla enseña es la SUMA de sus filas — ahí sí
+  // se pasa de 100, y `loadState` la marca como saturada.
+  loadPct: z.number().int().min(0).max(100).optional(),
+  position: z.number().int().min(0).max(99).optional(),
+}).strict();
+
+dashboardRoutes.get('/capacity', async (c) => {
+  try {
+    return c.json(await getCapacity());
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.patch('/capacity/devs/:devId', requireAdmin, async (c) => {
+  const parsed = CapacityDevPatch.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    await updateDevCapacity(c.req.param('devId'), parsed.data);
+    return c.json(await getCapacity());
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.post('/capacity/devs/:devId/assignments', requireAdmin, async (c) => {
+  const parsed = AssignmentBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    await createAssignment(c.req.param('devId'), parsed.data);
+    return c.json(await getCapacity());
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.patch('/capacity/assignments/:id', requireAdmin, async (c) => {
+  const parsed = AssignmentBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    await updateAssignment(c.req.param('id'), parsed.data);
+    return c.json(await getCapacity());
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+dashboardRoutes.delete('/capacity/assignments/:id', requireAdmin, async (c) => {
+  try {
+    await deleteAssignment(c.req.param('id'));
+    return c.json(await getCapacity());
   } catch (err) {
     return fail(c, err);
   }

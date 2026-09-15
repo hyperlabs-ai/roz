@@ -558,3 +558,65 @@ export interface SwitchPatch {
   emailEnabled?: boolean;
   pushEnabled?: boolean;
 }
+
+// ---- Capacidad del equipo ----
+// Espeja src/dashboard/capacity.ts. Todo lo derivado (`load`) llega ya calculado del backend: la
+// regla de negocio vive en un solo sitio, y la tabla solo la pinta.
+
+export type CapacityRole = 'ceo' | 'pm' | 'account_manager' | 'dev' | 'designer' | 'intern';
+export type CapacityCommitment = 'full_time' | 'part_time';
+export type AssignmentKind = 'principal' | 'secondary';
+export type LoadState = 'libre' | 'disponible' | 'optima' | 'completa' | 'saturada';
+
+export interface CapacityAssignment {
+  id: string;
+  kind: AssignmentKind;
+  projectId: string | null;
+  projectName: string | null;
+  repoId: string | null;
+  repo: string | null;
+  focus: string | null;
+  loadPct: number;
+  position: number;
+}
+
+export interface CapacitySkill { skillId: string; tag: string; level: number }
+
+export interface CapacityDev {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  active: boolean;
+  role: CapacityRole;
+  commitment: CapacityCommitment;
+  profile: string | null;
+  weeklyHours: number;
+  /** null = hereda el default de su dedicación. Distinto de "0 horas". */
+  weeklyHoursOverride: number | null;
+  continuousWork: string | null;
+  loadNote: string | null;
+  principal: CapacityAssignment[];
+  secondary: CapacityAssignment[];
+  skills: CapacitySkill[];
+  load: {
+    pct: number;
+    state: LoadState;
+    hoursUsed: number;
+    hoursFree: number;
+    maxPrincipal: number;
+    overAssigned: boolean;
+  };
+}
+
+export interface CapacityProject {
+  id: string;
+  name: string;
+  key: string;
+  repos: { id: string; repo: string }[];
+}
+
+export interface CapacityResponse {
+  devs: CapacityDev[];
+  projects: CapacityProject[];
+  totals: { people: number; hours: number; hoursUsed: number; saturated: number; free: number };
+}

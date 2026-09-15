@@ -15,6 +15,7 @@ import Infra from '@/pages/Infra';
 import Activity from '@/pages/Activity';
 import Ideas from '@/pages/Ideas';
 import Tasks from '@/pages/Tasks';
+import Capacity from '@/pages/Capacity';
 import Tickets from '@/pages/Tickets';
 import Skills from '@/pages/Skills';
 import Settings from '@/pages/Settings';
@@ -148,6 +149,7 @@ export default function App() {
             <Route path="activity" element={<Activity />} />
             <Route path="ideas" element={<Ideas />} />
             <Route path="tasks" element={<Tasks />} />
+            <Route path="capacity" element={<Capacity />} />
             <Route path="tickets" element={<Tickets />} />
             <Route path="skills" element={<Skills />} />
             <Route path="settings" element={<Settings />} />
