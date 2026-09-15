@@ -59,6 +59,7 @@ export function TaskDialog({
   onOpenChange,
   task,
   defaultDate,
+  defaultState,
   filters,
   onSaved,
 }: {
@@ -66,6 +67,9 @@ export function TaskDialog({
   onOpenChange: (v: boolean) => void;
   task?: Ticket | null;
   defaultDate?: string;
+  /** Estado con el que nace una tarea nueva. Lo manda el tablero: si pulsaste "Añade una tarjeta"
+   *  en "En curso", la tarea tiene que nacer en "En curso" y no en el estado por defecto. */
+  defaultState?: string;
   filters: TicketFilterOptions;
   /** Devuelve la tarea afectada (el backend responde la fila completa) para que la lista toque
    *  esa fila y nada más, en vez de recargarse entera. */
@@ -105,13 +109,13 @@ export function TaskDialog({
   // NO debe volver a correr cuando estos valores cambian de identidad: `task` es un objeto nuevo
   // cada vez que la lista se actualiza, y re-ejecutar el efecto reescribía el formulario encima de
   // lo que estabas escribiendo — de ahí la sensación de que la descripción "no se guardaba".
-  const src = useRef({ task, defaultDate, projects: filters.allProjects });
-  src.current = { task, defaultDate, projects: filters.allProjects };
+  const src = useRef({ task, defaultDate, defaultState, projects: filters.allProjects });
+  src.current = { task, defaultDate, defaultState, projects: filters.allProjects };
 
   // Se resetea SOLO al abrir, o al cambiar de tarea (por id) con el modal ya abierto.
   useEffect(() => {
     if (!open) return;
-    const { task, defaultDate, projects } = src.current;
+    const { task, defaultDate, defaultState, projects } = src.current;
     if (task) {
       setTitle(task.name ?? '');
       setSpec(task.description ?? '');
@@ -131,7 +135,7 @@ export function TaskDialog({
       setLabels((task.labels ?? []).join(', '));
     } else {
       setTitle(''); setSpec(''); setProjectId(projects[0]?.id ?? '');
-      setState('planificada'); setPriority(NONE); setAssigneeIds([]);
+      setState(defaultState ?? 'planificada'); setPriority(NONE); setAssigneeIds([]);
       setSchedDate(defaultDate ?? ''); setStartTime('09:00'); setEndTime('10:00');
       setDueDate(''); setLabels('');
     }

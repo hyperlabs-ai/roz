@@ -9,6 +9,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, ChevronDown, Inbox, Trash2, Copy, X, Search, Loader2, Users, User, CircleDot, RefreshCw,
+  List, Columns3,
 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { TaskDialog } from '@/components/TaskDialog';
@@ -23,8 +24,9 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-  RowCheck, StatusIcon, StateCell, PriorityCell, ProjectCell, DateCell, AssigneesCell,
+  RowCheck, StatusIcon, StateCell, PriorityCell, ProjectCell, DateCell, AssigneesCell, assigneesOf,
 } from '@/components/tasks/inline-cells';
+import { TaskBoard } from '@/components/tasks/board';
 import { toast } from 'sonner';
 import { useApi } from '@/lib/useApi';
 import { useIsMobile } from '@/lib/useIsMobile';
@@ -32,7 +34,7 @@ import { apiGet, apiSend, type TicketsResponse, type TicketFilterOptions, type T
 import { isPastDay } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import {
-  PRIO_ORDER, PRIO_OPTIONS, STATE_OPTIONS, STATE_LABEL, OPEN_STATES, CLOSED_STATES,
+  PRIO_ORDER, PRIO_OPTIONS, STATE_OPTIONS, STATE_LABEL, OPEN_STATES, CLOSED_STATES, canonState,
 } from '@/lib/labels';
 
 const ALL = '__all__';
@@ -48,6 +50,10 @@ const GROUP_MODES: GroupMode[] = ['state', 'project', 'assignee', 'module', 'non
 // luego prioridad — y sigue disponible en el desplegable.
 type OrderMode = 'priority' | 'plan';
 const ORDER_MODES: OrderMode[] = ['priority', 'plan'];
+
+// Lista (tabla densa, agrupable) o Tablero (kanban por estado). Vive en la URL como todo lo demás
+// de esta pantalla, así que se puede compartir el enlace a "el tablero del equipo".
+type ViewMode = 'list' | 'board';
 
 const SIN_MODULO = '__sin_modulo__';
 
@@ -81,19 +87,6 @@ function planSort(a: Ticket, b: Ticket): number {
     return a.identifier.localeCompare(b.identifier);
   }
   return a.number - b.number;
-}
-
-/**
- * Responsables con el principal al frente. El backend ya los devuelve así (`orderedAssignees` en
- * getTickets), pero se reafirma aquí porque el orden decide dos cosas: quién se pinta como
- * responsable y, al guardar, quién queda como primario (updateTask toma `[0]`).
- */
-function assigneesOf(t: Ticket) {
-  const list = t.assignees?.length ? t.assignees : t.assignee ? [t.assignee] : [];
-  const primaryId = t.assignee?.id;
-  if (!primaryId || list.length < 2) return list;
-  const primary = list.filter((a) => a.id === primaryId);
-  return primary.length ? [...primary, ...list.filter((a) => a.id !== primaryId)] : list;
 }
 
 /** Módulo de la tarea: la primera etiqueta. Es la convención con que se cargó el plan. */
@@ -173,6 +166,8 @@ export default function Tasks() {
   const group: GroupMode = groupParam && GROUP_MODES.includes(groupParam) ? groupParam : 'state';
   const orderParam = params.get('order') as OrderMode | null;
   const order: OrderMode = orderParam && ORDER_MODES.includes(orderParam) ? orderParam : 'plan';
+  const view: ViewMode = params.get('view') === 'board' ? 'board' : 'list';
+  const board = view === 'board';
   // Por defecto se ve TODO. Las secciones cerradas nacen colapsadas (ver defaultOpen), así que
   // el trabajo terminado está presente y contado sin estorbar. "Activas" es el filtro opcional.
   const onlyActive = params.get('active') === '1';
@@ -202,6 +197,7 @@ export default function Tasks() {
   const [busy, setBusy] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogTask, setDialogTask] = useState<Ticket | null>(null);
+  const [createState, setCreateState] = useState<string | undefined>(undefined);
 
   // Memoizados: alimentan filas memoizadas, y un array nuevo en cada render anularía el memo.
   const devs = useMemo(() => filters.data?.devs ?? [], [filters.data]);
@@ -237,6 +233,12 @@ export default function Tasks() {
   }, [tasks, onlyActive, fProject, fPriority, fDev, q]);
 
   const groups = useMemo(() => buildGroups(visible, group, order), [visible, group, order]);
+  // El tablero agrupa por estado en sus columnas, pero el ORDEN de arriba sigue mandando dentro de
+  // cada una — por eso recibe la lista ya ordenada con el mismo criterio que la tabla.
+  const sorted = useMemo(
+    () => [...visible].sort(order === 'plan' ? planSort : taskSort),
+    [visible, order],
+  );
 
   // Secciones cerradas arrancan colapsadas al agrupar por estado; el resto abiertas.
   const [openOverride, setOpenOverride] = useState<Record<string, boolean>>({});
@@ -395,8 +397,35 @@ export default function Tasks() {
   const toggleSelectAll = () =>
     setSelected(allVisibleSelected ? new Set() : new Set(visible.map((t) => t.id)));
 
-  function openCreate() { setDialogTask(null); setDialogOpen(true); }
+  function openCreate() { setDialogTask(null); setCreateState(undefined); setDialogOpen(true); }
   const openEdit = useCallback((t: Ticket) => { setDialogTask(t); setDialogOpen(true); }, []);
+  /** "Añade una tarjeta" desde una columna: la tarea nace ya en el estado de esa columna. */
+  const openCreateIn = useCallback((status: string) => {
+    setDialogTask(null);
+    setCreateState(status);
+    setDialogOpen(true);
+  }, []);
+
+  /**
+   * "Mover las N a …" del menú de una columna.
+   *
+   * Mueve SOLO lo que esa columna está enseñando (`visible`, ya filtrado), no todo lo que hay en
+   * ese estado en la base: con un filtro puesto, arrastrar trabajo que no puedes ver sería una
+   * sorpresa desagradable, y el contador del encabezado cuenta justo estas.
+   */
+  const moveAll = useCallback(async (from: string, to: string) => {
+    const items = visible.filter((t) => canonState(t.status) === from);
+    if (!items.length) return;
+    setBusy(true);
+    const results = await Promise.allSettled(items.map(async (t) => {
+      const { task } = await apiSend<{ task: Ticket }>('PATCH', `/tickets/${t.id}`, { status: to });
+      setTasks((prev) => prev.map((x) => (x.id === task.id ? task : x)));
+    }));
+    setBusy(false);
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed) toast.error(`Mover a ${STATE_LABEL[to] ?? to}: fallaron ${failed} de ${items.length}`);
+    else toast.success(`${items.length} tarea${items.length === 1 ? '' : 's'} → ${STATE_LABEL[to] ?? to}`);
+  }, [visible]);
 
   const total = visible.length;
   const abiertas = visible.filter((t) => OPEN_STATES.includes(t.status)).length;
@@ -408,6 +437,33 @@ export default function Tasks() {
       subtitle={mine ? 'El trabajo en el que participas' : 'Todo el trabajo del equipo'}
       actions={
         <div className="flex items-center gap-2">
+          {/* Lista / Tablero. La lista es la tabla densa agrupable; el tablero es el kanban por
+              estado, donde arrastrar una tarjeta ES cambiarle el estado. */}
+          <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
+            <button
+              type="button"
+              onClick={() => setParam('view', null)}
+              className={cn(
+                'flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-[13px] font-medium transition-colors',
+                !board ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <List className="size-3.5" />
+              Lista
+            </button>
+            <button
+              type="button"
+              onClick={() => setParam('view', 'board')}
+              className={cn(
+                'flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-[13px] font-medium transition-colors',
+                board ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Columns3 className="size-3.5" />
+              Tablero
+            </button>
+          </div>
+
           {/* Mías / Todas — el filtro lo aplica el backend contra el dev de la sesión. */}
           <div className="flex items-center gap-0.5 rounded-lg bg-muted p-0.5">
             <button
@@ -441,16 +497,20 @@ export default function Tasks() {
 
       {/* Barra de control: agrupación, filtros y búsqueda */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Select value={group} onValueChange={(v) => setParam('group', v)}>
-          <SelectTrigger className="h-8 w-auto min-w-[9.5rem] gap-1 text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="state">Agrupar: Estado</SelectItem>
-            <SelectItem value="project">Agrupar: Proyecto</SelectItem>
-            <SelectItem value="assignee">Agrupar: Responsable</SelectItem>
-            <SelectItem value="module">Agrupar: Módulo</SelectItem>
-            <SelectItem value="none">Sin agrupar</SelectItem>
-          </SelectContent>
-        </Select>
+        {/* En el tablero no se ofrece: sus columnas ya SON la agrupación (por estado), y un
+            desplegable que no hace nada confunde más que ayudar. */}
+        {!board && (
+          <Select value={group} onValueChange={(v) => setParam('group', v)}>
+            <SelectTrigger className="h-8 w-auto min-w-[9.5rem] gap-1 text-xs"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="state">Agrupar: Estado</SelectItem>
+              <SelectItem value="project">Agrupar: Proyecto</SelectItem>
+              <SelectItem value="assignee">Agrupar: Responsable</SelectItem>
+              <SelectItem value="module">Agrupar: Módulo</SelectItem>
+              <SelectItem value="none">Sin agrupar</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
 
         <Select value={order} onValueChange={(v) => setParam('order', v === 'plan' ? null : v)}>
           <SelectTrigger className="h-8 w-auto min-w-[9rem] gap-1 text-xs"><SelectValue /></SelectTrigger>
@@ -570,6 +630,17 @@ export default function Tasks() {
                   : 'Todavía no hay tareas.'}
           </EmptyState>
         </Card>
+      ) : board ? (
+        <TaskBoard
+          tasks={sorted}
+          onOpen={openEdit}
+          onToggleDone={toggleDone}
+          onStatus={setStatus}
+          onDuplicate={duplicate}
+          onDelete={remove}
+          onCreate={openCreateIn}
+          onMoveAll={moveAll}
+        />
       ) : (
         <div className="overflow-hidden rounded-xl border">
           {/* Encabezado: se queda arriba al scrollear. Las columnas de menos peso se ocultan
@@ -640,8 +711,9 @@ export default function Tasks() {
         </div>
       )}
 
-      {/* Barra de acciones en lote: aparece al seleccionar, como en Ops. */}
-      {selected.size > 0 && (
+      {/* Barra de acciones en lote: aparece al seleccionar, como en Ops. Solo en la lista — el
+          tablero no tiene casillas, ahí el lote se hace desde el menú de la columna. */}
+      {!board && selected.size > 0 && (
         <div className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4">
           {/* `max-w-full` + `flex-wrap`: en un móvil estrecho los controles bajan de línea en vez de
               salirse de la pastilla. */}
@@ -673,6 +745,7 @@ export default function Tasks() {
         open={dialogOpen}
         onOpenChange={onDialogOpenChange}
         task={dialogTask}
+        defaultState={createState}
         filters={filters.data ?? EMPTY_FILTERS}
         // El modal devuelve la tarea que guardó (el backend responde la fila completa), así que se
         // toca solo esa. Antes llamaba a `reload` y volvía a traer la lista entera.

@@ -33,6 +33,32 @@ export const STATE_OPTIONS = STATE_ORDER.map((value) => ({ value, label: STATE_L
 export const OPEN_STATES: string[] = ['planificada', 'pendiente', 'en_progreso', 'revision'];
 export const CLOSED_STATES: string[] = ['completada', 'cancelada'];
 
+/**
+ * Estado heredado de Linear -> su equivalente en el vocabulario actual.
+ *
+ * STATE_LABEL sabe LEER los nombres viejos, pero eso no basta para el tablero: ahi cada tarea
+ * tiene que caer en una de las seis columnas, y un work item historico con `started` no calza con
+ * ninguna. Sin esta traduccion la tarjeta no se pintaria en ningun lado — desapareceria de la
+ * vista sin avisar.
+ */
+const LEGACY_STATE: Record<string, string> = {
+  backlog: 'planificada',
+  triage: 'planificada',
+  unstarted: 'pendiente',
+  started: 'en_progreso',
+  in_progress: 'en_progreso',
+  review: 'revision',
+  completed: 'completada',
+  done: 'completada',
+  canceled: 'cancelada',
+};
+
+/** Estado canonico de una tarea: uno de los seis de STATE_ORDER, siempre. */
+export function canonState(state: string): string {
+  if ((STATE_ORDER as readonly string[]).includes(state)) return state;
+  return LEGACY_STATE[state] ?? 'planificada';
+}
+
 /** Variante de Badge para un estado (verde = cerrado, azul = en curso, gris = pendiente). */
 export function stateBadgeVariant(state: string): 'success' | 'default' | 'secondary' {
   if (['completada', 'completed', 'done'].includes(state)) return 'success';
