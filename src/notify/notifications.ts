@@ -303,10 +303,19 @@ function renderDocumentedEmail(opts: { greeting: string; items: { identifier: st
  */
 export async function notifyChangesDocumented(devId: string): Promise<void> {
   if (!devId) return;
-  // Interruptores primero: los cambios pendientes se marcan `change_notified` solo tras enviar, así
-  // que salir aquí los deja intactos y se avisarán cuando se reenciendan los avisos.
-  if (!(await emailAllowed(devId))) return;
   const supabase = db();
+  // Interruptor apagado: los pendientes se DESCARTAN (se marcan notificados sin enviar), igual que el
+  // resto de los avisos. Si solo se omitiera, se acumulaban y al reencender los avisos llegaba todo
+  // lo retroactivo de golpe, en correos de 50 en 50.
+  if (!(await emailAllowed(devId))) {
+    await supabase
+      .from('work_item')
+      .update({ change_notified: true })
+      .eq('assignee_dev_id', devId)
+      .eq('documented', true)
+      .eq('change_notified', false);
+    return;
+  }
 
   const { data: dev } = await supabase.from('dev').select('id, name, email').eq('id', devId).single();
 
