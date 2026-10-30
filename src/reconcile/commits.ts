@@ -13,6 +13,7 @@ import { getCommit, commitPullRequests, pushCommitShas, referencesLinearIssue, t
 import { claimOnce, releaseOnce, emit } from '../events/outbox.js';
 import { resolveProjectByRepo } from '../projects/resolve.js';
 import { createDocumentedTask } from '../dashboard/queries.js';
+import { shasInOtherRepos } from './backfill.js';
 
 export interface ReconcileInput {
   repo: string; // "owner/name"
@@ -33,6 +34,7 @@ export interface ReconcileResult {
     | 'documented' // trabajo sustantivo huérfano → tarea creada
     | 'orphan:no-project' // repo sin proyecto mapeado
     | 'skipped:merge' // merge commit: no es trabajo nuevo (recontaría líneas), no se persiste
+    | 'skipped:cloned' // el sha ya está en otro repo (historial de un clon): ya contó allá
     ;
   identifier?: string;
   detail?: string;
@@ -105,6 +107,12 @@ async function reconcileBody(
   // defecto ya se filtra en el webhook; aquí se descarta el merge que sí aterriza en ella.)
   if (commit.isMerge) {
     return { action: 'skipped:merge', detail: 'merge commit: no cuenta commits ni líneas' };
+  }
+
+  // Commit heredado de un repo clonado: ya se registró (y documentó) en el repo original. Ni se
+  // persiste otra vez ni se manda a Claude — sería el mismo trabajo contado y documentado dos veces.
+  if ((await shasInOtherRepos(input.repo, [commit.sha])).size) {
+    return { action: 'skipped:cloned', detail: 'el sha ya está registrado en otro repo (clon)' };
   }
 
   // Resolver proyecto y dev autor una sola vez: se usan para persistir el commit (dashboard) y,
