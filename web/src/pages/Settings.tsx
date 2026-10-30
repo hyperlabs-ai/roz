@@ -147,9 +147,11 @@ export default function Settings() {
               me: res.me ? { emailEnabled: res.me.emailEnabled, pushEnabled: res.me.pushEnabled } : s.me,
             },
       );
-      // El contador de "personas silenciadas" del killswitch me incluye: se revalida en silencio
-      // (useApi conserva los datos, así que no parpadea).
-      if (scope === 'me') switches.reload();
+      // Revalidar SIEMPRE, también el global: el estado optimista vive solo en este componente y la
+      // caché seguía con el valor viejo, así que al volver a Configuración (dentro del TTL) el
+      // interruptor recién encendido aparecía apagado. De paso refresca el contador de silenciados.
+      // useApi conserva los datos mientras revalida, así que no parpadea.
+      switches.reload();
       return true;
     }, {
       success: note ? { title: note.title, description: note.description } : false,
