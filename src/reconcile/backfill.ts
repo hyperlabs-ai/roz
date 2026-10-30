@@ -33,6 +33,24 @@ export async function loadDevMaps(): Promise<DevMaps> {
   return { byEmail, byLogin };
 }
 
+/**
+ * Shas que YA están registrados bajo OTRO repo. Un repo clonado/duplicado (p.ej. una tienda nueva
+ * hecha desde la plantilla de otra) trae el historial del original: esos commits ya contaron allá,
+ * y registrarlos de nuevo duplicaría commits, líneas y hyperpoints. Gana el primer repo que lo vio.
+ */
+export async function shasInOtherRepos(repo: string, shas: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  for (let i = 0; i < shas.length; i += 100) {
+    const { data } = await db()
+      .from('commit')
+      .select('sha')
+      .in('sha', shas.slice(i, i + 100))
+      .neq('repo', repo.toLowerCase());
+    for (const r of (data ?? []) as { sha: string }[]) found.add(r.sha);
+  }
+  return found;
+}
+
 export interface BackfillRepoInput {
   repo: string;
   projectId: string | null;
@@ -116,6 +134,8 @@ export async function backfillRepoCommits(input: BackfillRepoInput): Promise<Bac
     });
   }
 
+  const elsewhere = await shasInOtherRepos(input.repo, list.map((i) => i.sha));
+
   for (const item of list) {
     // Merge commit: su diff combinado recontaría líneas ya atribuidas a los commits que trae. No
     // se persiste (mismo criterio que reconcileBody en el flujo en vivo).
@@ -123,6 +143,8 @@ export async function backfillRepoCommits(input: BackfillRepoInput): Promise<Bac
       skippedMerges++;
       continue;
     }
+    // Historial heredado de un repo clonado: ya cuenta en el repo original.
+    if (elsewhere.has(item.sha)) continue;
 
     const email = item.authorEmail?.toLowerCase() ?? null;
     const login = item.authorLogin?.toLowerCase() ?? null;
