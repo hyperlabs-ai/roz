@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { channelSlug, chatPushRecipients, defaultNotifyLevel, dmKey, type PushCandidate } from '../src/chat/rules.js';
+import { channelSlug, chatPushRecipients, defaultNotifyLevel, dmKey, splitTaskQuery, type PushCandidate } from '../src/chat/rules.js';
 
 // Las reglas del chat que deciden a quién se molesta. Un push de más entrena a la gente a silenciar
 // roz; uno de menos hace que el chat "no sirva". Se prueban sin base: solo la decisión.
@@ -114,5 +114,37 @@ describe('chatPushRecipients', () => {
       isReply: false,
     });
     expect(out).toEqual([]);
+  });
+});
+
+describe('splitTaskQuery (@tarea <persona> <texto>)', () => {
+  const devs = [
+    { id: 'crix', name: 'Crix' },
+    { id: 'araly', name: 'Araly' },
+    { id: 'ana', name: 'Ana María López' },
+    { id: 'fer', name: 'Fer' },
+  ];
+
+  it('la persona se reconoce con o sin @, y el resto es texto', () => {
+    expect(splitTaskQuery('@Crix sitemap', devs)).toEqual({ devIds: ['crix'], textWords: ['sitemap'], empty: false });
+    expect(splitTaskQuery('crix sitemap', devs)).toEqual({ devIds: ['crix'], textWords: ['sitemap'], empty: false });
+  });
+
+  it('busca tareas de OTRAS personas, no solo de quien busca', () => {
+    expect(splitTaskQuery('@Fer login', devs).devIds).toEqual(['fer']);
+  });
+
+  it('nombres compuestos y acentos: cualquier parte del nombre, sin importar tildes', () => {
+    expect(splitTaskQuery('@maria', devs).devIds).toEqual(['ana']);
+    expect(splitTaskQuery('Ana María', devs).devIds).toEqual(['ana']);
+  });
+
+  it('sin palabras: vacío (se listan las tareas abiertas propias); una @ suelta no cuenta', () => {
+    expect(splitTaskQuery('', devs)).toEqual({ devIds: [], textWords: [], empty: true });
+    expect(splitTaskQuery('@', devs)).toEqual({ devIds: [], textWords: [], empty: true });
+  });
+
+  it('limpia lo que rompería el filtro de PostgREST', () => {
+    expect(splitTaskQuery('login,(admin)', devs).textWords).toEqual(['loginadmin']);
   });
 });

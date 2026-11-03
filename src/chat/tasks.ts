@@ -7,6 +7,7 @@
 import { db } from '../db/supabase.js';
 import { CLOSED_STATES, OPEN_STATES, STATE_LABEL, type TaskState } from '../tasks/states.js';
 import type { ChatTaskRef } from './model.js';
+import { splitTaskQuery } from './rules.js';
 
 const CARD_COLUMNS = 'id, identifier, name, status, priority, due_date, labels, project_id, assignee_dev_id, updated_at';
 
@@ -98,10 +99,6 @@ export async function tasksByIdentifier(identifiers: string[]): Promise<Map<stri
   return out;
 }
 
-const fold = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
-/** Lo que no puede ir dentro de un filtro `or(...)` de PostgREST sin romper la sintaxis. */
-const sanitize = (w: string) => w.replace(/[%,()*\\"'.:]/g, '').slice(0, 40);
-
 const SEARCH_LIMIT = 8;
 const CANDIDATES = 100;
 
@@ -140,30 +137,18 @@ async function involvedIds(devIds: string[], limit: number): Promise<string[]> {
  * deben aparecer). Sin consulta: las tareas abiertas de quien busca.
  */
 export async function searchTasks(devId: string, rawQuery: string): Promise<ChatTaskRef[]> {
-  const words = rawQuery.trim().split(/\s+/).map(sanitize).filter(Boolean).slice(0, 6);
-
   const { data: devRows } = await db().from('dev').select('id, name');
-  const devs = (devRows ?? []) as { id: string; name: string }[];
-  const devWords: string[] = [];
-  const textWords: string[] = [];
-  for (const w of words) {
-    const f = fold(w);
-    const matchesDev = f.length >= 2 && devs.some((d) => fold(d.name).split(/\s+/).some((part) => part.startsWith(f)));
-    (matchesDev ? devWords : textWords).push(w);
-  }
-  const devIds = devs
-    .filter((d) => devWords.some((w) => fold(d.name).split(/\s+/).some((part) => part.startsWith(fold(w)))))
-    .map((d) => d.id);
+  const { devIds, textWords, empty } = splitTaskQuery(rawQuery, (devRows ?? []) as { id: string; name: string }[]);
 
-  // Sin palabras: lo mío y abierto.
-  const scopeIds = !words.length ? await involvedIds([devId], CANDIDATES) : devIds.length ? await involvedIds(devIds, CANDIDATES * 3) : null;
+  // Sin palabras: lo mío y abierto. Con personas: lo de ellas (sea de quien sea que busca).
+  const scopeIds = empty ? await involvedIds([devId], CANDIDATES) : devIds.length ? await involvedIds(devIds, CANDIDATES * 3) : null;
   if (scopeIds && !scopeIds.length) return [];
 
   // El builder de supabase-js acumula filtros, así que cada consulta se arma de cero.
   const build = () => {
     let q = db().from('work_item').select(CARD_COLUMNS);
     for (const w of textWords) q = q.or(`name.ilike.%${w}%,identifier.ilike.%${w}%`);
-    if (!words.length) q = q.in('status', OPEN_STATES);
+    if (empty) q = q.in('status', OPEN_STATES);
     return q;
   };
 

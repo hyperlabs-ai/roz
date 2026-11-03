@@ -86,3 +86,32 @@ export function chatPushRecipients(ctx: PushContext): string[] {
   }
   return out;
 }
+
+// ---- Búsqueda de tareas para citar (`@tarea <persona> <texto>`) ----
+
+const foldText = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+/** Quita lo que rompe un filtro `or(...)` de PostgREST y los `@`/`#` que la gente antepone
+ *  ("@tarea @Crix login" es tan válido como "@tarea crix login"). */
+const sanitizeWord = (w: string) => w.replace(/[%,()*\\"'.:@#]/g, '').slice(0, 40);
+
+/**
+ * Separa la consulta en personas y texto: cada palabra que es el inicio de una parte del nombre de
+ * un dev filtra por responsable (con o sin `@`); el resto se busca en el nombre / identificador de
+ * la tarea. `empty` = no se escribió nada (entonces se listan las tareas abiertas de quien busca).
+ */
+export function splitTaskQuery(
+  raw: string,
+  devs: { id: string; name: string }[],
+): { devIds: string[]; textWords: string[]; empty: boolean } {
+  const words = raw.trim().split(/\s+/).map(sanitizeWord).filter(Boolean).slice(0, 6);
+  const names = devs.map((d) => ({ id: d.id, parts: foldText(d.name).split(/\s+/) }));
+  const devIds = new Set<string>();
+  const textWords: string[] = [];
+  for (const w of words) {
+    const f = foldText(w);
+    const hits = f.length >= 2 ? names.filter((n) => n.parts.some((part) => part.startsWith(f))) : [];
+    if (hits.length) hits.forEach((h) => devIds.add(h.id));
+    else textWords.push(w);
+  }
+  return { devIds: [...devIds], textWords, empty: words.length === 0 };
+}
