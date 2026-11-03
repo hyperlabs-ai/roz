@@ -30,6 +30,14 @@ export default {
         },
         // Dorado de logro (hyper points), theme-aware.
         hyper: 'hsl(var(--hyper))',
+        // Sidebar del chat (azul marino roz en ambos modos).
+        'chat-sidebar': {
+          DEFAULT: 'hsl(var(--chat-sidebar))',
+          foreground: 'hsl(var(--chat-sidebar-foreground))',
+          muted: 'hsl(var(--chat-sidebar-muted))',
+          hover: 'hsl(var(--chat-sidebar-hover))',
+          border: 'hsl(var(--chat-sidebar-border))',
+        },
       },
       borderRadius: { lg: 'var(--radius)', md: 'calc(var(--radius) - 2px)', sm: 'calc(var(--radius) - 4px)' },
       fontFamily: {

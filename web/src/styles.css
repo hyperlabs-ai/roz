@@ -42,6 +42,14 @@
     /* Dorado de "logro" (hyper points) — tokenizado y theme-aware (antes amber crudo). El podio usa
        la paleta de charts directamente (primary/chart-3/chart-2). */
     --hyper: 38 92% 40%;
+    /* Sidebar del chat: azul marino roz (el #0a0e1a del manifest) en el papel que el morado tiene
+       en Slack. Oscuro también en modo claro, a propósito: es lo que separa "lista de
+       conversaciones" de "conversación" de un vistazo. El activo usa --primary. */
+    --chat-sidebar: 224 45% 12%;
+    --chat-sidebar-foreground: 213 30% 93%;
+    --chat-sidebar-muted: 218 20% 66%;
+    --chat-sidebar-hover: 222 34% 19%;
+    --chat-sidebar-border: 222 32% 18%;
     --radius: 0.625rem;
     /* sombras frías y muy sutiles (clean minimal) */
     --shadow-sm: 0 1px 2px 0 hsl(220 43% 11% / 0.04), 0 1px 3px 0 hsl(220 43% 11% / 0.06);
@@ -154,6 +162,11 @@
     --chart-4: 40 100% 39%;
     --chart-5: 338 61% 58%;
     --hyper: 213 77% 56%;   /* en dark los hyper points van AZUL (en light son dorados) */
+    --chat-sidebar: 226 32% 5%;
+    --chat-sidebar-foreground: 213 28% 92%;
+    --chat-sidebar-muted: 218 14% 58%;
+    --chat-sidebar-hover: 224 24% 11%;
+    --chat-sidebar-border: 224 22% 12%;
     --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
     --shadow-md: 0 4px 14px -3px hsl(0 0% 0% / 0.45);
     --shadow-lg: 0 14px 36px -8px hsl(0 0% 0% / 0.55);
@@ -281,6 +294,28 @@
   .markdown-body td { @apply border border-border px-2 py-1 text-left; }
   .markdown-body img { @apply my-2 max-w-full rounded-md; }
   .markdown-body input[type='checkbox'] { @apply mr-1.5 align-middle; }
+}
+
+/* Markdown de los mensajes del chat: la misma base que .markdown-body pero compacta (un mensaje
+   no es un documento: sin márgenes de párrafo y títulos del tamaño del texto). */
+@layer components {
+  .chat-md { @apply break-words text-sm leading-relaxed text-foreground; }
+  .chat-md > * + * { @apply mt-1.5; }
+  .chat-md p { @apply whitespace-pre-wrap; }
+  .chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4, .chat-md h5, .chat-md h6 { @apply text-sm font-semibold; }
+  .chat-md strong { @apply font-semibold; }
+  .chat-md em { @apply italic; }
+  .chat-md a { @apply font-medium text-primary underline-offset-2 hover:underline; }
+  .chat-md ul { @apply list-disc pl-5; }
+  .chat-md ol { @apply list-decimal pl-5; }
+  .chat-md li::marker { @apply text-muted-foreground; }
+  .chat-md blockquote { @apply border-l-2 border-border pl-3 text-muted-foreground; }
+  .chat-md code { @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.85em]; }
+  .chat-md pre { @apply overflow-x-auto rounded-md border bg-muted/60 p-2.5; scrollbar-width: thin; }
+  .chat-md pre code { @apply bg-transparent p-0; }
+  .chat-md table { @apply w-full border-collapse text-sm; }
+  .chat-md th, .chat-md td { @apply border border-border px-2 py-1 text-left; }
+  .chat-md img { @apply max-h-60 rounded-md; }
 }
 
 /* ============================================================================

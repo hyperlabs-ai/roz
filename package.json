@@ -28,6 +28,7 @@
     "@hono/zod-validator": "^0.4.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@supabase/supabase-js": "^2.45.0",
+    "@vercel/functions": "^3.10.6",
     "dotenv": "^16.4.5",
     "hono": "^4.6.0",
     "openai": "^4.67.0",

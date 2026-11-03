@@ -1344,6 +1344,8 @@ async function mapTicketRows(
   const effortByItem = await loadTicketEffort(ids);
   // Responsables (multi): lista completa por tarea desde la junction work_item_assignee.
   const assigneesByItem = await loadTicketAssignees(ids, devName, devAvatar);
+  // Mensaje del chat del que salió cada tarea.
+  const chatOrigin = await loadChatOrigins();
   // …con el PRIMARIO al frente. `assignee_dev_id` es el responsable y el resto es apoyo, pero la
   // junction no garantiza orden y el orden importa dos veces: la lista marca al primero como
   // responsable, y updateTask vuelve a tomar `[0]` como primario al guardar. Sin esto, editar los
@@ -1392,6 +1394,8 @@ async function mapTicketRows(
         updatedAt: w.linear_updated_at ?? w.updated_at,
         ageDays: (w.linear_created_at ?? w.created_at) ? Math.floor((now - new Date(w.linear_created_at ?? w.created_at).getTime()) / 86_400_000) : null,
         parentId: w.parent_id ?? null,
+        // Mensaje del chat del que salió (enlace "ver conversación" en el detalle).
+        chatMessageId: chatOrigin.get(w.id) ?? null,
         // Agendado (calendario) + resolución (para ver el flujo de cierres)
         scheduledStart: w.scheduled_start ?? null,
         scheduledEnd: w.scheduled_end ?? null,
@@ -1408,6 +1412,17 @@ async function mapTicketRows(
       };
     })
     .sort((a, b) => (PRIO_ORDER[a.priority ?? ''] ?? 9) - (PRIO_ORDER[b.priority ?? ''] ?? 9));
+}
+
+/**
+ * Tareas que nacieron de un mensaje del chat → id del mensaje. Va aparte de TICKET_COLUMNS y no
+ * filtra por ids: son pocas (solo las creadas desde el chat), y una consulta tolerante evita que la
+ * lista de tareas —la vista central de la app— dependa de que la migración 0030 esté aplicada.
+ */
+async function loadChatOrigins(): Promise<Map<string, string>> {
+  const { data, error } = await db().from('work_item').select('id, chat_message_id').not('chat_message_id', 'is', null);
+  if (error) return new Map();
+  return new Map(((data ?? []) as { id: string; chat_message_id: string }[]).map((r) => [r.id, r.chat_message_id]));
 }
 
 /** El ticket tal como lo consume el dashboard. Se deriva del mapeo para que no puedan divergir. */
@@ -1667,6 +1682,8 @@ export interface CreateTaskInput {
   dueDate?: string | null;
   labels?: string[];
   parentId?: string | null;
+  /** Mensaje del chat del que nace la tarea (ya validado por quien llama). */
+  chatMessageId?: string | null;
   createdBy?: string | null;
 }
 
@@ -1719,6 +1736,8 @@ export async function createTask(input: CreateTaskInput): Promise<{ id: string; 
     labels: input.labels ?? [],
     parent_id: input.parentId ?? null,
     created_by: input.createdBy ?? null,
+    // Solo si viene: así crear tareas sigue funcionando aunque la migración 0030 no esté aplicada.
+    ...(input.chatMessageId ? { chat_message_id: input.chatMessageId } : {}),
     source: 'native',
     documented: true,
     ...transitionTimestamps(status, now),

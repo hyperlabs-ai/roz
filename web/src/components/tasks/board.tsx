@@ -16,16 +16,14 @@ import {
   memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { CalendarDays, Copy, MoreHorizontal, Plus, SquarePen, Trash2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Copy, MoreHorizontal, Plus, SquarePen, Trash2 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { AvatarStack } from '@/components/bits';
 import { StatusIcon, assigneesOf } from '@/components/tasks/inline-cells';
-import { CLOSED_STATES, PRIO_DOT, PRIO_LABEL, STATE_LABEL, STATE_ORDER, canonState } from '@/lib/labels';
-import { shortDate } from '@/lib/format';
+import { CardLabels, CardMeta } from '@/components/tasks/card-parts';
+import { CLOSED_STATES, STATE_LABEL, STATE_ORDER, canonState } from '@/lib/labels';
 import { cn } from '@/lib/utils';
 import type { Ticket } from '@/lib/api';
 
@@ -498,13 +496,7 @@ const Card = memo(function Card({ t, ghost, landed, onGrab, onOpen, onToggleDone
         landed && 'ring-2 ring-primary/70',
       )}
     >
-      {!!t.labels?.length && (
-        <div className="mb-1.5 flex flex-wrap gap-1">
-          {t.labels.slice(0, 3).map((l) => (
-            <Badge key={l} variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">{l}</Badge>
-          ))}
-        </div>
-      )}
+      <CardLabels labels={t.labels} />
 
       <div className="flex items-start gap-1.5">
         <button
@@ -531,24 +523,7 @@ const Card = memo(function Card({ t, ghost, landed, onGrab, onOpen, onToggleDone
         </button>
       </div>
 
-      <div className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-        <span className="shrink-0 font-mono">{t.identifier}</span>
-        {t.priority && (
-          <span className="flex shrink-0 items-center gap-1" title={`Prioridad ${PRIO_LABEL[t.priority] ?? t.priority}`}>
-            <span className={cn('size-1.5 rounded-full', PRIO_DOT[t.priority] ?? 'bg-muted')} />
-            {PRIO_LABEL[t.priority] ?? t.priority}
-          </span>
-        )}
-        {t.dueDate && (
-          <span className={cn('flex shrink-0 items-center gap-1', t.overdue && 'font-medium text-destructive')}>
-            <CalendarDays className="size-3" />
-            {shortDate(t.dueDate)}
-          </span>
-        )}
-        <span className="ml-auto shrink-0">
-          {people.length > 0 && <AvatarStack people={people} max={3} size="size-5" />}
-        </span>
-      </div>
+      <CardMeta identifier={t.identifier} priority={t.priority} dueDate={t.dueDate} overdue={t.overdue} people={people} />
 
       {/* El lápiz de Trello: aparece al pasar el ratón, en la esquina. Abre el menú en vez de
           repetir lo que ya hace un clic en la tarjeta. */}

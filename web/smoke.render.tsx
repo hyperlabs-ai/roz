@@ -30,6 +30,12 @@ import { SizeDistBar, SizeDistPanel } from '@/components/CommitSizeDist';
 // La app entera va envuelta en TooltipProvider (main.tsx:46); aquí hay que reponerlo o los
 // componentes que usan Tooltip fallan por el contexto, no por un defecto propio.
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { MemoryRouter } from 'react-router-dom';
+import { MessageItem } from '@/components/chat/MessageItem';
+import { MessageBody } from '@/components/chat/MessageBody';
+import { TaskCard } from '@/components/chat/TaskChip';
+import { ChatSidebar } from '@/components/chat/ChatSidebar';
+import type { ChatMessage } from '@/lib/chat';
 
 const metric = { value: 10, compare: 8, changePct: 25, direction: 'up' as const };
 const cols = [
@@ -57,7 +63,50 @@ const trend = [
   { date: '2026-06-19', commits: 5, ticketsResolved: 2 },
 ];
 
+// Mensajes del chat: sin ChatProvider (contexto por defecto: nadie conectado, devs vacíos), que es
+// justo el caso degenerado de un autor que ya no está en la lista.
+const msg = (over: Partial<ChatMessage> = {}): ChatMessage => ({
+  id: 'm1', conversationId: 'c1', parentId: null, kind: 'user', authorDevId: 'd1',
+  body: 'Hola <!canal>, revisen **esto** con <@aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa>', mentions: [], mentionChannel: true,
+  meta: null, clientNonce: null, replyCount: 0, lastReplyAt: null, replyDevIds: [], editedAt: null, deletedAt: null,
+  createdAt: '2026-11-03T15:00:00Z', attachments: [], tasks: [], citedTasks: [], ...over,
+});
+const taskRef = {
+  id: 't1', identifier: 'ROZ-12', name: 'Revisar cronograma', status: 'en_progreso', statusLabel: 'En curso',
+  priority: 'high', dueDate: '2026-11-01', overdue: true, labels: ['front', 'urgente'], projectName: 'Hyperflow', assigneeDevIds: ['d1'],
+};
+
 const cases: [string, () => JSX.Element][] = [
+  ['Chat: MessageBody con menciones', () => <MessageBody body={msg().body} />],
+  ['Chat: mensaje completo', () => <MessageItem message={msg({ editedAt: '2026-11-03T15:01:00Z' })} grouped={false} onOpenThread={() => {}} />],
+  ['Chat: mensaje agrupado', () => <MessageItem message={msg()} grouped />],
+  ['Chat: con hilo, adjuntos y tarea', () => (
+    <MessageItem
+      message={msg({
+        replyCount: 3, lastReplyAt: '2026-11-03T16:00:00Z', replyDevIds: ['d2'], tasks: [taskRef],
+        attachments: [
+          { id: 'a1', name: 'captura.png', contentType: 'image/png', size: 2048, url: 'https://x/y.png' },
+          { id: 'a2', name: 'propuesta.pdf', contentType: 'application/pdf', size: 3_200_000, url: null },
+        ],
+      })}
+      grouped={false}
+      onOpenThread={() => {}}
+    />
+  )],
+  ['Chat: mensaje eliminado', () => <MessageItem message={msg({ deletedAt: '2026-11-03T15:02:00Z', body: '' })} grouped={false} />],
+  ['Chat: envío fallido', () => <MessageItem message={msg({ id: 'tmp-1', clientNonce: 'n1', failed: true })} grouped={false} />],
+  ['Chat: aviso de tarea creada', () => (
+    <MessageItem message={msg({ kind: 'system', body: '', meta: { type: 'task_created', workItemId: 't1', identifier: 'ROZ-12', name: 'Revisar' } })} grouped={false} />
+  )],
+  ['Chat: TaskCard (kanban)', () => <TaskCard task={taskRef} />],
+  ['Chat: TaskCard mínima', () => <TaskCard task={{ ...taskRef, priority: null, dueDate: null, overdue: false, labels: [], projectName: null, assigneeDevIds: [] }} />],
+  ['Chat: mensaje que cita tareas', () => (
+    <MessageItem message={msg({ body: 'Revisen #ROZ-12 por favor', citedTasks: [taskRef], tasks: [{ ...taskRef, id: 't2', identifier: 'ROZ-13' }] })} grouped={false} />
+  )],
+  ['Chat: sidebar sin datos', () => (
+    <MemoryRouter><ChatSidebar onCreateChannel={() => {}} onBrowse={() => {}} onNewDm={() => {}} /></MemoryRouter>
+  )],
+
   // Columnas: el componente nuevo, en todas sus formas y con los casos degenerados.
   ['Columns básico', () => <Columns data={cols} />],
   ['Columns topN + resto', () => <Columns data={cols} topN={2} />],
