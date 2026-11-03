@@ -121,6 +121,17 @@ describe('citas de tareas', () => {
     expect(taskQueryAt('@tarea\nsiguiente', 16)).toBeNull();
   });
 
+  it('nombrar a la persona con @ NO cierra la búsqueda (era el bug: solo se citaban tareas propias)', () => {
+    expect(taskQueryAt('@tarea @', 8)).toEqual({ start: 0, query: '@' });
+    expect(taskQueryAt('@tarea @Crix sitemap', 20)).toEqual({ start: 0, query: '@Crix sitemap' });
+    expect(taskQueryAt('ver @tarea @Ana María login', 27)).toEqual({ start: 4, query: '@Ana María login' });
+  });
+
+  it('una consulta demasiado larga ya es el mensaje, no una cita', () => {
+    const long = `@tarea ${'x'.repeat(81)}`;
+    expect(taskQueryAt(long, long.length)).toBeNull();
+  });
+
   it('solo las citas que existen se vuelven ficha; el resto queda como texto', () => {
     const known = new Map([['ROZ-12', 'uuid-12']]);
     expect(taskRefsToMarkdown('ver #roz-12 y #ROZ-99', known)).toBe('ver [#ROZ-12](#task-uuid-12) y #ROZ-99');

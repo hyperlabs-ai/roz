@@ -54,16 +54,25 @@ export function taskRefsToMarkdown(body: string, known: Map<string, string>): st
   });
 }
 
+/** Largo máximo de la búsqueda: más que esto ya es el mensaje, no una cita a medio escribir. */
+const MAX_TASK_QUERY = 80;
+
 /**
  * ¿Hay una cita de tarea abierta bajo el cursor? `@tarea` seguido (o no) de lo que se busca:
- * personas y/o palabras del nombre ("@tarea crix cronograma"). null = no.
+ * personas y/o palabras del nombre, con o sin `@` delante de la persona ("@tarea crix cronograma"
+ * o "@tarea @Crix cronograma"). null = no.
+ *
+ * La consulta admite `@`: antes la cortaba, y escribir "@tarea @Crix" cerraba esta ventana para
+ * abrir la de mencionar personas — por eso solo se podían citar las tareas propias (las que salen
+ * con "@tarea" a secas).
  */
 export function taskQueryAt(text: string, caret: number): { start: number; query: string } | null {
   const before = text.slice(0, caret);
-  const m = /(^|[\s(])@tarea(?:[ \t]+([^\n@#]*))?$/iu.exec(before);
+  const m = /(^|[\s(])@tarea(?:[ \t]+([^\n]*))?$/iu.exec(before);
   if (!m) return null;
-  const start = m.index + m[1]!.length;
-  return { start, query: (m[2] ?? '').trimStart() };
+  const query = (m[2] ?? '').trimStart();
+  if (query.length > MAX_TASK_QUERY) return null;
+  return { start: m.index + m[1]!.length, query };
 }
 
 /** ¿El mensaje me menciona (directo o con @canal)? */

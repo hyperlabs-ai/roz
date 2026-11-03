@@ -138,9 +138,15 @@ export function Composer({
     return () => clearTimeout(t);
   }, [taskQ]);
 
+  // Si la persona cerró la búsqueda con Esc, no se reabre al seguir escribiendo después del mismo
+  // `@tarea` (la consulta ahora admite `@` y espacios, así que si no se recordara volvería sola).
+  const dismissedTaskAt = useRef<number | null>(null);
+
   /** Decide qué autocompletado va abierto según el texto antes del cursor (`@tarea` gana a `@persona`). */
   const updateTriggers = useCallback((value: string, caret: number) => {
-    const tq = taskQueryAt(value, caret);
+    const found = taskQueryAt(value, caret);
+    if (!found) dismissedTaskAt.current = null;
+    const tq = found && found.start !== dismissedTaskAt.current ? found : null;
     setTaskQuery(tq);
     setMention(tq ? null : mentionQueryAt(value, caret));
   }, []);
@@ -228,6 +234,7 @@ export function Composer({
     if (taskQuery) {
       if (e.key === 'Escape') {
         e.preventDefault();
+        dismissedTaskAt.current = taskQuery.start;
         setTaskQuery(null);
         return;
       }
@@ -313,12 +320,16 @@ export function Composer({
         <div className="absolute bottom-full left-4 right-4 z-20 mb-1 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg md:left-5 md:right-auto md:w-[28rem]">
           <div className="flex items-center gap-2 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Citar tarea
-            <span className="font-normal normal-case tracking-normal">· persona y/o palabras del nombre</span>
+            <span className="truncate font-normal normal-case tracking-normal">· persona y/o palabras, p. ej. @tarea @Fer login</span>
             {taskLoading && <Loader2 className="ml-auto size-3 animate-spin" />}
           </div>
           {taskResults.length === 0 ? (
             <p className="px-2 py-3 text-sm text-muted-foreground">
-              {taskLoading ? 'Buscando…' : taskQuery.query ? 'Ninguna tarea coincide.' : 'No tienes tareas abiertas. Escribe para buscar.'}
+              {taskLoading
+                ? 'Buscando…'
+                : taskQuery.query
+                  ? 'Ninguna tarea coincide.'
+                  : 'No tienes tareas abiertas. Escribe una persona o palabras para buscar las de otros.'}
             </p>
           ) : (
             taskResults.map((t, i) => {
