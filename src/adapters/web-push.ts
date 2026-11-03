@@ -19,6 +19,9 @@ export interface PushPayload {
   icon?: string;
   badge?: string;
   requireInteraction?: boolean;
+  /** Datos para el service worker (p. ej. `{ kind: 'chat', conversationId }` para no avisar de una
+   *  conversación que la persona ya tiene abierta y enfocada). */
+  data?: Record<string, unknown>;
 }
 
 export interface PushSendResult {

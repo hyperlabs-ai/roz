@@ -246,6 +246,8 @@ export interface Ticket {
   labels: string[]; creatorName: string | null; url: string | null;
   updatedAt: string | null; ageDays: number | null;
   parentId: string | null;
+  /** Mensaje del chat del que salió la tarea (migración 0030). */
+  chatMessageId?: string | null;
   // Agendado (calendario) + resolución
   scheduledStart: string | null; scheduledEnd: string | null;
   completedAt: string | null;

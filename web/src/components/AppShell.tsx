@@ -1,8 +1,9 @@
 import { createContext, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigationType } from 'react-router-dom';
-import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb, Activity, Gauge } from 'lucide-react';
+import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb, Activity, Gauge, MessagesSquare } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { usePush } from '@/push/PushContext';
+import { useChat } from '@/chat/ChatContext';
 import { useTheme } from '@/components/theme';
 import { IconSwap, UserAvatar } from '@/components/bits';
 import { RozLogo } from '@/components/RozLogo';
@@ -36,8 +37,10 @@ export interface ShellSlots {
 /** `null` = no hay shell (se está renderizando un `<Layout>` fuera de su ruta). */
 export const ShellSlotsContext = createContext<ShellSlots | null>(null);
 
-const NAV = [
+// `badge: 'chat'` pinta junto a la etiqueta el contador del chat (MDs + menciones, o un punto).
+const NAV: { to: string; label: string; icon: typeof LayoutDashboard; end: boolean; badge?: 'chat' }[] = [
   { to: '/app', label: 'Resumen', icon: LayoutDashboard, end: true },
+  { to: '/app/chat', label: 'Chat', icon: MessagesSquare, end: false, badge: 'chat' },
   { to: '/app/developers', label: 'Developers', icon: Users, end: false },
   { to: '/app/capacity', label: 'Capacidad', icon: Gauge, end: false },
   { to: '/app/activity', label: 'Actividad', icon: Activity, end: false },
@@ -49,6 +52,20 @@ const NAV = [
   { to: '/app/skills', label: 'Skills', icon: Sparkles, end: false },
   { to: '/app/settings', label: 'Configuración', icon: Settings, end: false },
 ];
+
+/** Contador del chat: número con MDs sin leer / menciones; punto si solo hay actividad en canales. */
+function ChatBadge({ className }: { className?: string }) {
+  const { badge } = useChat();
+  if (badge.count > 0) {
+    return (
+      <span className={cn('ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground', className)}>
+        {badge.count > 99 ? '99+' : badge.count}
+      </span>
+    );
+  }
+  if (badge.dot) return <span className={cn('ml-auto size-2 rounded-full bg-primary', className)} aria-label="Hay mensajes nuevos" />;
+  return null;
+}
 
 function NavItems({ onNavigate }: { onNavigate?: () => void }) {
   return (
@@ -79,6 +96,7 @@ function NavItems({ onNavigate }: { onNavigate?: () => void }) {
               />
               <n.icon className="size-[18px] transition-transform duration-200 ease-spring group-hover/nav:scale-110" />
               {n.label}
+              {n.badge === 'chat' && <ChatBadge />}
             </>
           )}
         </NavLink>
@@ -158,11 +176,15 @@ function UserMenu() {
 }
 
 function MobileNav() {
+  const { badge } = useChat();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" className="shrink-0 md:hidden" aria-label="Menú">
+        <Button variant="ghost" size="icon-sm" className="relative shrink-0 md:hidden" aria-label="Menú">
           <Menu />
+          {(badge.count > 0 || badge.dot) && (
+            <span className={cn('absolute right-1 top-1 size-2 rounded-full ring-2 ring-background', badge.count > 0 ? 'bg-destructive' : 'bg-primary')} />
+          )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-48">
@@ -170,6 +192,7 @@ function MobileNav() {
           <DropdownMenuItem key={n.to} asChild>
             <NavLink to={n.to} end={n.end}>
               <n.icon /> {n.label}
+              {n.badge === 'chat' && <ChatBadge />}
             </NavLink>
           </DropdownMenuItem>
         ))}
@@ -198,6 +221,9 @@ function useScrollToTop() {
 export function AppShell() {
   const { pathname } = useLocation();
   useScrollToTop();
+  // El chat ocupa todo el alto y ancho disponible (sus columnas hacen su propio scroll). Su key es
+  // fija: cambiar de conversación cambia la URL, pero no debe re-montar la página entera.
+  const fullBleed = pathname === '/app/chat' || pathname.startsWith('/app/chat/');
 
   // Los huecos del header viven en estado (no en refs) porque `Layout` necesita re-renderizar
   // cuando existen para poder portalizar dentro de ellos.
@@ -209,7 +235,7 @@ export function AppShell() {
   }).current;
 
   return (
-    <div className="flex min-h-dvh">
+    <div className={cn('flex', fullBleed ? 'h-dvh overflow-hidden' : 'min-h-dvh')}>
       {/* Sidebar (md+) */}
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col gap-1 border-r bg-card p-3 md:flex">
         <Brand />
@@ -251,10 +277,16 @@ export function AppShell() {
               aparezca en las páginas sin acciones (antes la fila entera era condicional). */}
           <div ref={set.actionsMobile} className="border-t px-4 py-2 empty:hidden sm:hidden [&_button]:w-full" />
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 overflow-x-hidden px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-7 md:pt-7 md:pb-7">
+        <main
+          className={cn(
+            fullBleed
+              ? 'min-h-0 w-full flex-1 overflow-hidden'
+              : 'mx-auto w-full max-w-7xl flex-1 overflow-x-hidden px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-7 md:pt-7 md:pb-7',
+          )}
+        >
           {/* key por ruta → la VISTA se re-monta y re-dispara la transición de entrada. El chrome
               de arriba ya no: vive fuera de esta key. */}
-          <div key={pathname} className="animate-page">
+          <div key={fullBleed ? '/app/chat' : pathname} className={cn('animate-page', fullBleed && 'h-full')}>
             <ShellSlotsContext.Provider value={slots}>
               <Outlet />
             </ShellSlotsContext.Provider>

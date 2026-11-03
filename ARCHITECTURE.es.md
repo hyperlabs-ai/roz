@@ -104,7 +104,8 @@ roz/
     reconcile/          # commits (dedup/auto-doc) + repos nuevos (detección/vínculo) [fase 5-6]
     projects/           # resolución repo→proyecto y auto-onboarding de proyectos
     dashboard/          # queries de visibilidad de ingeniería (consumidas por web/)
-    routes/             # health, mcp, webhooks (github), intake, dashboard, internal
+    chat/               # chat del equipo: canales, MDs, hilos, adjuntos, tiempo real y push
+    routes/             # health, mcp, webhooks (github), intake, dashboard (+ chat), internal
   migrations/           # schema completo (pgvector, outbox, idempotencia)
   web/                  # SPA React: landing pública (/) + dashboard (/app)
 ```
@@ -170,6 +171,39 @@ Al primer `push` de un repo no resoluble, el webhook emite `repo.detected`. El d
 vincularlo a un proyecto por similitud (tokens/Levenshtein → fallback Claude); con o sin match,
 notifica a los devs. No crea proyectos: deja esa decisión al humano.
 
+### 7. Chat del equipo
+Un chat estilo Slack dentro del dashboard (`/app/chat`): canales públicos y privados, mensajes
+directos (1:1 y grupales), hilos, adjuntos, @menciones (incluido `@canal`) y edición/borrado de los
+mensajes propios. La identidad es `roz.dev`, la misma de toda la app. El código vive en `src/chat/`
+(reglas puras en `rules.ts`/`text.ts`, probadas sin base) y la API en `/api/dashboard/chat/*`.
+
+- **Mensaje → tarea.** Cada mensaje tiene la acción "Crear tarea": abre el diálogo de tarea con
+  título, descripción (con enlace de vuelta) y responsables (los mencionados) ya llenos. La tarea
+  guarda `work_item.chat_message_id`; el mensaje muestra su ficha con estado y responsables
+  actuales, y en su hilo queda un aviso de sistema. Desde la tarea, "Ver conversación de origen"
+  abre ese hilo.
+- **Citar tareas.** En el compositor, `@tarea <persona> <texto>` busca tareas (las palabras que
+  coinciden con un dev filtran por responsable; el resto, por nombre o identificador) e inserta
+  `#ROZ-12`. El texto se guarda tal cual —el identificador ya es canónico y estable— y el backend
+  resuelve las tarjetas al leer, en una sola consulta por página. Cada cita se pinta con la MISMA
+  tarjeta del kanban (`web/src/components/tasks/card-parts.tsx`, compartida con el tablero), con su
+  estado y responsables actuales, y abre la tarea al hacer clic.
+- **Tiempo real: un buzón por persona.** Supabase Realtime Broadcast en canales PRIVADOS
+  (`chat:dev:<devId>`). El backend publica cada mensaje ya completo, con UNA petición REST para
+  todos los miembros. La policy sobre `realtime.messages` (migración 0030) deja a cada cliente
+  escuchar solo su buzón, con el mismo mapeo usuario→dev que el auth del dashboard. Si el socket no
+  está, el cliente sigue con polling de `/chat/unread` y re-sincroniza la conversación abierta.
+  **Paso manual en Supabase:** desactivar "Allow public access" en Realtime → Settings para que
+  solo existan canales privados.
+- **Push sin outbox.** Un chat que avisa un minuto tarde no sirve, así que el push de los mensajes
+  NO pasa por el outbox: sale justo después de responder (`waitUntil`, `src/utils/background.ts`)
+  y es best-effort como el resto de push. Respeta los interruptores de Configuración y el nivel de
+  aviso de cada conversación (todos / solo menciones / silenciado; MD → todos, canal → menciones).
+  El service worker no muestra el aviso si la persona ya tiene esa conversación abierta y enfocada.
+  Los envíos exitosos no se registran en `roz.notification` (solo los fallos): serían uno por mensaje.
+- **Adjuntos privados.** Bucket `chat-attachments` privado; el backend firma URLs temporales al
+  entregar mensajes. Mismo tope de 4 MB que los adjuntos de tareas (límite de body de Vercel).
+
 ---
 
 ## Núcleo de eventos (outbox + Vercel Cron)
@@ -199,6 +233,8 @@ Ver `migrations/0001_roz_schema.sql`:
 - **notification_switch** — interruptores de envío: fila `global` (killswitch del equipo) y una por
   dev que se silencia. Para enviar, ambos alcances tienen que estar encendidos.
 - **outbox_event / idempotency_key** — núcleo de eventos e idempotencia.
+- **chat_conversation / chat_member / chat_message / chat_attachment** — chat del equipo (0030).
+  `work_item.chat_message_id` enlaza una tarea con el mensaje del que nació.
 
 ### El SPA del dashboard (`web/`)
 
@@ -280,3 +316,4 @@ disfrazado. A escala chica, KNN exacto basta.
 | 5 | **Reconciliación**: commits huérfanos, clasificación, dedup, auto-doc. |
 | 6 | **Tracking de repos**: detección, vínculo por similitud, aviso a los devs. |
 | + | **Dashboard** de visibilidad (SPA en `web/`) y **digest semanal** por email (viernes). |
+| + | **Chat del equipo**: canales, MDs, hilos y adjuntos; mensaje → tarea; tiempo real y push. |

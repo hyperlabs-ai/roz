@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
-import { Trash2, Send, ImagePlus, X, GitPullRequest, GitCommit, Loader2, GitMerge, Eye, Pencil, Check, ChevronUp, ChevronsUpDown } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Trash2, Send, ImagePlus, X, GitPullRequest, GitCommit, Loader2, GitMerge, Eye, Pencil, Check, ChevronUp, ChevronsUpDown, MessagesSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -60,6 +61,8 @@ export function TaskDialog({
   task,
   defaultDate,
   defaultState,
+  prefill,
+  chatMessageId,
   filters,
   onSaved,
 }: {
@@ -70,6 +73,10 @@ export function TaskDialog({
   /** Estado con el que nace una tarea nueva. Lo manda el tablero: si pulsaste "Añade una tarjeta"
    *  en "En curso", la tarea tiene que nacer en "En curso" y no en el estado por defecto. */
   defaultState?: string;
+  /** Valores iniciales de una tarea NUEVA (p. ej. "Crear tarea" desde un mensaje del chat). */
+  prefill?: { name?: string; description?: string; assigneeDevIds?: string[]; projectId?: string };
+  /** Mensaje del chat del que nace la tarea: viaja en el POST y queda como su origen. */
+  chatMessageId?: string;
   filters: TicketFilterOptions;
   /** Devuelve la tarea afectada (el backend responde la fila completa) para que la lista toque
    *  esa fila y nada más, en vez de recargarse entera. */
@@ -109,13 +116,13 @@ export function TaskDialog({
   // NO debe volver a correr cuando estos valores cambian de identidad: `task` es un objeto nuevo
   // cada vez que la lista se actualiza, y re-ejecutar el efecto reescribía el formulario encima de
   // lo que estabas escribiendo — de ahí la sensación de que la descripción "no se guardaba".
-  const src = useRef({ task, defaultDate, defaultState, projects: filters.allProjects });
-  src.current = { task, defaultDate, defaultState, projects: filters.allProjects };
+  const src = useRef({ task, defaultDate, defaultState, prefill, projects: filters.allProjects });
+  src.current = { task, defaultDate, defaultState, prefill, projects: filters.allProjects };
 
   // Se resetea SOLO al abrir, o al cambiar de tarea (por id) con el modal ya abierto.
   useEffect(() => {
     if (!open) return;
-    const { task, defaultDate, defaultState, projects } = src.current;
+    const { task, defaultDate, defaultState, prefill, projects } = src.current;
     if (task) {
       setTitle(task.name ?? '');
       setSpec(task.description ?? '');
@@ -134,8 +141,9 @@ export function TaskDialog({
       setDueDate(task.dueDate ? task.dueDate.slice(0, 10) : '');
       setLabels((task.labels ?? []).join(', '));
     } else {
-      setTitle(''); setSpec(''); setProjectId(projects[0]?.id ?? '');
-      setState(defaultState ?? 'planificada'); setPriority(NONE); setAssigneeIds([]);
+      setTitle(prefill?.name ?? ''); setSpec(prefill?.description ?? '');
+      setProjectId(prefill?.projectId && projects.some((p) => p.id === prefill.projectId) ? prefill.projectId : projects[0]?.id ?? '');
+      setState(defaultState ?? 'planificada'); setPriority(NONE); setAssigneeIds(prefill?.assigneeDevIds ?? []);
       setSchedDate(defaultDate ?? ''); setStartTime('09:00'); setEndTime('10:00');
       setDueDate(''); setLabels('');
     }
@@ -196,6 +204,7 @@ export function TaskDialog({
           dueDate: dueDate || null,
           labels: labelList,
           projectId,
+          ...(chatMessageId ? { chatMessageId } : {}),
         };
     try {
       if (editing) {
@@ -373,10 +382,23 @@ export function TaskDialog({
       <DialogContent className="flex max-h-[92dvh] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl lg:max-w-5xl">
         <DialogHeader className="shrink-0 border-b px-5 py-4 sm:px-6">
           <DialogTitle>{editing ? 'Editar tarea' : 'Nueva tarea'}</DialogTitle>
-          <DialogDescription>
-            {editing
-              ? `${task!.identifier}${task!.projectName ? ` · ${task!.projectName}` : ''}`
-              : 'Crea una tarea nativa: asígnala, agéndala en el calendario y dale prioridad.'}
+          <DialogDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>
+              {editing
+                ? `${task!.identifier}${task!.projectName ? ` · ${task!.projectName}` : ''}`
+                : chatMessageId
+                  ? 'Nace de un mensaje del chat: la tarea queda enlazada a él y se avisa en su hilo.'
+                  : 'Crea una tarea nativa: asígnala, agéndala en el calendario y dale prioridad.'}
+            </span>
+            {editing && task!.chatMessageId && (
+              <Link
+                to={`/app/chat/m/${task!.chatMessageId}`}
+                onClick={() => onOpenChange(false)}
+                className="inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"
+              >
+                <MessagesSquare className="size-3.5" /> Ver conversación de origen
+              </Link>
+            )}
           </DialogDescription>
         </DialogHeader>
 

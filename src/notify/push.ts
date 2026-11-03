@@ -63,7 +63,13 @@ const SELECT = 'id, dev_id, endpoint, p256dh, auth';
 
 // Núcleo de entrega: manda `payload` a un set de suscripciones, registra en roz.notification y
 // limpia las caducadas (404/410). No lanza; el caller decide el best-effort.
-async function deliver(subs: SubRow[], payload: PushPayload, template: string): Promise<{ sent: number; failed: number }> {
+/** `logSent: false` registra solo los fallos: el chat manda un push por mensaje, y registrar cada
+ *  envío exitoso inundaría roz.notification (que es el historial de avisos que sí importa). */
+export interface DeliverOptions {
+  logSent?: boolean;
+}
+
+async function deliver(subs: SubRow[], payload: PushPayload, template: string, opts: DeliverOptions = {}): Promise<{ sent: number; failed: number }> {
   // Interruptores (roz.notification_switch): el global apaga el push de todo el entorno; el de cada
   // dev lo silencia en TODOS sus dispositivos. El toggle por dispositivo es la suscripción misma.
   // Se filtra aquí, el único punto por el que pasan todos los envíos.
@@ -79,6 +85,7 @@ async function deliver(subs: SubRow[], payload: PushPayload, template: string): 
     const res = await sendPush({ endpoint: s.endpoint, p256dh: s.p256dh, auth: s.auth }, payload);
     if (res.ok) {
       sent++;
+      if (opts.logSent === false) continue;
       await supabase.from('notification').insert({ channel: 'push', to_dev_id: s.dev_id, to_address: s.endpoint, template, body: logBody, status: 'sent' });
     } else if (res.gone) {
       await supabase.from('push_subscription').delete().eq('id', s.id);
@@ -97,7 +104,13 @@ function dedupe(rows: SubRow[]): SubRow[] {
 
 /** Push a un developer concreto: sus suscripciones por dev_id y/o por email (por si se suscribió
  *  antes de resolverse el dev). Best-effort: nunca lanza, no debe romper el flujo de email/outbox. */
-export async function pushToDev(devId: string | null | undefined, email: string | null | undefined, payload: PushPayload, template: string): Promise<void> {
+export async function pushToDev(
+  devId: string | null | undefined,
+  email: string | null | undefined,
+  payload: PushPayload,
+  template: string,
+  opts: DeliverOptions = {},
+): Promise<void> {
   if (!pushEnabled() || (!devId && !email)) return;
   try {
     const supabase = db();
@@ -111,7 +124,7 @@ export async function pushToDev(devId: string | null | undefined, email: string 
       rows.push(...((data ?? []) as SubRow[]));
     }
     const subs = dedupe(rows);
-    if (subs.length) await deliver(subs, payload, template);
+    if (subs.length) await deliver(subs, payload, template, opts);
   } catch { /* best-effort */ }
 }
 

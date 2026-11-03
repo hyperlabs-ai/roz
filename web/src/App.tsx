@@ -19,6 +19,7 @@ import Capacity from '@/pages/Capacity';
 import Tickets from '@/pages/Tickets';
 import Skills from '@/pages/Skills';
 import Settings from '@/pages/Settings';
+import Chat from '@/pages/Chat';
 
 function Spinner() {
   return (
@@ -149,6 +150,9 @@ export default function App() {
             <Route path="activity" element={<Activity />} />
             <Route path="ideas" element={<Ideas />} />
             <Route path="tasks" element={<Tasks />} />
+            <Route path="chat" element={<Chat />} />
+            <Route path="chat/m/:messageId" element={<Chat />} />
+            <Route path="chat/:conversationId" element={<Chat />} />
             <Route path="capacity" element={<Capacity />} />
             <Route path="tickets" element={<Tickets />} />
             <Route path="skills" element={<Skills />} />

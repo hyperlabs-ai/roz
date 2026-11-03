@@ -3,7 +3,7 @@
    y abrir la app en la vista correcta al tocar la notificación. Archivo vanilla: Vite lo copia
    tal cual desde web/public → dist (no pasa por el bundler). */
 
-const CACHE = 'roz-shell-v2';
+const CACHE = 'roz-shell-v3';
 const SHELL = ['/app', '/', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
@@ -43,7 +43,28 @@ self.addEventListener('fetch', (event) => {
 });
 
 // ---- Web Push ----
-// El backend envía un JSON: { title, body, url, tag, icon, badge, requireInteraction }.
+// El backend envía un JSON: { title, body, url, tag, icon, badge, requireInteraction, data }.
+// `data.kind === 'chat'` trae `conversationId` (y `threadId` si es una respuesta en hilo).
+
+/** ¿Hay una ventana de roz enfocada mostrando esa conversación? Entonces el aviso sobra: la
+ *  persona ya lo está viendo (y el chat lo recibe por tiempo real). Se le avisa a esa ventana por
+ *  postMessage por si su conexión en vivo estaba caída. */
+async function chatAlreadyVisible(info) {
+  if (!info || info.kind !== 'chat' || !info.conversationId) return false;
+  const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  let visible = false;
+  for (const client of all) {
+    try {
+      const url = new URL(client.url);
+      if (client.focused && client.visibilityState === 'visible' && url.pathname === '/app/chat/' + info.conversationId) {
+        visible = true;
+        client.postMessage({ type: 'chat-push', conversationId: info.conversationId, threadId: info.threadId || null });
+      }
+    } catch (_) { /* noop */ }
+  }
+  return visible;
+}
+
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = { body: event.data && event.data.text() }; }
@@ -58,7 +79,10 @@ self.addEventListener('push', (event) => {
     requireInteraction: !!data.requireInteraction,
     data: { url: data.url || '/app/infra' },
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil((async () => {
+    if (await chatAlreadyVisible(data.data)) return;
+    await self.registration.showNotification(title, options);
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {

@@ -102,7 +102,8 @@ roz/
     reconcile/          # commits (dedup/auto-doc) + new repos (detection/link) [phase 5-6]
     projects/           # repo→project resolution and project auto-onboarding
     dashboard/          # engineering-visibility queries (consumed by web/)
-    routes/             # health, mcp, webhooks (github), intake, dashboard, internal
+    chat/               # team chat: channels, DMs, threads, attachments, realtime and push
+    routes/             # health, mcp, webhooks (github), intake, dashboard (+ chat), internal
   migrations/           # full schema (pgvector, outbox, idempotency)
   web/                  # React SPA: public landing (/) + dashboard (/app)
 ```
@@ -169,6 +170,39 @@ On the first `push` of a repo roz can't resolve, the webhook emits `repo.detecte
 to link it to a project by name similarity (tokens/Levenshtein → Claude fallback); with or without a
 match, it notifies the devs. It doesn't create projects — that decision is left to a human.
 
+### 7. Team chat
+A Slack-style chat inside the dashboard (`/app/chat`): public and private channels, direct
+messages (1:1 and group), threads, attachments, @mentions (including `@canal`) and editing/deleting
+your own messages. Identity is `roz.dev`, same as the rest of the app. The code lives in `src/chat/`
+(pure rules in `rules.ts`/`text.ts`, tested without a database) and the API at `/api/dashboard/chat/*`.
+
+- **Message → task.** Every message has a "Create task" action: it opens the task dialog with the
+  title, description (with a link back) and assignees (the mentioned devs) pre-filled. The task
+  stores `work_item.chat_message_id`; the message shows its card with current status and assignees,
+  and a system notice lands in its thread. From the task, "View source conversation" opens that thread.
+- **Citing tasks.** In the composer, `@tarea <person> <text>` searches tasks (words that match a dev
+  filter by assignee; the rest match the name or identifier) and inserts `#ROZ-12`. The text is
+  stored as-is — the identifier is already canonical and stable — and the backend resolves the cards
+  on read, in one query per page. Each citation renders with the SAME kanban card
+  (`web/src/components/tasks/card-parts.tsx`, shared with the board), with its current status and
+  assignees, and opens the task on click.
+- **Realtime: one inbox per person.** Supabase Realtime Broadcast on PRIVATE channels
+  (`chat:dev:<devId>`). The backend publishes each message fully enriched, in ONE REST request for
+  all members. The policy on `realtime.messages` (migration 0030) lets each client listen only to its
+  own inbox, using the same user→dev mapping as the dashboard auth. Without the socket, the client
+  keeps polling `/chat/unread` and re-syncs the open conversation.
+  **Manual Supabase step:** turn off "Allow public access" under Realtime → Settings so only
+  private channels exist.
+- **Push without the outbox.** A chat that notifies a minute late is useless, so message push does
+  NOT go through the outbox: it is sent right after responding (`waitUntil`,
+  `src/utils/background.ts`) and is best-effort like all push. It honors the Settings switches and
+  each conversation's notify level (all / mentions only / muted; DM → all, channel → mentions). The
+  service worker skips the notification when the person already has that conversation open and
+  focused. Successful sends are not logged to `roz.notification` (only failures): it would be one row
+  per message.
+- **Private attachments.** A private `chat-attachments` bucket; the backend signs temporary URLs when
+  serving messages. Same 4 MB cap as task attachments (Vercel body limit).
+
 ---
 
 ## Event core (outbox + Vercel Cron)
@@ -197,6 +231,8 @@ See `migrations/0001_roz_schema.sql`:
 - **notification_switch** — send switches: a `global` row (team killswitch) plus one per muted dev.
   Sending requires both scopes to be on.
 - **outbox_event / idempotency_key** — the event core and idempotency.
+- **chat_conversation / chat_member / chat_message / chat_attachment** — team chat (0030).
+  `work_item.chat_message_id` links a task to the message it came from.
 
 ### The dashboard SPA (`web/`)
 
@@ -276,3 +312,4 @@ small scale, exact KNN is enough.
 | 5 | **Reconciliation**: orphan commits, classification, dedup, auto-doc. |
 | 6 | **Repo tracking**: new-repo detection, similarity link, dev notification. |
 | + | **Dashboard** for visibility (SPA in `web/`) and **weekly digest** email (Fridays). |
+| + | **Team chat**: channels, DMs, threads and attachments; message → task; realtime and push. |

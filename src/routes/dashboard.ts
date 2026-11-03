@@ -6,7 +6,9 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { RozContext } from '../types/hono.js';
 import { config } from '../config.js';
-import { AppError } from '../utils/errors.js';
+import { fail } from './http.js';
+import { chatRoutes } from './chat.js';
+import { assertTaskOrigin, announceTaskFromMessage } from '../chat/messages.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
 import {
   ROLES, COMMITMENTS, ASSIGNMENT_KINDS,
@@ -99,6 +101,9 @@ export const dashboardRoutes = new Hono<RozContext>();
 // Todo el dashboard requiere sesión válida (dominio permitido).
 dashboardRoutes.use('*', requireDashboardAuth);
 
+// Chat del equipo. Se monta DENTRO del dashboard para que el auth corra una sola vez.
+dashboardRoutes.route('/chat', chatRoutes);
+
 /** Resuelve el período desde ?from=&to= (ISO). Sin parámetros → mes actual. */
 function period(c: { req: { query: (k: string) => string | undefined } }): Period {
   const from = c.req.query('from');
@@ -116,34 +121,6 @@ function comparePeriod(c: { req: { query: (k: string) => string | undefined } })
   const to = c.req.query('compareTo');
   if (from && to) return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
   return null;
-}
-
-// Mensaje legible de cualquier error. Los errores de Supabase (PostgrestError) son objetos planos
-// (sin toString útil) → String(err) daría "[object Object]"; extraemos message/details/hint.
-function errMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (err && typeof err === 'object') {
-    const e = err as { message?: string; details?: string; hint?: string; code?: string };
-    const parts = [e.message, e.details, e.hint].filter(Boolean);
-    if (parts.length) return e.code ? `${parts.join(' — ')} (${e.code})` : parts.join(' — ');
-    try {
-      return JSON.stringify(err);
-    } catch {
-      return 'error desconocido';
-    }
-  }
-  return String(err);
-}
-
-function fail(c: any, err: unknown) {
-  // Un AppError es una decisión deliberada del dominio (403 de una idea ajena, 404 de algo que no
-  // existe), no una falla: devolverlo como 500 haría que el front lo tratara como "se cayó roz".
-  if (err instanceof AppError) {
-    c.get('logger')?.warn({ code: err.code, err: err.message }, 'dashboard app error');
-    return c.json({ error: { code: err.code, message: err.message } }, err.status as 400);
-  }
-  c.get('logger')?.error({ err }, 'dashboard error');
-  return c.json({ error: { code: 'INTERNAL', message: errMessage(err) } }, 500);
 }
 
 // Quién soy (para el header del SPA).
@@ -721,6 +698,18 @@ dashboardRoutes.get('/tickets/filters', async (c) => {
   }
 });
 
+// Una tarea suelta (después de /tickets/filters, que si no caería aquí como id). La pide el chat al
+// abrir la ficha de una tarea: puede no estar en ninguna lista ya cargada (no es tuya, está cerrada).
+dashboardRoutes.get('/tickets/:id', async (c) => {
+  try {
+    const task = await getTicketById(c.req.param('id'));
+    if (!task) return c.json({ error: { code: 'NOT_FOUND', message: 'la tarea no existe' } }, 404);
+    return c.json({ task });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
 // ---- CRUD de tareas nativas (cualquier usuario autenticado) ----
 
 const TASK_STATE = z.enum(['planificada', 'pendiente', 'en_progreso', 'revision', 'completada', 'cancelada']);
@@ -739,6 +728,8 @@ const TaskCreateBody = z.object({
   dueDate: z.string().nullish(),
   labels: z.array(z.string()).optional(),
   parentId: z.string().uuid().nullish(),
+  // Mensaje del chat del que sale la tarea ("Crear tarea" en un mensaje).
+  chatMessageId: z.string().uuid().nullish(),
 });
 
 dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
@@ -746,7 +737,11 @@ dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     // z.infer marca requeridos como opcionales en el build de prod → destructurar + `!`.
-    const { projectId, name, description, status, priority, assigneeDevId, assigneeDevIds, scheduledStart, scheduledEnd, dueDate, labels, parentId } = parsed.data;
+    const { projectId, name, description, status, priority, assigneeDevId, assigneeDevIds, scheduledStart, scheduledEnd, dueDate, labels, parentId, chatMessageId } = parsed.data;
+    const user = c.get('user')!;
+    // El mensaje de origen tiene que ser visible para quien crea la tarea: si no, cualquiera podría
+    // enlazar (y anunciar en su hilo) una tarea a un mensaje de un canal privado ajeno.
+    const origin = chatMessageId ? await assertTaskOrigin(user.devId, chatMessageId) : null;
     const task = await createTask({
       projectId: projectId!,
       name: name!,
@@ -760,8 +755,15 @@ dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
       dueDate,
       labels,
       parentId,
+      chatMessageId: origin?.id ?? null,
       createdBy: c.get('user')?.id ?? null,
     });
+    if (origin) {
+      const logger = c.get('logger');
+      await announceTaskFromMessage(user.devId, origin, { id: task.id, identifier: task.identifier, name: name! }, (err) =>
+        logger?.warn({ err }, 'chat: no se pudo anunciar la tarea en el hilo'),
+      );
+    }
     // Completa (igual que el PATCH): el dashboard inserta la fila nueva sin recargar la lista.
     return c.json({ task: (await getTicketById(task.id)) ?? task }, 201);
   } catch (err) {
