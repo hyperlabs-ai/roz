@@ -30,6 +30,15 @@ export function extractTaskIdentifiers(body: string): string[] {
   return out;
 }
 
+/** Máximo de tareas en un bloque Status (el `@tarea` suelto se queda en MAX_CITED_TASKS). */
+export const MAX_STATUS_TASKS = 30;
+
+/** Ids de tarea de un bloque Status; [] si el mensaje no es un status. */
+export function statusTaskIds(meta: Record<string, unknown> | null | undefined): string[] {
+  if (meta?.type !== 'status' || !Array.isArray(meta.taskIds)) return [];
+  return meta.taskIds.filter((x): x is string => typeof x === 'string');
+}
+
 /** Máximo de caracteres de un mensaje. Holgado para pegar un log, corto para no abusar del push. */
 export const MAX_MESSAGE_LENGTH = 8000;
 

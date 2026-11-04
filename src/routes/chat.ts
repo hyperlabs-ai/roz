@@ -22,7 +22,7 @@ import {
 } from '../chat/conversations.js';
 import { deleteMessage, editMessage, getThread, listMessages, locateMessage, sendMessage } from '../chat/messages.js';
 import { MAX_CHAT_ATTACHMENT_BYTES, uploadAttachment } from '../chat/attachments.js';
-import { MAX_MESSAGE_LENGTH } from '../chat/text.js';
+import { MAX_MESSAGE_LENGTH, MAX_STATUS_TASKS } from '../chat/text.js';
 import { searchTasks } from '../chat/tasks.js';
 
 export const chatRoutes = new Hono<RozContext>();
@@ -213,6 +213,7 @@ const SendBody = z.object({
   parentId: z.string().uuid().nullish(),
   attachmentIds: z.array(z.string().uuid()).max(10).optional(),
   clientNonce: z.string().max(64).nullish(),
+  statusTaskIds: z.array(z.string().uuid()).max(MAX_STATUS_TASKS).optional(),
 });
 
 chatRoutes.post('/conversations/:id/messages', async (c) => {
@@ -267,7 +268,8 @@ chatRoutes.get('/messages/:id/locate', async (c) => {
 
 chatRoutes.get('/tasks', async (c) => {
   try {
-    return c.json({ tasks: await searchTasks(devIdOf(c), (c.req.query('q') ?? '').slice(0, 120)) });
+    const limit = Number(c.req.query('limit')) || undefined;
+    return c.json({ tasks: await searchTasks(devIdOf(c), (c.req.query('q') ?? '').slice(0, 120), limit) });
   } catch (err) {
     return fail(c, err);
   }

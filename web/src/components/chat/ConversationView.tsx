@@ -293,7 +293,7 @@ export function ConversationView({
         onOpenThread={onOpenThread}
         onRetry={(m) => {
           discard(m.clientNonce!);
-          void send(m.body, m.attachments);
+          void send(m.body, m.attachments, m.statusTasks);
         }}
         onDiscard={(m) => discard(m.clientNonce!)}
         empty={empty}
@@ -305,7 +305,7 @@ export function ConversationView({
           draftKey={`conv:${conv.id}`}
           memberIds={conv.memberIds}
           placeholder={isChannel ? `Escribe en #${conv.name}` : `Escribe a ${title}`}
-          onSend={(body, attachments) => void send(body, attachments)}
+          onSend={(body, attachments, statusTasks) => void send(body, attachments, statusTasks)}
           autoFocus={!onBack}
         />
       ) : (

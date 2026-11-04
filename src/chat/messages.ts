@@ -15,8 +15,10 @@ import { assertCanView, assertMember, listMembers } from './access.js';
 import { attachmentsByMessage, linkAttachments, removeMessageFiles } from './attachments.js';
 import { broadcastToDevs } from './realtime.js';
 import { notifyChatMessage } from './notify.js';
-import { MAX_MESSAGE_LENGTH, extractMentions, extractTaskIdentifiers, hasChannelMention } from './text.js';
-import { tasksByIdentifier, tasksByMessage } from './tasks.js';
+import {
+  MAX_MESSAGE_LENGTH, MAX_STATUS_TASKS, extractMentions, extractTaskIdentifiers, hasChannelMention, statusTaskIds,
+} from './text.js';
+import { tasksByIdentifier, tasksByIds, tasksByMessage } from './tasks.js';
 
 const PAGE_SIZE = 50;
 const MAX_THREAD = 500;
@@ -59,11 +61,13 @@ async function enrich(rows: MessageRow[]): Promise<ChatMessage[]> {
   const withReplies = rows.filter((r) => !r.parent_id && r.reply_count > 0).map((r) => r.id);
   // Citas `#ROZ-12` de todos los mensajes de la página, resueltas en UNA consulta.
   const citedByMessage = new Map(rows.filter((r) => !r.deleted_at).map((r) => [r.id, extractTaskIdentifiers(r.body)]));
-  const [files, tasks, repliers, cited] = await Promise.all([
+  const statusByMessage = new Map(rows.filter((r) => !r.deleted_at).map((r) => [r.id, statusTaskIds(r.meta)]));
+  const [files, tasks, repliers, cited, statusCards] = await Promise.all([
     attachmentsByMessage(ids),
     tasksByMessage(ids),
     repliersByRoot(withReplies),
     tasksByIdentifier([...citedByMessage.values()].flat()),
+    tasksByIds([...statusByMessage.values()].flat()),
   ]);
   return rows.map((r) => {
     const deleted = !!r.deleted_at;
@@ -88,6 +92,7 @@ async function enrich(rows: MessageRow[]): Promise<ChatMessage[]> {
       attachments: deleted ? [] : files.get(r.id) ?? [],
       tasks: tasks.get(r.id) ?? [],
       citedTasks: (citedByMessage.get(r.id) ?? []).map((i) => cited.get(i)).filter((t): t is NonNullable<typeof t> => !!t),
+      statusTasks: (statusByMessage.get(r.id) ?? []).map((i) => statusCards.get(i)).filter((t): t is NonNullable<typeof t> => !!t),
     };
   });
 }
@@ -147,6 +152,8 @@ export interface SendInput {
   parentId?: string | null;
   attachmentIds?: string[];
   clientNonce?: string | null;
+  /** Bloque Status (daily): tareas a mostrar en el mensaje. Se guardan en `meta`; el estado se lee vivo. */
+  statusTaskIds?: string[];
 }
 
 export async function sendMessage(devId: string, conversationId: string, input: SendInput, onError?: OnError): Promise<ChatMessage> {
@@ -154,7 +161,15 @@ export async function sendMessage(devId: string, conversationId: string, input: 
   const body = (input.body ?? '').trim();
   if (body.length > MAX_MESSAGE_LENGTH) throw new ValidationError(`el mensaje supera ${MAX_MESSAGE_LENGTH} caracteres`);
   const attachmentIds = [...new Set(input.attachmentIds ?? [])].slice(0, MAX_ATTACHMENTS);
-  if (!body && !attachmentIds.length) throw new ValidationError('el mensaje está vacío');
+  const statusIds = [...new Set(input.statusTaskIds ?? [])];
+  if (statusIds.length > MAX_STATUS_TASKS) throw new ValidationError(`un status admite hasta ${MAX_STATUS_TASKS} tareas`);
+  if (!body && !attachmentIds.length && !statusIds.length) throw new ValidationError('el mensaje está vacío');
+  if (statusIds.length) {
+    if (input.parentId) throw new ValidationError('el status va en el canal, no en un hilo');
+    // Solo tareas que existen: un id inventado no debe quedar guardado en el mensaje.
+    const found = await tasksByIds(statusIds);
+    if (found.size !== statusIds.length) throw new ValidationError('alguna de las tareas del status ya no existe');
+  }
 
   if (input.parentId) {
     const parent = await loadMessage(input.parentId);
@@ -191,6 +206,7 @@ export async function sendMessage(devId: string, conversationId: string, input: 
       mentions: mentionsFor(body, memberIds),
       mention_channel: hasChannelMention(body),
       client_nonce: input.clientNonce ?? null,
+      meta: statusIds.length ? { type: 'status', taskIds: statusIds } : null,
     })
     .select(MESSAGE_COLUMNS)
     .single();
@@ -237,7 +253,9 @@ export async function editMessage(devId: string, id: string, rawBody: string, on
   if (body.length > MAX_MESSAGE_LENGTH) throw new ValidationError(`el mensaje supera ${MAX_MESSAGE_LENGTH} caracteres`);
   if (!body) {
     const { count } = await db().from('chat_attachment').select('id', { count: 'exact', head: true }).eq('message_id', id);
-    if (!count) throw new ValidationError('el mensaje no puede quedar vacío; elimínalo si ya no sirve');
+    if (!count && !statusTaskIds(row.meta).length) {
+      throw new ValidationError('el mensaje no puede quedar vacío; elimínalo si ya no sirve');
+    }
   }
 
   const members = await listMembers(row.conversation_id);
