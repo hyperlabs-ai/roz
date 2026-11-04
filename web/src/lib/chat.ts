@@ -75,6 +75,8 @@ export interface ChatMessage {
   tasks: ChatTaskRef[];
   /** Tareas citadas en el texto (`#ROZ-12`), en orden de aparición. */
   citedTasks: ChatTaskRef[];
+  /** Tareas del bloque Status (`meta.type === 'status'`), con su estado actual. */
+  statusTasks: ChatTaskRef[];
   /** Solo cliente: envío optimista en vuelo / fallido. */
   pending?: boolean;
   failed?: boolean;
@@ -146,7 +148,10 @@ export const chatApi = {
     apiGet<{ messages: ChatMessage[]; hasMore: boolean }>(
       `/chat/conversations/${id}/messages${before ? `?before=${enc(before)}` : ''}`,
     ),
-  send: (id: string, body: { body: string; parentId?: string | null; attachmentIds?: string[]; clientNonce: string }) =>
+  send: (
+    id: string,
+    body: { body: string; parentId?: string | null; attachmentIds?: string[]; clientNonce: string; statusTaskIds?: string[] },
+  ) =>
     apiSend<{ message: ChatMessage }>('POST', `/chat/conversations/${id}/messages`, body),
   edit: (messageId: string, body: string) => apiSend<{ message: ChatMessage }>('PATCH', `/chat/messages/${messageId}`, { body }),
   remove: (messageId: string) => apiSend<{ ok: true }>('DELETE', `/chat/messages/${messageId}`),
@@ -154,7 +159,8 @@ export const chatApi = {
   locate: (messageId: string) =>
     apiGet<{ conversationId: string; rootId: string; messageId: string }>(`/chat/messages/${messageId}/locate`),
   /** Autocompletado `@tarea <persona> <texto>`. */
-  searchTasks: (q: string) => apiGet<{ tasks: ChatTaskRef[] }>(`/chat/tasks?q=${enc(q)}`),
+  searchTasks: (q: string, limit?: number) =>
+    apiGet<{ tasks: ChatTaskRef[] }>(`/chat/tasks?q=${enc(q)}${limit ? `&limit=${limit}` : ''}`),
   upload: (conversationId: string, file: File) =>
     apiUpload<{ attachment: ChatAttachment }>(`/chat/conversations/${conversationId}/attachments`, file),
 };
@@ -162,5 +168,6 @@ export const chatApi = {
 /** Debe coincidir con el backend (src/chat/attachments.ts). */
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 export const MAX_MESSAGE_LENGTH = 8000;
+export const MAX_STATUS_TASKS = 30;
 
 export * from './chat-text';

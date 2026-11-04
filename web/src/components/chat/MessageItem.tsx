@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MessageBody } from './MessageBody';
-import { MessageTasks, TaskCreatedNotice, useTaskBridge } from './TaskChip';
+import { MessageTasks, StatusBlock, TaskCreatedNotice, useTaskBridge } from './TaskChip';
 import {
   decodeMentions, encodeMentions, formatBytes, mentionsMe, timeLabel, type ChatAttachment, type ChatMessage,
 } from '@/lib/chat';
@@ -254,6 +254,7 @@ export const MessageItem = memo(function MessageItem({
                 {m.editedAt && <span className="text-[11px] text-muted-foreground">(editado)</span>}
               </div>
             )}
+            {(m.meta as { type?: string } | null)?.type === 'status' && <StatusBlock message={m} />}
             <Attachments items={m.attachments} />
           </>
         )}

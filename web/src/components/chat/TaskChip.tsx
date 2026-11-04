@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { FolderGit2, ListChecks } from 'lucide-react';
+import { ClipboardList, FolderGit2, ListChecks } from 'lucide-react';
 import { useChat } from '@/chat/ChatContext';
 import { StatusIcon } from '@/components/tasks/inline-cells';
 import { CardLabels, CardMeta } from '@/components/tasks/card-parts';
@@ -38,7 +38,7 @@ export function TaskCard({ task, caption }: { task: ChatTaskRef; caption?: strin
       type="button"
       onClick={() => openTask(task.id)}
       title={`Abrir ${task.identifier}`}
-      className="group/card block w-full max-w-[18rem] rounded-lg border bg-card p-2.5 text-left shadow-sm transition-[background-color,box-shadow,border-color] duration-150 hover:border-foreground/15 hover:bg-accent hover:shadow-md"
+      className="group/card block w-full max-w-[18rem] self-start rounded-lg border bg-card p-2.5 text-left shadow-sm transition-[background-color,box-shadow,border-color] duration-150 hover:border-foreground/15 hover:bg-accent hover:shadow-md"
     >
       <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         <span className="truncate">{caption ?? task.statusLabel}</span>
@@ -74,6 +74,41 @@ export function MessageTasks({ message }: { message: ChatMessage }) {
       {cited.map((t) => (
         <TaskCard key={t.id} task={t} />
       ))}
+    </div>
+  );
+}
+
+/**
+ * Bloque Status (daily): las tareas que la persona eligió, con su estado de AHORA (si alguien las
+ * movió después, el bloque lo refleja). Va dentro del mensaje, debajo de la nota si la hay.
+ */
+export function StatusBlock({ message }: { message: ChatMessage }) {
+  const tasks = message.statusTasks ?? [];
+  const planned = Array.isArray((message.meta as { taskIds?: unknown } | null)?.taskIds)
+    ? ((message.meta as { taskIds: unknown[] }).taskIds.length)
+    : tasks.length;
+  const missing = Math.max(planned - tasks.length, 0);
+  const done = tasks.filter((t) => CLOSED_STATES.includes(canonState(t.status))).length;
+  return (
+    <div className="mt-1.5 max-w-2xl rounded-xl border bg-muted/30 p-2.5">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        <ClipboardList className="size-4 text-primary" />
+        <span className="uppercase tracking-wide">Status</span>
+        <span className="font-normal">
+          · {planned === 1 ? '1 tarea' : `${planned} tareas`}
+          {tasks.length > 0 && done > 0 && ` · ${done} cerrada${done === 1 ? '' : 's'}`}
+        </span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {tasks.map((t) => (
+          <TaskCard key={t.id} task={t} />
+        ))}
+      </div>
+      {missing > 0 && (
+        <p className="mt-2 text-xs italic text-muted-foreground">
+          {missing === 1 ? '1 tarea ya no existe.' : `${missing} tareas ya no existen.`}
+        </p>
+      )}
     </div>
   );
 }

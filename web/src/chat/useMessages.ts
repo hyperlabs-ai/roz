@@ -41,9 +41,10 @@ function patchTasks(list: ChatMessage[], e: Extract<ChatEvent, { type: 'task.upd
   let changed = false;
   const next = list.map((m) => {
     const cited = m.citedTasks ?? [];
-    if (!m.tasks.some((t) => t.id === id) && !cited.some((t) => t.id === id)) return m;
+    const status = m.statusTasks ?? [];
+    if (!m.tasks.some((t) => t.id === id) && !cited.some((t) => t.id === id) && !status.some((t) => t.id === id)) return m;
     changed = true;
-    return { ...m, tasks: apply(m.tasks), citedTasks: apply(cited) };
+    return { ...m, tasks: apply(m.tasks), citedTasks: apply(cited), statusTasks: apply(status) };
   });
   return changed ? next : list;
 }
@@ -58,6 +59,7 @@ function tempMessage(input: {
   authorDevId: string | null;
   body: string;
   attachments: ChatAttachment[];
+  statusTasks: ChatTaskRef[];
   nonce: string;
 }): ChatMessage {
   return {
@@ -69,7 +71,7 @@ function tempMessage(input: {
     body: input.body,
     mentions: [],
     mentionChannel: false,
-    meta: null,
+    meta: input.statusTasks.length ? { type: 'status', taskIds: input.statusTasks.map((t) => t.id) } : null,
     clientNonce: input.nonce,
     replyCount: 0,
     lastReplyAt: null,
@@ -80,6 +82,7 @@ function tempMessage(input: {
     attachments: input.attachments,
     tasks: [],
     citedTasks: [],
+    statusTasks: input.statusTasks,
     pending: true,
   };
 }
@@ -88,9 +91,9 @@ function tempMessage(input: {
 function useSender(conversationId: string | null, parentId: string | null, apply: (fn: (l: ChatMessage[]) => ChatMessage[]) => void) {
   const chat = useChat();
   return useCallback(
-    async (body: string, attachments: ChatAttachment[], nonce = newNonce()) => {
+    async (body: string, attachments: ChatAttachment[], statusTasks: ChatTaskRef[] = [], nonce = newNonce()) => {
       if (!conversationId) return;
-      const temp = tempMessage({ conversationId, parentId, authorDevId: chat.me, body, attachments, nonce });
+      const temp = tempMessage({ conversationId, parentId, authorDevId: chat.me, body, attachments, statusTasks, nonce });
       apply((l) => upsertMessage(l, temp));
       try {
         const { message } = await chatApi.send(conversationId, {
@@ -98,6 +101,7 @@ function useSender(conversationId: string | null, parentId: string | null, apply
           parentId,
           attachmentIds: attachments.map((a) => a.id),
           clientNonce: nonce,
+          statusTaskIds: statusTasks.length ? statusTasks.map((t) => t.id) : undefined,
         });
         chat.dispatch({ type: 'message.created', message });
       } catch (e) {

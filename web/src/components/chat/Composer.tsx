@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { toast } from 'sonner';
-import { FileText, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
+import { ClipboardList, FileText, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
 import { useChat } from '@/chat/ChatContext';
 import { AvatarStack, UserAvatar } from '@/components/bits';
 import { StatusIcon } from '@/components/tasks/inline-cells';
 import { Button } from '@/components/ui/button';
+import { StatusDialog } from './StatusDialog';
 import {
   MAX_ATTACHMENT_BYTES, MAX_MESSAGE_LENGTH, chatApi, encodeMentions, fold, loadDraft, mentionQueryAt, saveDraft,
   taskQueryAt, type ChatAttachment, type ChatTaskRef,
@@ -46,7 +47,7 @@ export function Composer({
   draftKey: string;
   memberIds: string[];
   placeholder: string;
-  onSend: (body: string, attachments: ChatAttachment[]) => void;
+  onSend: (body: string, attachments: ChatAttachment[], statusTasks?: ChatTaskRef[]) => void;
   autoFocus?: boolean;
   compact?: boolean;
 }) {
@@ -59,6 +60,7 @@ export function Composer({
   const [taskLoading, setTaskLoading] = useState(false);
   const [active, setActive] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -471,6 +473,19 @@ export function Composer({
           >
             <Plus />
           </Button>
+          {/* El status (daily) va en el canal, no en hilos. */}
+          {!compact && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 rounded-full bg-muted px-2.5 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => setStatusOpen(true)}
+              aria-label="Compartir status"
+            >
+              <ClipboardList className="size-3.5" /> Status
+            </Button>
+          )}
           <span className="ml-1 hidden text-[11px] text-muted-foreground md:inline">
             <kbd className="font-sans">Shift + Enter</kbd> para salto de línea · <kbd className="font-sans">@</kbd> para mencionar
             {' · '}
@@ -495,6 +510,14 @@ export function Composer({
           </div>
         </div>
       </div>
+
+      {!compact && (
+        <StatusDialog
+          open={statusOpen}
+          onOpenChange={setStatusOpen}
+          onSend={(note, tasks) => onSend(encodeMentions(note, devs), [], tasks)}
+        />
+      )}
     </div>
   );
 }

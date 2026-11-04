@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CHANNEL_TOKEN, MAX_CITED_TASKS, extractMentions, extractTaskIdentifiers, firstLine, hasChannelMention, previewText } from '../src/chat/text.js';
+import { CHANNEL_TOKEN, MAX_CITED_TASKS, extractMentions, extractTaskIdentifiers, firstLine, hasChannelMention, previewText, statusTaskIds } from '../src/chat/text.js';
 
 // El texto del chat viaja con tokens (<@id>, <!canal>) y markdown. Lo que se prueba aquí es lo que
 // ve la gente fuera del chat: el cuerpo del push y el nombre de una tarea creada desde un mensaje.
@@ -80,5 +80,21 @@ describe('extractTaskIdentifiers', () => {
   it(`tope de ${MAX_CITED_TASKS} tarjetas por mensaje`, () => {
     const body = Array.from({ length: 10 }, (_, i) => `#ROZ-${i + 1}`).join(' ');
     expect(extractTaskIdentifiers(body)).toHaveLength(MAX_CITED_TASKS);
+  });
+});
+
+describe('statusTaskIds (bloque Status)', () => {
+  it('lee los ids de un status y respeta el orden elegido', () => {
+    expect(statusTaskIds({ type: 'status', taskIds: [B, A] })).toEqual([B, A]);
+  });
+
+  it('un mensaje que no es status no devuelve nada, aunque traiga taskIds', () => {
+    expect(statusTaskIds({ type: 'task_created', taskIds: [A] })).toEqual([]);
+    expect(statusTaskIds(null)).toEqual([]);
+  });
+
+  it('descarta valores que no son ids (meta malformado no rompe el mensaje)', () => {
+    expect(statusTaskIds({ type: 'status', taskIds: [A, 3, null, { x: 1 }] })).toEqual([A]);
+    expect(statusTaskIds({ type: 'status', taskIds: 'nope' })).toEqual([]);
   });
 });

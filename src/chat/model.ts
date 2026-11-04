@@ -125,6 +125,8 @@ export interface ChatMessage {
   tasks: ChatTaskRef[];
   /** Tareas citadas en el texto (`#ROZ-12`), en orden de aparición. */
   citedTasks: ChatTaskRef[];
+  /** Tareas del bloque Status (`meta.type = 'status'`), con su estado ACTUAL, en el orden elegido. */
+  statusTasks: ChatTaskRef[];
 }
 
 export interface ChatDev {

@@ -7,7 +7,7 @@ import { db } from '../db/supabase.js';
 import { pushToDev } from '../notify/push.js';
 import type { ChatDev, ConversationRow, MemberRow, MessageRow } from './model.js';
 import { chatPushRecipients } from './rules.js';
-import { previewText } from './text.js';
+import { previewText, statusTaskIds } from './text.js';
 
 function chatUrl(conversationId: string, threadId?: string | null): string {
   const path = `/app/chat/${conversationId}${threadId ? `?thread=${threadId}` : ''}`;
@@ -54,6 +54,11 @@ export async function notifyChatMessage(input: {
   const author = nameOf(msg.author_dev_id) ?? 'Alguien';
 
   let preview = previewText(msg.body, nameOf);
+  const statusCount = statusTaskIds(msg.meta).length;
+  if (statusCount) {
+    const label = `📋 Status · ${statusCount === 1 ? '1 tarea' : `${statusCount} tareas`}`;
+    preview = preview ? `${label} — ${preview}` : label;
+  }
   if (!preview && input.attachmentCount) {
     preview = input.attachmentCount === 1 ? '📎 Envió un archivo' : `📎 Envió ${input.attachmentCount} archivos`;
   }

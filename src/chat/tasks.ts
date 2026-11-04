@@ -99,8 +99,19 @@ export async function tasksByIdentifier(identifiers: string[]): Promise<Map<stri
   return out;
 }
 
+/** Tarjetas por id, en el orden pedido. Las que ya no existen simplemente no vuelven. */
+export async function tasksByIds(ids: string[]): Promise<Map<string, ChatTaskRef>> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return new Map();
+  const { data, error } = await db().from('work_item').select(CARD_COLUMNS).in('id', unique);
+  if (error) throw error;
+  return toCards((data ?? []) as unknown as CardRow[]);
+}
+
 const SEARCH_LIMIT = 8;
 const CANDIDATES = 100;
+/** Tope del selector del bloque Status (más holgado que el autocompletado de @tarea). */
+export const PICKER_LIMIT = 40;
 
 /** Abiertas primero; dentro de cada grupo, lo más reciente. */
 function rank(rows: CardRow[]): CardRow[] {
@@ -136,7 +147,7 @@ async function involvedIds(devIds: string[], limit: number): Promise<string[]> {
  * un dev filtra por responsable; el resto busca en el nombre y el identificador de la tarea (todas
  * deben aparecer). Sin consulta: las tareas abiertas de quien busca.
  */
-export async function searchTasks(devId: string, rawQuery: string): Promise<ChatTaskRef[]> {
+export async function searchTasks(devId: string, rawQuery: string, limit = SEARCH_LIMIT): Promise<ChatTaskRef[]> {
   const { data: devRows } = await db().from('dev').select('id, name');
   const { devIds, textWords, empty } = splitTaskQuery(rawQuery, (devRows ?? []) as { id: string; name: string }[]);
 
@@ -169,7 +180,7 @@ export async function searchTasks(devId: string, rawQuery: string): Promise<Chat
     rows = (data ?? []) as unknown as CardRow[];
   }
 
-  const top = rank(rows).slice(0, SEARCH_LIMIT);
+  const top = rank(rows).slice(0, Math.min(Math.max(limit, 1), PICKER_LIMIT));
   const cards = await toCards(top);
   return top.map((r) => cards.get(r.id)!);
 }
