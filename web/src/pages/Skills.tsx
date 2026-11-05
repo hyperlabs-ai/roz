@@ -22,6 +22,7 @@ import { useApi } from '@/lib/useApi';
 import { useMirror } from '@/lib/useMirror';
 import { invalidateOnly } from '@/lib/store';
 import { apiGet, apiSend, type SkillCatalogItem, type SkillMatrix } from '@/lib/api';
+import { SolutionTypesPanel } from '@/components/skills/SolutionTypesPanel';
 
 type Cell = SkillMatrix['cells'][number];
 
@@ -139,6 +140,7 @@ export default function Skills() {
         <TabsList className="mx-auto flex w-fit">
           <TabsTrigger value="map">Mapa de habilidades</TabsTrigger>
           <TabsTrigger value="catalog">Catálogo</TabsTrigger>
+          <TabsTrigger value="solution-types">Tipos de solución</TabsTrigger>
         </TabsList>
 
         <TabsContent value="map">
@@ -186,6 +188,10 @@ export default function Skills() {
               </div>
             </Revalidating>
           )}
+        </TabsContent>
+
+        <TabsContent value="solution-types">
+          <SolutionTypesPanel skills={skills.items} isAdmin={isAdmin} />
         </TabsContent>
       </Tabs>
     </Layout>

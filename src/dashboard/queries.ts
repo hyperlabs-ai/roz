@@ -10,6 +10,11 @@ import { embed } from '../adapters/embeddings.js';
 import { slugKey } from '../projects/resolve.js';
 import { emit } from '../events/outbox.js';
 import { OPEN_STATES, CLOSED_STATES, STATE_LABEL, STATE_OPTIONS, transitionTimestamps, type TaskState } from '../tasks/states.js';
+import { todayLocal } from '../utils/team-time.js';
+import { loadAutoAssign } from '../assign/decisions.js';
+import { OVERRIDE_CATEGORIES } from '../assign/rules.js';
+import { autoAssignEnabled } from '../assign/enabled.js';
+import { ValidationError } from '../utils/errors.js';
 
 export interface Period {
   from: string; // ISO
@@ -151,6 +156,30 @@ async function allProjects(): Promise<{ id: string; name: string; key: string; k
   const { data } = await db().from('project').select('id, name, key, kind, active');
   return (data ?? []) as unknown as { id: string; name: string; key: string; kind: string; active?: boolean }[];
 }
+
+export interface ProjectProfile {
+  projectType: string | null;
+  description: string | null;
+  /** 'ia' = lo propuso roz leyendo GitHub y nadie lo ha revisado; 'humano' = lo escribió una persona. */
+  profileSource: string | null;
+}
+
+/**
+ * Tipo y descripción por proyecto (migración 0033). Aparte de allProjects y TOLERANTE, igual que
+ * projectColors: sin la migración devuelve un mapa vacío y las páginas siguen funcionando.
+ */
+async function projectProfiles(): Promise<Map<string, ProjectProfile>> {
+  const { data, error } = await db().from('project').select('id, project_type, description, profile_source');
+  if (error) return new Map();
+  return new Map(
+    ((data ?? []) as { id: string; project_type: string | null; description: string | null; profile_source: string | null }[]).map((r) => [
+      r.id,
+      { projectType: r.project_type, description: r.description, profileSource: r.profile_source },
+    ]),
+  );
+}
+
+const EMPTY_PROFILE: ProjectProfile = { projectType: null, description: null, profileSource: null };
 
 /**
  * Colores fijados por proyecto (roz.project.color). Aparte de allProjects para NO acoplar infra/
@@ -422,13 +451,23 @@ async function reattributeOrphans(devId: string, githubLogin: string | null, git
   }
 }
 
-/** Edita nombre / key / kind de un proyecto. Solo aplica los campos presentes. */
-export async function updateProject(id: string, patch: { name?: string; key?: string; kind?: 'client' | 'internal'; color?: string | null }): Promise<ProjectRow> {
+/** Edita nombre / key / kind / perfil de un proyecto. Solo aplica los campos presentes. */
+export async function updateProject(
+  id: string,
+  patch: { name?: string; key?: string; kind?: 'client' | 'internal'; color?: string | null; projectType?: string | null; description?: string | null },
+): Promise<ProjectRow> {
   const row: Record<string, unknown> = {};
   if (patch.name !== undefined) row.name = patch.name.trim();
   if (patch.key !== undefined) row.key = patch.key.trim().toUpperCase();
   if (patch.kind !== undefined) row.kind = patch.kind;
   if (patch.color !== undefined) row.color = patch.color?.trim() || null;
+  // Perfil (0033): editarlo a mano lo hace de una persona (deja de estar "pendiente de revisar").
+  if (patch.projectType !== undefined || patch.description !== undefined) {
+    if (patch.projectType !== undefined) row.project_type = patch.projectType || null;
+    if (patch.description !== undefined) row.description = patch.description?.trim() || null;
+    row.profile_source = 'humano';
+    row.profile_updated_at = new Date().toISOString();
+  }
   row.updated_at = new Date().toISOString();
   let res = await db().from('project').update(row).eq('id', id).select('id, name, key, kind, color').single();
   if (res.error && /color/i.test(res.error.message ?? '')) {
@@ -993,13 +1032,14 @@ function slimTicket(w: WorkItemRow) {
 // ---- Proyectos (historial de commits + líneas) ----
 
 export async function listProjects(period: Period) {
-  const [commits, projects, resolved, devs, repoLinks, colorById] = await Promise.all([
+  const [commits, projects, resolved, devs, repoLinks, colorById, profileById] = await Promise.all([
     commitsInRange(period.from, period.to),
     allProjects(),
     resolvedInRange(period.from, period.to),
     allDevs(),
     projectRepos(),
     projectColors(),
+    projectProfiles(),
   ]);
   const devName = new Map(devs.map((d) => [d.id, d.name]));
   const kindById = new Map(projects.map((p) => [p.id, p.kind]));
@@ -1031,6 +1071,7 @@ export async function listProjects(period: Period) {
       key: keyById.get(p.projectId) ?? '',
       kind: kindById.get(p.projectId) ?? 'internal',
       color: colorById.get(p.projectId) ?? null,
+      ...(profileById.get(p.projectId) ?? EMPTY_PROFILE),
       commits: p.commits,
       additions: p.additions,
       deletions: p.deletions,
@@ -1053,6 +1094,7 @@ export async function getProject(projectId: string, period: Period) {
   const p = proj.data as unknown as { id: string; name: string; key: string; kind: string } | null;
   if (!p) return null;
   const color = (await projectColors()).get(projectId) ?? null;
+  const profile = (await projectProfiles()).get(projectId) ?? EMPTY_PROFILE;
 
   const [commits, devs, resolved, repoRows, allItemRows, repoSync] = await Promise.all([
     commitsInRange(period.from, period.to, { projectId }),
@@ -1141,7 +1183,7 @@ export async function getProject(projectId: string, period: Period) {
     }));
 
   return {
-    project: { id: p.id, name: p.name, key: p.key, kind: p.kind, color },
+    project: { id: p.id, name: p.name, key: p.key, kind: p.kind, color, ...profile },
     repos,
     repoSync,
     period,
@@ -1157,14 +1199,7 @@ export async function getProject(projectId: string, period: Period) {
 
 // ---- Tickets / Tareas (nativas + espejo histórico de Linear) ----
 
-// Zona del equipo. El servidor corre en UTC, así que sin esto "hoy" se adelanta 6 h respecto a
-// quien usa la app: entre las 18:00 y la medianoche de México, UTC ya está en el día siguiente.
-const TEAM_TZ = 'America/Mexico_City';
-
-/** Hoy como YYYY-MM-DD en la zona del equipo. `en-CA` da justo ese formato. */
-function todayLocal(): string {
-  return new Date().toLocaleDateString('en-CA', { timeZone: TEAM_TZ });
-}
+// "Hoy" en la zona del equipo: vive en utils/team-time.ts (lo comparte la asignación automática).
 
 /**
  * ¿La fecha límite ya pasó?
@@ -1346,6 +1381,10 @@ async function mapTicketRows(
   const assigneesByItem = await loadTicketAssignees(ids, devName, devAvatar);
   // Mensaje del chat del que salió cada tarea.
   const chatOrigin = await loadChatOrigins();
+  // Última decisión de la asignación automática (si la hubo). Tolerante: vacío sin la migración 0031.
+  const autoAssignByItem = await loadAutoAssign(ids);
+  // Tipo de solución que fijó una persona. Tolerante: vacío sin la migración 0032.
+  const solutionTypeByItem = await loadSolutionTypeIds();
   // …con el PRIMARIO al frente. `assignee_dev_id` es el responsable y el resto es apoyo, pero la
   // junction no garantiza orden y el orden importa dos veces: la lista marca al primero como
   // responsable, y updateTask vuelve a tomar `[0]` como primario al guardar. Sin esto, editar los
@@ -1396,6 +1435,10 @@ async function mapTicketRows(
         parentId: w.parent_id ?? null,
         // Mensaje del chat del que salió (enlace "ver conversación" en el detalle).
         chatMessageId: chatOrigin.get(w.id) ?? null,
+        // Tipo de solución (Skills → Tipos de solución) que fijó una persona o se confirmó en /ticket.
+        solutionTypeId: solutionTypeByItem.get(w.id) ?? null,
+        // Asignación automática: estado de la última decisión (asignada / escalada / fallida / …).
+        autoAssign: autoAssignByItem.get(w.id) ?? null,
         // Agendado (calendario) + resolución (para ver el flujo de cierres)
         scheduledStart: w.scheduled_start ?? null,
         scheduledEnd: w.scheduled_end ?? null,
@@ -1423,6 +1466,23 @@ async function loadChatOrigins(): Promise<Map<string, string>> {
   const { data, error } = await db().from('work_item').select('id, chat_message_id').not('chat_message_id', 'is', null);
   if (error) return new Map();
   return new Map(((data ?? []) as { id: string; chat_message_id: string }[]).map((r) => [r.id, r.chat_message_id]));
+}
+
+/**
+ * Tareas con tipo de solución → id del tipo. Aparte de TICKET_COLUMNS por la misma razón que
+ * loadChatOrigins: si la migración 0032 no está aplicada, la lista de tareas sigue funcionando.
+ */
+async function loadSolutionTypeIds(): Promise<Map<string, string>> {
+  const { data, error } = await db().from('work_item').select('id, solution_type_id').not('solution_type_id', 'is', null);
+  if (error) return new Map();
+  return new Map(((data ?? []) as { id: string; solution_type_id: string }[]).map((r) => [r.id, r.solution_type_id]));
+}
+
+/** Tipos de solución para los selects (tolerante: vacío sin la migración 0032). */
+async function solutionTypeOptions(): Promise<{ id: string; name: string; active: boolean }[]> {
+  const { data, error } = await db().from('solution_type').select('id, name, active, sort_order').order('sort_order').order('name');
+  if (error) return [];
+  return ((data ?? []) as { id: string; name: string; active: boolean }[]).map(({ id, name, active }) => ({ id, name, active }));
 }
 
 /** El ticket tal como lo consume el dashboard. Se deriva del mapeo para que no puedan divergir. */
@@ -1585,10 +1645,11 @@ export async function getTickets(f: TicketFilters) {
 
 /** Opciones para los filtros del front (proyectos con tickets, devs, estados presentes). */
 export async function getTicketFilters() {
-  const [{ data: wi }, devs, projects] = await Promise.all([
+  const [{ data: wi }, devs, projects, solutionTypes] = await Promise.all([
     db().from('work_item').select('project_id, assignee_dev_id, status'),
     allDevs(),
     allProjects(),
+    solutionTypeOptions(),
   ]);
   const rows = (wi ?? []) as any[];
   const projWithTickets = new Set(rows.map((r) => r.project_id).filter(Boolean));
@@ -1608,6 +1669,12 @@ export async function getTicketFilters() {
       { value: 'medium', label: 'Media' },
       { value: 'low', label: 'Baja' },
     ],
+    // Asignación automática: si está encendida (para mostrar la casilla) y los motivos de override.
+    autoAssignEnabled: autoAssignEnabled(),
+    overrideCategories: OVERRIDE_CATEGORIES.map((c) => ({ value: c.value, label: c.label, hint: c.hint })),
+    estimatePoints: [1, 2, 3, 5, 8, 13],
+    // Tipos de solución (Skills → Tipos de solución) para el select de la tarea.
+    solutionTypes,
   };
 }
 
@@ -1685,6 +1752,17 @@ export interface CreateTaskInput {
   /** Mensaje del chat del que nace la tarea (ya validado por quien llama). */
   chatMessageId?: string | null;
   createdBy?: string | null;
+  /** Story points (1/2/3/5/8/13). La asignación automática los usa para medir carga. */
+  estimate?: number | null;
+  /** Tipo de solución que fijó una persona (o se confirmó en /ticket). */
+  solutionTypeId?: string | null;
+}
+
+/** Aviso de asignación a cada responsable (idempotente por dev: a quien ya se avisó no se le repite). */
+async function notifyAssignees(workItemId: string, identifier: string, devIds: string[]): Promise<void> {
+  for (const devId of devIds) {
+    await emit('work_item.assigned', { workItemId, devId, identifier }, { idempotencyKey: `assigned:${workItemId}:${devId}` });
+  }
 }
 
 /** Sincroniza la junction de responsables (reemplaza el set) y devuelve la lista aplicada. */
@@ -1738,6 +1816,8 @@ export async function createTask(input: CreateTaskInput): Promise<{ id: string; 
     created_by: input.createdBy ?? null,
     // Solo si viene: así crear tareas sigue funcionando aunque la migración 0030 no esté aplicada.
     ...(input.chatMessageId ? { chat_message_id: input.chatMessageId } : {}),
+    ...(input.estimate ? { estimate: input.estimate } : {}),
+    ...(input.solutionTypeId ? { solution_type_id: input.solutionTypeId } : {}),
     source: 'native',
     documented: true,
     ...transitionTimestamps(status, now),
@@ -1747,15 +1827,43 @@ export async function createTask(input: CreateTaskInput): Promise<{ id: string; 
   const created = data as unknown as { id: string; identifier: string };
 
   if (assigneeIds.length) await syncAssignees(supabase, created.id, assigneeIds);
-  // Aviso de asignación a cada responsable (idempotente por dev).
-  for (const devId of assigneeIds) {
-    await emit(
-      'work_item.assigned',
-      { workItemId: created.id, devId, identifier },
-      { idempotencyKey: `assigned:${created.id}:${devId}` },
-    );
-  }
+  await notifyAssignees(created.id, identifier, assigneeIds);
   return created;
+}
+
+/**
+ * Asigna una tarea SOLO si sigue sin responsable (la usa la asignación automática). El update es
+ * condicional (`assignee_dev_id is null`): si una persona asignó a mano mientras roz decidía, gana
+ * la persona y esto devuelve null. Si la tarea no tenía estimación, se guarda la que se usó para
+ * decidir — así la próxima decisión mide la carga con ese número y no con el default.
+ */
+export async function assignIfUnassigned(
+  id: string,
+  devId: string,
+  estimateIfNull: number | null,
+): Promise<{ id: string; identifier: string } | null> {
+  const supabase = db();
+  const { data, error } = await supabase
+    .from('work_item')
+    .update({ assignee_dev_id: devId, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .is('assignee_dev_id', null)
+    .select('id, identifier, estimate')
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const w = data as unknown as { id: string; identifier: string; estimate: number | null };
+  if (w.estimate === null && estimateIfNull) {
+    await supabase.from('work_item').update({ estimate: estimateIfNull }).eq('id', id).is('estimate', null);
+  }
+  await syncAssignees(supabase, w.id, [devId]);
+  await notifyAssignees(w.id, w.identifier, [devId]);
+  return { id: w.id, identifier: w.identifier };
+}
+
+/** Guarda la estimación usada al decidir, solo si la tarea no tenía (una escalada también la deja). */
+export async function setEstimateIfNull(id: string, estimate: number): Promise<void> {
+  await db().from('work_item').update({ estimate }).eq('id', id).is('estimate', null);
 }
 
 /**
@@ -1835,6 +1943,8 @@ export interface TaskPatch {
   dueDate?: string | null;
   labels?: string[];
   parentId?: string | null;
+  estimate?: number | null;
+  solutionTypeId?: string | null;
 }
 
 /** Edita una tarea. Solo aplica los campos presentes (whitelist). Setea los timestamps de
@@ -1850,6 +1960,8 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: st
   if (patch.dueDate !== undefined) upd.due_date = patch.dueDate;
   if (patch.labels !== undefined) upd.labels = patch.labels;
   if (patch.parentId !== undefined) upd.parent_id = patch.parentId;
+  if (patch.estimate !== undefined) upd.estimate = patch.estimate;
+  if (patch.solutionTypeId !== undefined) upd.solution_type_id = patch.solutionTypeId;
   if (patch.status !== undefined) {
     // Se guarda el VALOR, nunca la etiqueta: `status` tiene un check constraint con el dominio
     // (planificada…cancelada). Aquí había un segundo `upd.status = STATE_LABEL[...]` que pisaba
@@ -1875,13 +1987,7 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: st
   if (newAssignees !== null) {
     await syncAssignees(supabase, w.id, newAssignees);
     // Aviso a cada responsable (idempotente por dev → los ya avisados no se re-notifican).
-    for (const devId of newAssignees) {
-      await emit(
-        'work_item.assigned',
-        { workItemId: w.id, devId, identifier: w.identifier },
-        { idempotencyKey: `assigned:${w.id}:${devId}` },
-      );
-    }
+    await notifyAssignees(w.id, w.identifier, newAssignees);
   }
 
   // Cierre → dispara los efectos de documentación al brain + aviso al proposer (fase 4).
@@ -2075,7 +2181,13 @@ export async function updateSkill(id: string, patch: { tag?: string; description
 
 export async function deleteSkill(id: string) {
   const { error } = await db().from('skill').delete().eq('id', id);
-  if (error) throw error;
+  if (error) {
+    // 0032: un tipo de solución que la usa como primaria la protege (on delete restrict).
+    if ((error as { code?: string }).code === '23503') {
+      throw new ValidationError('Un tipo de solución usa esta skill como primaria: cámbialo primero en Skills → Tipos de solución');
+    }
+    throw error;
+  }
 }
 
 /** Ajusta la disponibilidad de un dev (0 saturado .. 1 libre). Afecta al router de asignación. */

@@ -1,6 +1,6 @@
 import { createContext, useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigationType } from 'react-router-dom';
-import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb, Activity, Gauge, MessagesSquare } from 'lucide-react';
+import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, Sparkles, Sun, Moon, Monitor, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Lightbulb, Activity, Gauge, MessagesSquare, TicketPlus } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { usePush } from '@/push/PushContext';
 import { useChat } from '@/chat/ChatContext';
@@ -47,6 +47,7 @@ const NAV: { to: string; label: string; icon: typeof LayoutDashboard; end: boole
   { to: '/app/projects', label: 'Proyectos', icon: FolderGit2, end: false },
   { to: '/app/infra', label: 'Infraestructura', icon: Server, end: false },
   { to: '/app/ideas', label: 'Ideas', icon: Lightbulb, end: false },
+  { to: '/app/ticket', label: 'Ticket', icon: TicketPlus, end: false },
   { to: '/app/tasks', label: 'Tareas', icon: ListChecks, end: false },
   { to: '/app/tickets', label: 'Reportes', icon: BarChart3, end: false },
   { to: '/app/skills', label: 'Skills', icon: Sparkles, end: false },

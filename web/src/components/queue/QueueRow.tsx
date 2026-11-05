@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   GitCommitHorizontal, GitCompareArrows, History, GitBranch, GitPullRequest, Eye, GitMerge,
-  FilePlus2, UserPlus, CircleCheck, NotebookPen, FolderGit2, Replace, BellRing, Bell, Layers,
+  FilePlus2, UserPlus, CircleCheck, NotebookPen, FolderGit2, Replace, BellRing, Bell, Layers, Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { UserAvatar, LineDelta } from '@/components/bits';
@@ -21,6 +21,7 @@ const ICONS: Record<string, LucideIcon> = {
   'work_item.created': FilePlus2,
   'work_item.assigned': UserPlus,
   'work_item.done': CircleCheck,
+  'work_item.auto_assign': Sparkles,
   'change.documented': NotebookPen,
   'repo.detected': FolderGit2,
   'repo.renamed': Replace,

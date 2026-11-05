@@ -1,0 +1,1078 @@
+{
+  "_comment": "Casos SINTÉTICOS para la sonda de Jev (scripts/probe-jev.ts). Ningún dato real de roz. `types` es la misma tabla que siembra migrations/0032 (generada desde ella); `catalog` usa los tags del catálogo con descripciones genéricas. `expect.type` acepta un nombre, una lista de nombres válidos o 'none'. Los proyectos traen tipo y descripción (perfil 0033) como los vería Jev.",
+  "catalog": [
+    {
+      "id": "sk-ai",
+      "tag": "ai",
+      "description": "Inteligencia artificial, LLMs, agentes, embeddings, prompts, machine learning"
+    },
+    {
+      "id": "sk-arquitectura",
+      "tag": "arquitectura",
+      "description": "Arquitectura de software, decisiones técnicas avanzadas, diseño de sistemas"
+    },
+    {
+      "id": "sk-atencion-cliente",
+      "tag": "atencion-cliente",
+      "description": "Atención y comunicación con clientes, soporte, retroalimentación"
+    },
+    {
+      "id": "sk-backend",
+      "tag": "backend",
+      "description": "Desarrollo backend, APIs, bases de datos, lógica de servidor, Node"
+    },
+    {
+      "id": "sk-contenido-video",
+      "tag": "contenido-video",
+      "description": "Grabación de videos, contenido audiovisual, demos de apps"
+    },
+    {
+      "id": "sk-devops",
+      "tag": "devops",
+      "description": "Despliegues, deploy, infraestructura, CI/CD, Vercel, servidores"
+    },
+    {
+      "id": "sk-diseno",
+      "tag": "diseno",
+      "description": "Diseño visual, UI, gráfico, branding"
+    },
+    {
+      "id": "sk-estrategia",
+      "tag": "estrategia",
+      "description": "Estrategia de empresa, decisiones de negocio, dirección"
+    },
+    {
+      "id": "sk-facturacion",
+      "tag": "facturacion",
+      "description": "Facturación, facturas, CFDI, invoicing, cobranza"
+    },
+    {
+      "id": "sk-finanzas",
+      "tag": "finanzas",
+      "description": "Finanzas, contabilidad, presupuestos, cobranza"
+    },
+    {
+      "id": "sk-frontend",
+      "tag": "frontend",
+      "description": "Desarrollo frontend, UI, React, CSS, experiencia de usuario, interfaces"
+    },
+    {
+      "id": "sk-fullstack",
+      "tag": "fullstack",
+      "description": "Desarrollo fullstack, frontend y backend, tareas variadas"
+    },
+    {
+      "id": "sk-gestion-proyectos",
+      "tag": "gestion-proyectos",
+      "description": "Gestión de proyectos, PM, planeación de sprints, coordinación, seguimiento"
+    },
+    {
+      "id": "sk-integraciones",
+      "tag": "integraciones",
+      "description": "Integraciones con servicios externos, APIs de terceros, webhooks"
+    },
+    {
+      "id": "sk-landing-pages",
+      "tag": "landing-pages",
+      "description": "Landing pages, sitios de marketing, páginas de conversión"
+    },
+    {
+      "id": "sk-liderazgo-tecnico",
+      "tag": "liderazgo-tecnico",
+      "description": "Liderazgo técnico, decisiones de implementación y diseño, mentoría"
+    },
+    {
+      "id": "sk-marketing",
+      "tag": "marketing",
+      "description": "Marketing, contenido de marca, difusión, campañas"
+    },
+    {
+      "id": "sk-operaciones",
+      "tag": "operaciones",
+      "description": "Operaciones, administración, procesos internos"
+    },
+    {
+      "id": "sk-pagos",
+      "tag": "pagos",
+      "description": "Pagos, Stripe, cobros, suscripciones, billing"
+    },
+    {
+      "id": "sk-producto",
+      "tag": "producto",
+      "description": "Producto, definición de features, validación de ideas, prototipado"
+    },
+    {
+      "id": "sk-qa-retro",
+      "tag": "qa-retro",
+      "description": "QA, detección de errores, revisión de cambios y proyectos, retro"
+    },
+    {
+      "id": "sk-redes-sociales",
+      "tag": "redes-sociales",
+      "description": "Redes sociales, social media, publicaciones, community management"
+    },
+    {
+      "id": "sk-seo",
+      "tag": "seo",
+      "description": "SEO, posicionamiento en buscadores, optimización web"
+    },
+    {
+      "id": "sk-soporte-incidencias",
+      "tag": "soporte-incidencias",
+      "description": "Resolución de incidencias, bugs urgentes, soporte técnico crítico"
+    }
+  ],
+  "types": [
+    {
+      "id": "st-maquetacion-ui",
+      "slug": "maquetacion-ui",
+      "name": "Maquetación / UI básica",
+      "description": "Construir o ajustar pantallas, secciones o componentes visuales siguiendo un diseño, sin lógica de estado compleja: layouts, formularios simples, tablas, estilos.",
+      "primary": "frontend",
+      "minLevel": 2,
+      "secondary": "diseno",
+      "sizeMin": 1,
+      "sizeMax": 3
+    },
+    {
+      "id": "st-fix-visual",
+      "slug": "fix-visual",
+      "name": "Fix visual / responsive",
+      "description": "Corregir cómo se ve algo que ya existe: alineaciones, espaciados, colores, textos que se desbordan, la vista en celular rota.",
+      "primary": "frontend",
+      "minLevel": 2,
+      "secondary": null,
+      "sizeMin": 1,
+      "sizeMax": 2
+    },
+    {
+      "id": "st-componente-complejo",
+      "slug": "componente-complejo",
+      "name": "Componente interactivo complejo",
+      "description": "Un componente de interfaz con mucho estado o interacción: editores, tableros que se arrastran, filtros combinados, formularios de varios pasos, datos en tiempo real en pantalla.",
+      "primary": "frontend",
+      "minLevel": 3,
+      "secondary": null,
+      "sizeMin": 3,
+      "sizeMax": 8
+    },
+    {
+      "id": "st-conexion-front-back",
+      "slug": "conexion-front-back",
+      "name": "Conexión front-back",
+      "description": "Conectar una pantalla con un endpoint que ya existe o casi: llamar a la API, manejar carga y errores y mostrar los datos.",
+      "primary": "backend",
+      "minLevel": 2,
+      "secondary": "frontend",
+      "sizeMin": 2,
+      "sizeMax": 5
+    },
+    {
+      "id": "st-endpoint-crud",
+      "slug": "endpoint-crud",
+      "name": "Endpoint / CRUD",
+      "description": "Crear o cambiar endpoints de la API para leer, crear, editar o borrar datos, con su validación.",
+      "primary": "backend",
+      "minLevel": 3,
+      "secondary": "arquitectura",
+      "sizeMin": 2,
+      "sizeMax": 5
+    },
+    {
+      "id": "st-logica-negocio",
+      "slug": "logica-negocio",
+      "name": "Lógica de negocio compleja",
+      "description": "Reglas de negocio con muchos casos en el servidor: cálculos, estados, permisos, procesos de varios pasos.",
+      "primary": "backend",
+      "minLevel": 4,
+      "secondary": "arquitectura",
+      "sizeMin": 5,
+      "sizeMax": 13
+    },
+    {
+      "id": "st-migracion-datos",
+      "slug": "migracion-datos",
+      "name": "Migración / modelo de datos",
+      "description": "Cambiar el modelo de datos: tablas o columnas nuevas, relaciones, o mover y transformar datos que ya existen.",
+      "primary": "backend",
+      "minLevel": 4,
+      "secondary": "arquitectura",
+      "sizeMin": 5,
+      "sizeMax": 13
+    },
+    {
+      "id": "st-optimizacion-queries",
+      "slug": "optimizacion-queries",
+      "name": "Optimización de queries",
+      "description": "Algo es lento por la base de datos: consultas pesadas, índices, reportes que tardan en cargar.",
+      "primary": "backend",
+      "minLevel": 4,
+      "secondary": null,
+      "sizeMin": 3,
+      "sizeMax": 8
+    },
+    {
+      "id": "st-integracion-pagos",
+      "slug": "integracion-pagos",
+      "name": "Integración de pagos",
+      "description": "Cobros, suscripciones, checkout, Stripe u otro procesador de pagos, reembolsos, conciliación de pagos.",
+      "primary": "pagos",
+      "minLevel": 4,
+      "secondary": "integraciones",
+      "sizeMin": 5,
+      "sizeMax": 13
+    },
+    {
+      "id": "st-login-sso",
+      "slug": "login-sso",
+      "name": "Login / SSO / OAuth",
+      "description": "Inicio de sesión, registro, recuperar contraseña, SSO, OAuth, roles y permisos de acceso de los usuarios.",
+      "primary": "backend",
+      "minLevel": 4,
+      "secondary": "arquitectura",
+      "sizeMin": 3,
+      "sizeMax": 8
+    },
+    {
+      "id": "st-api-terceros",
+      "slug": "api-terceros",
+      "name": "API de terceros (CRM, ERP)",
+      "description": "Conectar con un sistema externo por su API: CRM, ERP, HubSpot, Google, sincronizar datos con otro servicio.",
+      "primary": "integraciones",
+      "minLevel": 3,
+      "secondary": "backend",
+      "sizeMin": 3,
+      "sizeMax": 8
+    },
+    {
+      "id": "st-webhooks-colas",
+      "slug": "webhooks-colas",
+      "name": "Webhooks / colas / eventos",
+      "description": "Recibir o enviar webhooks, procesos en segundo plano, colas, tareas programadas, eventos entre sistemas.",
+      "primary": "integraciones",
+      "minLevel": 4,
+      "secondary": "devops",
+      "sizeMin": 3,
+      "sizeMax": 8
+    },
+    {
+      "id": "st-mensajeria",
+      "slug": "mensajeria",
+      "name": "WhatsApp / SMS / correo",
+      "description": "Mandar o recibir mensajes por WhatsApp, SMS o correo: plantillas, notificaciones, recordatorios automáticos.",
+      "primary": "integraciones",
+      "minLevel": 3,
+      "secondary": "backend",
+      "sizeMin": 2,
+      "sizeMax": 5
+    },
+    {
+      "id": "st-tracking",
+      "slug": "tracking",
+      "name": "Tracking GA4 / GTM",
+      "description": "Medición y analítica: eventos de Google Analytics 4, Tag Manager, píxeles, conversiones.",
+      "primary": "frontend",
+      "minLevel": 3,
+      "secondary": "seo",
+      "sizeMin": 1,
+      "sizeMax": 3
+    },
+    {
+      "id": "st-dashboard-reportes",
+      "slug": "dashboard-reportes",
+      "name": "Dashboard / reportes",
+      "description": "Pantallas de métricas, gráficas, tablas de reportes o exportaciones de datos.",
+      "primary": "frontend",
+      "minLevel": 3,
+      "secondary": "backend",
+      "sizeMin": 3,
+      "sizeMax": 8
+    },
+    {
+      "id": "st-seo-tecnico",
+      "slug": "seo-tecnico",
+      "name": "SEO técnico",
+      "description": "Posicionamiento en buscadores desde el código: metadatos, sitemap, velocidad de carga, datos estructurados.",
+      "primary": "seo",
+      "minLevel": 3,
+      "secondary": "frontend",
+      "sizeMin": 2,
+      "sizeMax": 5
+    },
+    {
+      "id": "st-deploy-cicd",
+      "slug": "deploy-cicd",
+      "name": "Deploy / CI-CD",
+      "description": "Despliegues, builds que fallan, pipelines de CI/CD, variables de entorno, ambientes de preview o producción.",
+      "primary": "devops",
+      "minLevel": 4,
+      "secondary": null,
+      "sizeMin": 2,
+      "sizeMax": 5
+    },
+    {
+      "id": "st-servidor-dns",
+      "slug": "servidor-dns",
+      "name": "Servidor / DNS / SSL",
+      "description": "Dominios, DNS, certificados SSL, servidores, correos del dominio.",
+      "primary": "devops",
+      "minLevel": 4,
+      "secondary": null,
+      "sizeMin": 1,
+      "sizeMax": 3
+    },
+    {
+      "id": "st-bug-menor",
+      "slug": "bug-menor",
+      "name": "Bug menor",
+      "description": "Algo no funciona bien pero no bloquea a nadie: un error en un caso poco común, un dato que se muestra mal.",
+      "primary": null,
+      "minLevel": 2,
+      "secondary": null,
+      "sizeMin": 1,
+      "sizeMax": 2
+    },
+    {
+      "id": "st-bug-critico",
+      "slug": "bug-critico",
+      "name": "Bug crítico en producción",
+      "description": "Algo está roto en producción y afecta ahora a usuarios reales: caídas, errores que impiden usar el sistema, datos que no se guardan o que se exponen.",
+      "primary": null,
+      "minLevel": 4,
+      "secondary": "devops",
+      "sizeMin": 1,
+      "sizeMax": 5
+    },
+    {
+      "id": "st-refactor",
+      "slug": "refactor",
+      "name": "Refactor / deuda técnica",
+      "description": "Reorganizar o limpiar código que ya funciona, actualizar librerías o dependencias, pagar deuda técnica, sin cambiar lo que ve el usuario.",
+      "primary": null,
+      "minLevel": 4,
+      "secondary": "qa-retro",
+      "sizeMin": 3,
+      "sizeMax": 8
+    },
+    {
+      "id": "st-pruebas",
+      "slug": "pruebas",
+      "name": "Pruebas automatizadas",
+      "description": "Escribir o arreglar pruebas automáticas: unitarias, de integración o end-to-end.",
+      "primary": "qa-retro",
+      "minLevel": 3,
+      "secondary": "backend",
+      "sizeMin": 2,
+      "sizeMax": 5
+    },
+    {
+      "id": "st-diseno-visual",
+      "slug": "diseno-visual",
+      "name": "Diseño visual",
+      "description": "Diseñar en Figma u otra herramienta: pantallas, banners, logos, piezas gráficas, prototipos.",
+      "primary": "diseno",
+      "minLevel": 3,
+      "secondary": null,
+      "sizeMin": 1,
+      "sizeMax": 5
+    },
+    {
+      "id": "st-landing-page",
+      "slug": "landing-page",
+      "name": "Landing page",
+      "description": "Crear o modificar una landing o un sitio de marketing: secciones, textos, formularios de contacto, páginas de campaña.",
+      "primary": "landing-pages",
+      "minLevel": 3,
+      "secondary": "frontend",
+      "sizeMin": 2,
+      "sizeMax": 5
+    },
+    {
+      "id": "st-feature-ia",
+      "slug": "feature-ia",
+      "name": "Feature con IA / LLM",
+      "description": "Funciones que usan inteligencia artificial: prompts, agentes, LLMs, embeddings, clasificar o generar texto.",
+      "primary": "ai",
+      "minLevel": 3,
+      "secondary": "backend",
+      "sizeMin": 3,
+      "sizeMax": 8
+    }
+  ],
+  "projects": [
+    {
+      "id": "pj-tienda",
+      "key": "TIENDA",
+      "name": "Tienda Aurora",
+      "kind": "client",
+      "type": "ecommerce",
+      "description": "Tienda en línea de ropa: catálogo, carrito y pagos con tarjeta, panel de administración de pedidos y seguimiento de envíos. Next.js en el frontend, API en Node y base de datos en Supabase."
+    },
+    {
+      "id": "pj-clinica",
+      "key": "CLINICA",
+      "name": "Clínica Nova",
+      "kind": "client",
+      "type": "app_web",
+      "description": "Plataforma de citas para clínicas: agenda por consultorio, registro de pacientes, recordatorios por correo y WhatsApp y panel administrativo. React en el frontend y Supabase (Postgres con políticas RLS) en el backend."
+    },
+    {
+      "id": "pj-portal",
+      "key": "PORTAL",
+      "name": "Portal interno",
+      "kind": "internal",
+      "type": "app_web",
+      "description": "Portal interno de la agencia: login único para las apps internas, reportes de operación y herramientas del equipo. React con un backend en Node."
+    },
+    {
+      "id": "pj-flujo",
+      "key": "FLUJO",
+      "name": "Flujo",
+      "kind": "client",
+      "type": "app_web",
+      "description": "Plataforma de atención a clientes: bandeja unificada de conversaciones de WhatsApp y correo en tiempo real, asignación de conversaciones a agentes, automatizaciones y reportes. Frontend en React; backend en Node con Supabase, colas de mensajes y webhooks de WhatsApp."
+    },
+    {
+      "id": "pj-landing",
+      "key": "VERANO",
+      "name": "Landing Verano",
+      "kind": "client",
+      "type": "landing",
+      "description": "Sitio de campaña de una marca de bebidas: una sola página con hero, beneficios y un formulario de contacto que manda un correo. Next.js estático, sin base de datos ni cuentas de usuario."
+    }
+  ],
+  "cases": [
+    {
+      "id": "rep-filtro-pedidos",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-tienda",
+      "title": "Agregar filtro por rango de fechas en la lista de pedidos",
+      "description": "En el panel de administración, la tabla de pedidos necesita un selector de fechas (desde/hasta) que filtre los resultados. Ya existe un filtro por estado que se puede tomar como ejemplo.",
+      "expect": {
+        "type": [
+          "Maquetación / UI básica",
+          "Componente interactivo complejo"
+        ],
+        "urgent": false,
+        "sizeMax": 3
+      }
+    },
+    {
+      "id": "rep-webhook-pagos",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-tienda",
+      "title": "Webhook de pagos no marca los pedidos como pagados",
+      "description": "Cuando el proveedor de pagos manda el evento de pago confirmado, el endpoint responde 200 pero el pedido sigue en 'pendiente de pago'. Revisar el handler del webhook y la actualización del pedido.",
+      "expect": {
+        "type": [
+          "Integración de pagos",
+          "Webhooks / colas / eventos",
+          "Bug crítico en producción"
+        ]
+      }
+    },
+    {
+      "id": "rep-migracion-citas",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-clinica",
+      "title": "Tabla de citas con políticas por consultorio",
+      "description": "Crear la tabla de citas en Supabase con su migración, índices por fecha y médico, y políticas RLS para que cada consultorio solo vea sus citas.",
+      "expect": {
+        "type": "Migración / modelo de datos",
+        "skill": "backend"
+      }
+    },
+    {
+      "id": "rep-prototipo-onboarding",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-clinica",
+      "title": "Prototipo del onboarding de pacientes",
+      "description": "Diseñar en Figma las 4 pantallas del registro de pacientes (datos, seguro médico, consentimiento, confirmación) usando el sistema de diseño actual.",
+      "expect": {
+        "type": "Diseño visual",
+        "skill": "diseno",
+        "urgent": false
+      }
+    },
+    {
+      "id": "rep-dominio-ssl",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-portal",
+      "title": "Apuntar el subdominio del portal a Vercel",
+      "description": "Configurar el registro CNAME de portal.example.com hacia Vercel y verificar que el certificado se emita.",
+      "expect": {
+        "type": "Servidor / DNS / SSL",
+        "skill": "devops",
+        "sizeMax": 2
+      }
+    },
+    {
+      "id": "rep-push-app",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-tienda",
+      "title": "Notificación push cuando el pedido sale a reparto",
+      "description": "En la app móvil, mandar una notificación push al cliente cuando su pedido cambia a 'en camino'. Incluye pedir permiso en el primer uso.",
+      "expect": {}
+    },
+    {
+      "id": "hard-produccion-caida",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-tienda",
+      "title": "URGENTE la tienda no deja pagar",
+      "description": "Desde hace 20 minutos todos los clientes ven 'Error 500' al confirmar el pago en la tienda en producción. Perdemos ventas.",
+      "expect": {
+        "type": "Bug crítico en producción",
+        "urgent": true
+      }
+    },
+    {
+      "id": "hard-alarma-cosmetica",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-clinica",
+      "title": "URGENTE!!! cambiar el color del botón",
+      "description": "El cliente pidió que el botón de 'Agendar' sea azul marino en vez de azul claro. Lo quiere para la presentación del próximo mes.",
+      "expect": {
+        "type": [
+          "Fix visual / responsive",
+          "Maquetación / UI básica"
+        ],
+        "skill": "frontend",
+        "sizeMax": 1
+      }
+    },
+    {
+      "id": "hard-cliente-bloqueado",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-clinica",
+      "title": "La recepción no puede registrar pacientes nuevos",
+      "description": "Desde el cambio de ayer, el formulario de alta de pacientes no guarda: la recepcionista de la clínica no puede registrar a nadie y tiene pacientes esperando.",
+      "expect": {
+        "type": "Bug crítico en producción",
+        "urgent": true
+      }
+    },
+    {
+      "id": "hard-vaga",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-portal",
+      "title": "Revisar lo del reporte",
+      "description": "",
+      "expect": {}
+    },
+    {
+      "id": "hard-mixta",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-tienda",
+      "title": "Programa de puntos de lealtad",
+      "description": "Diseñar e implementar un programa de puntos: tabla de puntos por cliente, reglas de acumulación en cada compra, endpoint para canjear y una pantalla en la cuenta del cliente para ver su saldo.",
+      "expect": {
+        "type": [
+          "Lógica de negocio compleja",
+          "Migración / modelo de datos"
+        ],
+        "sizeMin": 5
+      }
+    },
+    {
+      "id": "hard-arquitectura",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-portal",
+      "title": "Separar la autenticación en un servicio propio",
+      "description": "Hoy cada app maneja su login. Proponer e implementar un servicio único de autenticación con SSO para las tres apps internas, migrando las sesiones existentes sin cerrar la sesión de nadie.",
+      "expect": {
+        "type": "Login / SSO / OAuth",
+        "sizeMin": 8
+      }
+    },
+    {
+      "id": "neg-junta",
+      "split": "dev",
+      "kind": "negative",
+      "project": "pj-clinica",
+      "title": "Junta de revisión de alcance con la clínica",
+      "description": "Agendar y llevar la junta mensual con el director de la clínica para revisar el alcance del siguiente sprint.",
+      "expect": {
+        "type": "none",
+        "urgent": false
+      }
+    },
+    {
+      "id": "neg-compra-dominio",
+      "split": "dev",
+      "kind": "negative",
+      "project": "pj-portal",
+      "title": "Comprar el dominio para la campaña",
+      "description": "Comprar campana-aurora.com con la tarjeta de la empresa y guardar el recibo.",
+      "expect": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "neg-skill-fuera",
+      "split": "dev",
+      "kind": "negative",
+      "project": "pj-tienda",
+      "title": "Grabar el video tutorial de la tienda",
+      "description": "Grabar y editar un video de 3 minutos que explique a los clientes cómo hacer su primer pedido.",
+      "expect": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "neg-sin-proyecto",
+      "split": "dev",
+      "kind": "negative",
+      "project": null,
+      "title": "Actualizar las dependencias de seguridad del panel de la clínica",
+      "description": "npm audit reporta 3 vulnerabilidades altas en el panel administrativo de Clínica Nova.",
+      "expect": {
+        "type": "Refactor / deuda técnica",
+        "project": "pj-clinica"
+      }
+    },
+    {
+      "id": "new-tracking",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-tienda",
+      "title": "Eventos de GA4 en el checkout",
+      "description": "Registrar en Google Analytics 4 los eventos begin_checkout y purchase con el valor del pedido, usando el contenedor de Tag Manager que ya existe.",
+      "expect": {
+        "type": "Tracking GA4 / GTM",
+        "sizeMax": 3
+      }
+    },
+    {
+      "id": "new-seo",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-tienda",
+      "title": "Sitemap y metadatos de las páginas de producto",
+      "description": "Generar el sitemap.xml con todas las páginas de producto y agregar title, description y datos estructurados de producto para que Google las muestre mejor.",
+      "expect": {
+        "type": "SEO técnico",
+        "skill": "seo"
+      }
+    },
+    {
+      "id": "new-bug-menor",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-tienda",
+      "title": "El total del carrito sale con 3 decimales con cupón",
+      "description": "Con un cupón de 15% el total del carrito se muestra con tres decimales (ej. 849.915). El cálculo del descuento está en la API de carrito. Pasa poco, nadie se ha quejado.",
+      "expect": {
+        "type": "Bug menor",
+        "skill": "backend",
+        "urgent": false
+      }
+    },
+    {
+      "id": "new-crm",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-clinica",
+      "title": "Mandar los prospectos del formulario a HubSpot",
+      "description": "Cada vez que alguien llena el formulario de contacto de la clínica, crear o actualizar el contacto en HubSpot con su origen y el servicio que pidió.",
+      "expect": {
+        "type": "API de terceros (CRM, ERP)",
+        "skill": "integraciones"
+      }
+    },
+    {
+      "id": "new-whatsapp",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-clinica",
+      "title": "Confirmación de cita por WhatsApp",
+      "description": "Al agendar una cita, mandar al paciente un WhatsApp con la fecha, la hora y un botón para confirmar o cancelar, usando la plantilla aprobada.",
+      "expect": {
+        "type": "WhatsApp / SMS / correo"
+      }
+    },
+    {
+      "id": "new-landing",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-tienda",
+      "title": "Landing de la campaña de fin de año",
+      "description": "Crear la página de la campaña con hero, beneficios, preguntas frecuentes y formulario de contacto, a partir del diseño que ya está en Figma.",
+      "expect": {
+        "type": "Landing page"
+      }
+    },
+    {
+      "id": "new-ia",
+      "split": "dev",
+      "kind": "representative",
+      "project": "pj-portal",
+      "title": "Clasificar los tickets de soporte con IA",
+      "description": "Cuando entra un ticket de soporte, usar un LLM para etiquetarlo por tema y urgencia y sugerir una respuesta inicial al agente.",
+      "expect": {
+        "type": "Feature con IA / LLM",
+        "skill": "ai"
+      }
+    },
+    {
+      "id": "new-gigante",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-tienda",
+      "title": "Marketplace de proveedores",
+      "description": "Construir el módulo completo de proveedores: registro con verificación de documentos, catálogo propio de cada proveedor, pedidos divididos por proveedor, comisiones, y pagos a proveedores con Stripe Connect.",
+      "expect": {
+        "sizeMin": 13
+      }
+    },
+    {
+      "id": "hold-exportar-csv",
+      "split": "holdout",
+      "kind": "representative",
+      "project": "pj-tienda",
+      "title": "Exportar pedidos a CSV",
+      "description": "Botón en el panel para descargar los pedidos filtrados como CSV. El backend ya expone el listado.",
+      "expect": {
+        "type": [
+          "Dashboard / reportes",
+          "Conexión front-back",
+          "Maquetación / UI básica"
+        ],
+        "sizeMax": 3
+      }
+    },
+    {
+      "id": "hold-cron-recordatorios",
+      "split": "holdout",
+      "kind": "representative",
+      "project": "pj-clinica",
+      "title": "Recordatorio por correo 24 h antes de cada cita",
+      "description": "Tarea programada que cada hora busque citas del día siguiente y mande el correo de recordatorio una sola vez por cita.",
+      "expect": {
+        "type": [
+          "Webhooks / colas / eventos",
+          "WhatsApp / SMS / correo"
+        ]
+      }
+    },
+    {
+      "id": "hold-rls-fuga",
+      "split": "holdout",
+      "kind": "hard",
+      "project": "pj-clinica",
+      "title": "Un consultorio puede ver citas de otro",
+      "description": "En producción, un médico reportó que ve en su agenda citas de otro consultorio. Revisar las políticas RLS de la tabla de citas.",
+      "expect": {
+        "type": "Bug crítico en producción",
+        "urgent": true
+      }
+    },
+    {
+      "id": "hold-texto-legal",
+      "split": "holdout",
+      "kind": "hard",
+      "project": "pj-tienda",
+      "title": "Cambiar el texto del aviso de privacidad en el footer",
+      "description": "Legal mandó la nueva redacción; reemplazar el párrafo del footer.",
+      "expect": {
+        "type": [
+          "Maquetación / UI básica",
+          "Fix visual / responsive",
+          "Landing page"
+        ],
+        "sizeMax": 1,
+        "urgent": false
+      }
+    },
+    {
+      "id": "hold-logo-campana",
+      "split": "holdout",
+      "kind": "representative",
+      "project": "pj-tienda",
+      "title": "Banner para la campaña de temporada",
+      "description": "Diseñar el banner principal de la home (desktop y móvil) para la campaña de temporada, con la paleta de la marca.",
+      "expect": {
+        "type": "Diseño visual",
+        "skill": "diseno"
+      }
+    },
+    {
+      "id": "hold-pago-vacaciones",
+      "split": "holdout",
+      "kind": "negative",
+      "project": "pj-portal",
+      "title": "Solicitar acceso al panel de facturación",
+      "description": "Pedir a administración que me den acceso de lectura al panel de facturación.",
+      "expect": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "hold-deploy-roto",
+      "split": "holdout",
+      "kind": "hard",
+      "project": "pj-portal",
+      "title": "Los despliegues fallan desde el último merge",
+      "description": "El build en Vercel falla con 'Missing environment variable DATABASE_URL' en preview; producción sigue arriba con la versión anterior.",
+      "expect": {
+        "type": "Deploy / CI-CD",
+        "skill": "devops",
+        "urgent": false
+      }
+    },
+    {
+      "id": "hold-sin-proyecto-claro",
+      "split": "holdout",
+      "kind": "negative",
+      "project": null,
+      "title": "Investigar herramientas de analítica",
+      "description": "Comparar tres herramientas de analítica de producto y escribir una recomendación.",
+      "expect": {
+        "type": "none"
+      }
+    },
+    {
+      "id": "hold-stripe",
+      "split": "holdout",
+      "kind": "representative",
+      "project": "pj-clinica",
+      "title": "Cobrar la membresía mensual con tarjeta",
+      "description": "Los pacientes del plan preventivo deben pagar una membresía mensual con cargo automático a su tarjeta, con aviso si el cobro falla y opción de cancelar.",
+      "expect": {
+        "type": "Integración de pagos",
+        "skill": "pagos",
+        "sizeMin": 5
+      }
+    },
+    {
+      "id": "hold-query-lenta",
+      "split": "holdout",
+      "kind": "hard",
+      "project": "pj-tienda",
+      "title": "El reporte de ventas tarda 40 segundos",
+      "description": "El reporte mensual de ventas del panel tarda casi un minuto en cargar desde que pasamos de 50 mil pedidos. Revisar las consultas y los índices.",
+      "expect": {
+        "type": "Optimización de queries",
+        "skill": "backend"
+      }
+    },
+    {
+      "id": "hold-refactor",
+      "split": "holdout",
+      "kind": "representative",
+      "project": "pj-portal",
+      "title": "Pasar los componentes del portal a TypeScript",
+      "description": "Migrar los componentes del portal interno de JavaScript a TypeScript y quitar los tipos any, sin cambiar nada de lo que ven los usuarios.",
+      "expect": {
+        "type": "Refactor / deuda técnica"
+      }
+    },
+    {
+      "id": "hold-tests",
+      "split": "holdout",
+      "kind": "representative",
+      "project": "pj-tienda",
+      "title": "Pruebas end-to-end del flujo de compra",
+      "description": "Escribir pruebas automáticas que recorran el flujo completo: buscar producto, agregar al carrito, aplicar cupón y pagar en el ambiente de pruebas.",
+      "expect": {
+        "type": "Pruebas automatizadas"
+      }
+    },
+    {
+      "id": "fb-boton-app",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-flujo",
+      "title": "Arreglar el botón de enviar en la bandeja",
+      "description": "Al darle enviar a un mensaje en la bandeja no pasa nada y el mensaje no le llega al cliente.",
+      "expect": {
+        "typeNot": [
+          "Landing page",
+          "Fix visual / responsive",
+          "Maquetación / UI básica"
+        ],
+        "skill": [
+          "backend",
+          "integraciones",
+          "soporte-incidencias",
+          "fullstack",
+          "(abierta)"
+        ]
+      }
+    },
+    {
+      "id": "fb-error-bandeja",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-flujo",
+      "title": "error en la bandeja",
+      "description": "los mensajes nuevos no aparecen en la bandeja hasta que recargas la página",
+      "expect": {
+        "typeNot": [
+          "Landing page",
+          "Fix visual / responsive",
+          "Maquetación / UI básica"
+        ],
+        "skill": [
+          "backend",
+          "integraciones",
+          "soporte-incidencias",
+          "fullstack",
+          "(abierta)"
+        ]
+      }
+    },
+    {
+      "id": "fb-boton-landing",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-landing",
+      "title": "Arreglar el botón de contacto",
+      "description": "En celular el botón de contacto se ve cortado y el texto se sale.",
+      "expect": {
+        "type": [
+          "Fix visual / responsive",
+          "Maquetación / UI básica",
+          "Landing page"
+        ],
+        "skill": [
+          "frontend",
+          "landing-pages"
+        ]
+      }
+    },
+    {
+      "id": "hold-boton-pago",
+      "split": "holdout",
+      "kind": "hard",
+      "project": "pj-tienda",
+      "title": "El botón de pagar no responde",
+      "description": "Algunos clientes le dan pagar y se queda cargando; el pedido no se crea.",
+      "expect": {
+        "typeNot": [
+          "Landing page",
+          "Fix visual / responsive",
+          "Maquetación / UI básica"
+        ],
+        "skill": [
+          "backend",
+          "pagos",
+          "soporte-incidencias",
+          "integraciones",
+          "fullstack",
+          "(abierta)"
+        ]
+      }
+    },
+    {
+      "id": "hold-boton-landing",
+      "split": "holdout",
+      "kind": "hard",
+      "project": "pj-landing",
+      "title": "Cambiar el color del botón principal",
+      "description": "La marca pidió que el botón del hero sea naranja en vez de azul.",
+      "expect": {
+        "type": [
+          "Fix visual / responsive",
+          "Maquetación / UI básica",
+          "Landing page"
+        ],
+        "skill": [
+          "frontend",
+          "landing-pages"
+        ]
+      }
+    },
+    {
+      "id": "fb-vago-app",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-flujo",
+      "title": "Arreglar el botón de la bandeja",
+      "description": "no funciona bien",
+      "expect": {
+        "typeNot": [
+          "Landing page",
+          "Fix visual / responsive",
+          "Maquetación / UI básica"
+        ],
+        "skill": [
+          "backend",
+          "integraciones",
+          "soporte-incidencias",
+          "fullstack",
+          "(abierta)"
+        ]
+      }
+    },
+    {
+      "id": "fb-vago-landing",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-landing",
+      "title": "Arreglar el botón del formulario",
+      "description": "no funciona bien",
+      "expect": {
+        "skill": [
+          "frontend",
+          "landing-pages"
+        ]
+      }
+    },
+    {
+      "id": "fb-vago-flujo-error",
+      "split": "dev",
+      "kind": "hard",
+      "project": "pj-flujo",
+      "title": "error en la bandeja de flujo",
+      "description": "revisar, los agentes reportan que falla",
+      "expect": {
+        "typeNot": [
+          "Landing page",
+          "Fix visual / responsive",
+          "Maquetación / UI básica"
+        ],
+        "skill": [
+          "backend",
+          "integraciones",
+          "soporte-incidencias",
+          "fullstack",
+          "(abierta)"
+        ]
+      }
+    },
+    {
+      "id": "hold-vago-app",
+      "split": "holdout",
+      "kind": "hard",
+      "project": "pj-clinica",
+      "title": "Arreglar el botón de agendar",
+      "description": "no sirve",
+      "expect": {
+        "typeNot": [
+          "Landing page",
+          "Fix visual / responsive",
+          "Maquetación / UI básica"
+        ],
+        "skill": [
+          "backend",
+          "integraciones",
+          "soporte-incidencias",
+          "fullstack",
+          "(abierta)"
+        ]
+      }
+    }
+  ]
+}

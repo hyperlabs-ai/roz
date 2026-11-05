@@ -27,6 +27,14 @@ revisión*, un merge a *completado*. El trabajo es la fuente de verdad; roz lo i
 - **Tiene contexto de dev.** Resuelve a la misma persona a través de su login de GitHub y el
   email de sus commits; conoce su carga y disponibilidad para enrutar trabajo por **skill+capacidad**,
   no al azar.
+- **Tickets inteligentes que se asignan solos — y explican por qué.** En la pestaña *Ticket* (o con
+  `/ticket` en el chat) escribes solo nombre, proyecto y descripción. Jev de TypeSafe lo lee y elige un
+  *tipo de solución* (Endpoint / CRUD, Integración de pagos, Bug crítico…); una tabla editable lo
+  convierte en skill requerida, nivel mínimo y tamaño típico, y una política pura y probada elige
+  encargado → subencargado → especialista → pool, cuidando WIP y capacidad antes de la fecha límite.
+  Revisas y corriges una vista previa, creas, y el responsable recibe un DM desde tu perfil. Cada
+  decisión queda registrada con sus motivos; corregirla pide un motivo de categoría cerrada, para que
+  el algoritmo mejore en vez de discutirse cada sprint.
 - **Cierra el loop con la gente.** Notifica por correo lo que importa (te asignaron, tu cambio quedó
   documentado, se detectó un repo) — comunicación dirigida, no un tablero que hay que ir a revisar.
 - **Segundo cerebro.** Embeddings + retrieval para recuperar contexto histórico del proyecto y
@@ -55,9 +63,15 @@ roz es open source bajo [MIT](LICENSE). **No hay servicio hospedado** — despli
 | **Anthropic** | Claude (razonamiento) |
 | **OpenAI** | embeddings (`text-embedding-3-large`, 3072 dims) |
 | **Resend** | email transaccional |
+| **TypeSafe** *(opcional)* | Jev — clasifica tareas para la asignación automática (`TYPESAFE_API_KEY`) |
 
 Los tokens de observabilidad de infraestructura (Vercel / Railway / Supabase Management) son
-**opcionales** y degradan sin romper.
+**opcionales** y degradan sin romper. Sin `TYPESAFE_API_KEY` la asignación automática se apaga y
+`/v1/intake` sigue con el router de embeddings. Para que asigne bien, llena **Capacidad**
+(`/app/capacity`: quién encabeza o apoya cada proyecto, horas semanales) y **Skills** (`/app/skills`:
+niveles 1–5 y la tabla de *tipos de solución*). La `availability` (0–1) de un dev es la fracción de su
+tiempo disponible para tareas:
+bájala por juntas o ausencias, no porque ya tenga muchas tareas (la carga se calcula de las tareas).
 
 ### Pasos
 
@@ -98,7 +112,13 @@ La **landing** pública se sirve en `/`; el **dashboard** de operación vive det
 | `GET /health` | — | healthcheck |
 | `POST /mcp` | Claude (bearer `ROZ_MCP_TOKEN`) | tools de intake, devs y contexto |
 | `POST /webhooks/github` | GitHub | push/commits (reconciliación), ciclo de vida de PRs (estado de tareas) y detección de repos; HMAC verificado |
-| `POST /v1/intake` | Apps de clientes (bearer `ROZ_INGEST_TOKEN`) | ingesta auto-documentada y auto-asignada |
+| `POST /v1/intake` | Apps de clientes (bearer `ROZ_INGEST_TOKEN`) | ingesta auto-documentada y auto-asignada; `autoAssign` en la respuesta dice cómo (`assigned` / `escalated` / `pending` / `failed` / `legacy`) |
+| `POST /api/dashboard/ticket/preview` | SPA del dashboard | ticket inteligente: Jev lo lee, roz completa tipo/skills/puntos/urgencia y propone responsable (sin crear la tarea) |
+| `POST /api/dashboard/ticket` | SPA del dashboard | crea el ticket previsualizado, asignado, y manda un DM al responsable desde el perfil de quien lo pidió |
+| `GET/POST/PATCH /api/dashboard/solution-types` | SPA del dashboard | tabla de tipos de solución (Skills → Tipos de solución) |
+| `POST /api/dashboard/projects/:id/profile/suggest` | SPA del dashboard | propone tipo y descripción del proyecto leyendo sus repos de GitHub (no escribe) |
+| `POST /api/dashboard/tickets/:id/auto-assign` | SPA del dashboard | corre la asignación automática sobre una tarea abierta sin responsable |
+| `GET /api/dashboard/tickets/:id/assignment` | SPA del dashboard | por qué roz eligió (o no): clasificación, candidatos con motivos, payload exacto enviado a Jev |
 | `GET /api/dashboard/*` | SPA del dashboard (auth Supabase + dominio) | métricas de ingeniería + salud de infra |
 | `GET /v1/internal/drain` | Vercel Cron (cada min) | drena el outbox (idempotente, con reintentos) |
 | `GET /v1/internal/infra-poll` | Vercel Cron (cada 15 min) | sondea Vercel/Railway/Supabase |

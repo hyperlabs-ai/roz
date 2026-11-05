@@ -27,7 +27,8 @@ export type OutboxEventType =
   | 'repo.detected'
   | 'repo.renamed'
   | 'repo.notify'
-  | 'notification.requested';
+  | 'notification.requested'
+  | 'work_item.auto_assign';
 
 /** Intentos antes del dead-letter. Exportado: el dashboard lo muestra como "intento 3/5". */
 export const MAX_ATTEMPTS = 5;
@@ -157,7 +158,10 @@ async function processEvent(ev: any): Promise<boolean | null> {
   if (!claimed) return null;
 
   try {
-    await dispatch(ev.type as OutboxEventType, ev.payload as Record<string, unknown>);
+    await dispatch(ev.type as OutboxEventType, ev.payload as Record<string, unknown>, {
+      attempt: (ev.attempts ?? 0) + 1,
+      maxAttempts: MAX_ATTEMPTS,
+    });
     // `updated_at` en las transiciones TERMINALES es lo que hace consultable la cola: sin él, un
     // evento resuelto conserva la marca del claim y el feed de "qué acaba de pasar" se ordena mal.
     await supabase
@@ -192,7 +196,11 @@ async function processEvent(ev: any): Promise<boolean | null> {
  * Mapea tipo de evento -> efecto. Cada efecto maneja su idempotencia fina vía la tabla
  * `idempotency_key` (helper claimOnce). Stubs por fase.
  */
-async function dispatch(type: OutboxEventType, payload: Record<string, unknown>): Promise<void> {
+async function dispatch(
+  type: OutboxEventType,
+  payload: Record<string, unknown>,
+  ctx: { attempt: number; maxAttempts: number },
+): Promise<void> {
   switch (type) {
     case 'work_item.created':
     case 'work_item.assigned':
@@ -303,6 +311,14 @@ async function dispatch(type: OutboxEventType, payload: Record<string, unknown>)
     case 'notification.requested':
       // fase 3: enviar la notificación encolada
       return;
+    // Asignación automática de una tarea nueva (src/assign). Import dinámico: el orquestador usa
+    // queries.ts, que a su vez emite eventos aquí — así no se forma un ciclo al cargar módulos.
+    // Necesita el intento: en el último, la corrida se cierra como fallida en vez de quedar pendiente.
+    case 'work_item.auto_assign': {
+      const { autoAssignFromEvent } = await import('../assign/index.js');
+      await autoAssignFromEvent(payload, ctx);
+      return;
+    }
     default:
       return;
   }

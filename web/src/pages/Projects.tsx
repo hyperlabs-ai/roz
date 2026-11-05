@@ -24,7 +24,7 @@ import {
 import { useApi } from '@/lib/useApi';
 import { useMirror } from '@/lib/useMirror';
 import { invalidate } from '@/lib/store';
-import { apiGet, apiSend, type ProjectListItem, type ProjectKind } from '@/lib/api';
+import { apiGet, apiSend, PROJECT_TYPE_LABEL, type ProjectListItem, type ProjectKind } from '@/lib/api';
 import { compact } from '@/lib/format';
 import { usePeriod } from '@/lib/usePeriod';
 
@@ -292,6 +292,13 @@ function ProjectCard({
                   <span className="font-mono text-[11px] text-muted-foreground">{p.key}</span>
                   <span className="text-xs text-muted-foreground">· {p.repos.length} repo{p.repos.length !== 1 ? 's' : ''}</span>
                 </div>
+                {/* Perfil (0033): tipo principal; "IA" = lo llenó roz y falta revisarlo. */}
+                {p.projectType && (
+                  <div className="mt-1 truncate text-xs text-muted-foreground">
+                    {PROJECT_TYPE_LABEL[p.projectType] ?? p.projectType}
+                    {p.profileSource === 'ia' && <span className="ml-1 rounded bg-muted px-1 text-[10px] uppercase tracking-wide">IA</span>}
+                  </div>
+                )}
               </div>
             </div>
             {isAdmin ? (

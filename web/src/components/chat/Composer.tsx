@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { toast } from 'sonner';
-import { ClipboardList, FileText, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
+import { ClipboardList, FileText, Loader2, Plus, SendHorizonal, TicketPlus, X } from 'lucide-react';
 import { useChat } from '@/chat/ChatContext';
 import { AvatarStack, UserAvatar } from '@/components/bits';
 import { StatusIcon } from '@/components/tasks/inline-cells';
 import { Button } from '@/components/ui/button';
+import { TicketDialog } from '@/components/tickets/TicketDialog';
 import { StatusDialog } from './StatusDialog';
 import {
   MAX_ATTACHMENT_BYTES, MAX_MESSAGE_LENGTH, chatApi, encodeMentions, fold, loadDraft, mentionQueryAt, saveDraft,
-  taskQueryAt, type ChatAttachment, type ChatTaskRef,
+  slashHint, taskQueryAt, ticketCommand, type ChatAttachment, type ChatTaskRef,
 } from '@/lib/chat';
 import { cn } from '@/lib/utils';
 
@@ -61,6 +62,8 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  // `/ticket [nombre]`: abre el formulario de ticket inteligente en vez de enviar.
+  const [ticket, setTicket] = useState<{ open: boolean; title: string }>({ open: false, title: '' });
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -217,8 +220,23 @@ export function Composer({
   const uploading = uploads.some((u) => !u.attachment && !u.error);
   const ready = uploads.filter((u) => u.attachment).map((u) => u.attachment!);
   const canSend = !uploading && (text.trim().length > 0 || ready.length > 0) && text.length <= MAX_MESSAGE_LENGTH;
+  const showSlash = !mention && !taskQuery && slashHint(text);
+
+  /** `/ticket …` no es un mensaje: abre el formulario y limpia el compositor (los adjuntos se quedan). */
+  function openTicket(title: string) {
+    setTicket({ open: true, title });
+    setText('');
+    saveDraft(keyRef.current, '');
+    setMention(null);
+    setTaskQuery(null);
+  }
 
   function send() {
+    const cmd = ticketCommand(text);
+    if (cmd) {
+      openTicket(cmd.title);
+      return;
+    }
     if (!canSend) return;
     const body = encodeMentions(text.trim(), devs);
     onSend(body, ready);
@@ -283,6 +301,13 @@ export function Composer({
         setMention(null);
         return;
       }
+    }
+    // Escribiendo `/ticket`: Tab lo completa y Enter abre el formulario.
+    if (showSlash && !e.shiftKey && (e.key === 'Tab' || e.key === 'Enter') && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      if (e.key === 'Tab') setText('/ticket ');
+      else openTicket('');
+      return;
     }
     // En táctil Enter es salto de línea (el teclado no tiene Shift a mano); se envía con el botón.
     const touch = window.matchMedia('(hover: none)').matches;
@@ -359,6 +384,26 @@ export function Composer({
               );
             })
           )}
+        </div>
+      )}
+
+      {showSlash && (
+        <div className="absolute bottom-full left-4 right-4 z-20 mb-1 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg md:left-5 md:right-auto md:w-96">
+          <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Comandos</div>
+          <button
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              openTicket('');
+            }}
+            className="flex w-full items-center gap-2 rounded-md bg-accent px-2 py-1.5 text-left text-sm"
+          >
+            <span className="grid size-6 place-items-center rounded-md bg-primary/10 text-primary">
+              <TicketPlus className="size-3.5" />
+            </span>
+            <span className="font-medium">/ticket</span>
+            <span className="ml-auto truncate text-xs text-muted-foreground">Crear un ticket: roz lo asigna y avisa</span>
+          </button>
         </div>
       )}
 
@@ -489,7 +534,7 @@ export function Composer({
           <span className="ml-1 hidden text-[11px] text-muted-foreground md:inline">
             <kbd className="font-sans">Shift + Enter</kbd> para salto de línea · <kbd className="font-sans">@</kbd> para mencionar
             {' · '}
-            <kbd className="font-sans">@tarea</kbd> para citar una tarea
+            <kbd className="font-sans">@tarea</kbd> para citar una tarea · <kbd className="font-sans">/ticket</kbd> para crear un ticket
           </span>
           <div className="ml-auto flex items-center gap-2">
             {text.length > MAX_MESSAGE_LENGTH * 0.9 && (
@@ -510,6 +555,12 @@ export function Composer({
           </div>
         </div>
       </div>
+
+      <TicketDialog
+        open={ticket.open}
+        initialTitle={ticket.title}
+        onOpenChange={(open) => setTicket((t) => ({ ...t, open }))}
+      />
 
       {!compact && (
         <StatusDialog

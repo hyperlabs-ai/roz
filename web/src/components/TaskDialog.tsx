@@ -15,7 +15,10 @@ import {
 } from '@/components/ui/alert-dialog';
 import { UserAvatar } from '@/components/bits';
 import { Markdown } from '@/components/Markdown';
+import { AutoAssignPanel } from '@/components/tasks/AutoAssignPanel';
+import { OverrideReasonDialog } from '@/components/tasks/OverrideReasonDialog';
 import { apiGet, apiSend, apiUpload, type Ticket, type TicketFilterOptions, type Attachment } from '@/lib/api';
+import { isOverrideRequired, needsOverride } from '@/lib/assign';
 import { localDateStr, localTimeStr, toIso } from '@/lib/calendar';
 import { htmlToMarkdown, looksLikeHtml } from '@/lib/rich-text';
 import { relative, compact } from '@/lib/format';
@@ -97,6 +100,11 @@ export function TaskDialog({
   const [endTime, setEndTime] = useState('10:00');
   const [dueDate, setDueDate] = useState('');
   const [labels, setLabels] = useState('');
+  const [estimate, setEstimate] = useState(NONE); // story points (1/2/3/5/8/13)
+  // Tipo de solución (Skills → Tipos de solución). Lo que fija una persona gana sobre roz.
+  const [solutionTypeId, setSolutionTypeId] = useState(NONE);
+  // Cambio de responsables pendiente de motivo: corrige al que eligió roz (override).
+  const [overridePrompt, setOverridePrompt] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Comentarios (solo en edición).
@@ -140,13 +148,16 @@ export function TaskDialog({
       }
       setDueDate(task.dueDate ? task.dueDate.slice(0, 10) : '');
       setLabels((task.labels ?? []).join(', '));
+      setEstimate(task.estimate ? String(task.estimate) : NONE);
+      setSolutionTypeId(task.solutionTypeId ?? NONE);
     } else {
       setTitle(prefill?.name ?? ''); setSpec(prefill?.description ?? '');
       setProjectId(prefill?.projectId && projects.some((p) => p.id === prefill.projectId) ? prefill.projectId : projects[0]?.id ?? '');
       setState(defaultState ?? 'planificada'); setPriority(NONE); setAssigneeIds(prefill?.assigneeDevIds ?? []);
       setSchedDate(defaultDate ?? ''); setStartTime('09:00'); setEndTime('10:00');
-      setDueDate(''); setLabels('');
+      setDueDate(''); setLabels(''); setEstimate(NONE); setSolutionTypeId(NONE);
     }
+    setOverridePrompt(null);
     setCommentBody('');
     setComments([]);
     setAttachments([]);
@@ -204,6 +215,9 @@ export function TaskDialog({
           dueDate: dueDate || null,
           labels: labelList,
           projectId,
+          estimate: estimate === NONE ? null : Number(estimate),
+          ...(solutionTypeId !== NONE ? { solutionTypeId } : {}),
+          // Crear desde aquí ya no autoasigna: para eso está /ticket (y el botón en la tarea).
           ...(chatMessageId ? { chatMessageId } : {}),
         };
     try {
@@ -330,7 +344,13 @@ export function TaskDialog({
         // Se avisa al padre con la fila completa: la tabla de atrás se actualiza sola, sin recargar.
         onSaved((await apiSend<{ task: Ticket }>('PATCH', `/tickets/${id}`, body)).task, 'updated');
       } catch (e: any) {
-        toast.error('No se pudo guardar', { description: String(e?.message ?? e) });
+        if (isOverrideRequired(e) && Array.isArray(body.assigneeDevIds)) {
+          // El backend pide motivo (la regla local no lo vio venir): se revierte y se pregunta.
+          setAssigneeIds(currentAssignees(src.current.task));
+          setOverridePrompt(body.assigneeDevIds as string[]);
+        } else {
+          toast.error('No se pudo guardar', { description: String(e?.message ?? e) });
+        }
       } finally {
         setAutoBusy((n) => n - 1);
       }
@@ -340,8 +360,27 @@ export function TaskDialog({
   // Quitar conserva la posición del resto; agregar va al final (= apoyo). Nunca degrada al
   // responsable actual por accidente.
   function setAssignees(next: string[]) {
+    // Cambiar al responsable que eligió roz pide un motivo (una sola vez): es lo que le enseña.
+    if (task && needsOverride(task, next)) {
+      setOverridePrompt(next);
+      return;
+    }
     setAssigneeIds(next);
     autosave({ assigneeDevIds: next });
+  }
+  function confirmOverride(category: string, note: string | null) {
+    const next = overridePrompt;
+    setOverridePrompt(null);
+    if (!next) return;
+    setAssigneeIds(next);
+    autosave({ assigneeDevIds: next, override: { category, note } });
+  }
+  /** La tarea cambió desde el panel de asignación automática (asignó, escaló, terminó de pensar). */
+  function onAutoAssignChange(t: Ticket) {
+    setAssigneeIds(currentAssignees(t));
+    if (t.estimate) setEstimate(String(t.estimate));
+    if (t.solutionTypeId) setSolutionTypeId(t.solutionTypeId);
+    onSaved(t, 'updated');
   }
   function toggleAssignee(id: string) {
     setAssignees(assigneeIds.includes(id) ? assigneeIds.filter((x) => x !== id) : [...assigneeIds, id]);
@@ -625,6 +664,17 @@ export function TaskDialog({
                         <span className="font-medium text-foreground">{task!.createdBy.name}</span>
                       </div>
                     )}
+                    {/* Asignación automática: el porqué de la decisión, o el botón para pedirla. */}
+                    {editing && (
+                      <div className="pt-1">
+                        <AutoAssignPanel
+                          task={task!}
+                          enabled={!!filters.autoAssignEnabled}
+                          overrideLabels={Object.fromEntries((filters.overrideCategories ?? []).map((c) => [c.value, c.label]))}
+                          onTaskChange={onAutoAssignChange}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-1.5">
@@ -683,6 +733,47 @@ export function TaskDialog({
                         placeholder="bug, urgente"
                       />
                     </div>
+                  </div>
+
+                  {/* Story points: la asignación automática los usa para medir carga (1 pt ≈ 2 h).
+                      Sin valor, roz lo estima al asignar. */}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="task-estimate">Puntos</Label>
+                      <Select
+                        value={estimate}
+                        onValueChange={(v) => { setEstimate(v); autosave({ estimate: v === NONE ? null : Number(v) }); }}
+                      >
+                        <SelectTrigger id="task-estimate"><SelectValue placeholder="Sin estimar" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={NONE}>— Sin estimar —</SelectItem>
+                          {(filters.estimatePoints ?? [1, 2, 3, 5, 8, 13]).map((p) => (
+                            <SelectItem key={p} value={String(p)}>{p} {p === 1 ? 'punto' : 'puntos'} · ≈ {p * 2} h</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {/* Tipo de solución: qué clase de trabajo es. Si lo fija una persona, roz lo usa
+                        tal cual (skill, nivel mínimo y tamaño salen de Skills → Tipos de solución). */}
+                    {(filters.solutionTypes?.length ?? 0) > 0 && (
+                      <div className="space-y-1.5">
+                        <Label htmlFor="task-solution-type">Tipo de solución</Label>
+                        <Select
+                          value={solutionTypeId}
+                          onValueChange={(v) => { setSolutionTypeId(v); autosave({ solutionTypeId: v === NONE ? null : v }); }}
+                        >
+                          <SelectTrigger id="task-solution-type"><SelectValue placeholder="Sin tipo" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NONE}>— Sin tipo (roz lo deduce) —</SelectItem>
+                            {(filters.solutionTypes ?? [])
+                              .filter((t) => t.active || t.id === solutionTypeId)
+                              .map((t) => (
+                                <SelectItem key={t.id} value={t.id}>{t.name}{t.active ? '' : ' (retirado)'}</SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
                 </div>
               </Section>
@@ -834,8 +925,21 @@ export function TaskDialog({
           </div>
         </DialogFooter>
       </DialogContent>
+      <OverrideReasonDialog
+        open={overridePrompt !== null}
+        categories={filters.overrideCategories ?? []}
+        chosenName={task?.autoAssign?.chosenDevId ? nameOfDev(task.autoAssign.chosenDevId) : null}
+        onConfirm={confirmOverride}
+        onCancel={() => setOverridePrompt(null)}
+      />
     </Dialog>
   );
+}
+
+/** Responsables de una tarea con el principal al frente. */
+function currentAssignees(t: Ticket | null | undefined): string[] {
+  if (!t) return [];
+  return t.assignees?.length ? t.assignees.map((a) => a.id) : t.assignee ? [t.assignee.id] : [];
 }
 
 function EffortStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {

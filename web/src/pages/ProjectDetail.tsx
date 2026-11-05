@@ -31,6 +31,7 @@ import { compact, relative } from '@/lib/format';
 import { usePeriod } from '@/lib/usePeriod';
 import { cn } from '@/lib/utils';
 import { PRIO_DOT } from '@/lib/labels';
+import { ProjectProfileCard } from '@/components/projects/ProjectProfileCard';
 
 function syncPct(s?: RepoSyncStatus): number | null {
   return s?.totalPages ? Math.min(100, Math.round((s.pages / s.totalPages) * 100)) : null;
@@ -343,6 +344,16 @@ export default function ProjectDetail() {
             <MetricCard layout="row" icon={<CircleCheck className="size-[18px]" />} label="Tickets resueltos" value={data.totals.ticketsResolved} />
             <MetricCard layout="row" icon={<Users className="size-[18px]" />} label="Contribuidores" value={data.totals.contributors} />
           </div>
+
+          <ProjectProfileCard
+            projectId={data.project.id}
+            projectType={data.project.projectType ?? null}
+            description={data.project.description ?? null}
+            profileSource={data.project.profileSource ?? null}
+            hasRepos={repos.items.length > 0}
+            isAdmin={isAdmin}
+            onSaved={reload}
+          />
 
           <Card className="mt-4">
             <CardHeader className="flex-row items-center justify-between space-y-0">

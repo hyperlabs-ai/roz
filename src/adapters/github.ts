@@ -294,6 +294,95 @@ export async function getRepo(repo: string): Promise<RepoMeta> {
   return { githubId: d.id, fullName: d.full_name, name: d.name, description: d.description ?? null, url: d.html_url };
 }
 
+// ---------------------------------------------------------------- perfil del repo (para describir proyectos)
+
+export interface RepoProfile {
+  fullName: string;
+  description: string | null;
+  homepage: string | null;
+  topics: string[];
+  /** Lenguajes por peso, con su %. */
+  languages: { name: string; pct: number }[];
+  /** Carpetas y archivos de primer nivel (las carpetas terminan en `/`). */
+  topLevel: string[];
+  /** Nombres de dependencias del package.json de la raíz (si hay). */
+  dependencies: string[];
+  /** Primeros caracteres del README, sin imágenes ni badges. */
+  readme: string | null;
+  pushedAt: string | null;
+}
+
+/** null si no existe (404); cualquier otro error se lanza. */
+async function ghMaybe<T>(path: string): Promise<T | null> {
+  try {
+    return await gh<T>(path);
+  } catch (err) {
+    if (/GitHub API error 404/.test(String(err))) return null;
+    throw err;
+  }
+}
+
+function decodeContent(c: { content?: string; encoding?: string } | null): string | null {
+  if (!c?.content) return null;
+  return c.encoding === 'base64' ? Buffer.from(c.content, 'base64').toString('utf8') : c.content;
+}
+
+/** Quita badges, imágenes, HTML y espacios de más de un README (lo que no describe el producto). */
+export function cleanReadme(raw: string, max = 3000): string {
+  const text = raw
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '') // imágenes y badges
+    .replace(/<img[^>]*>/gi, '')
+    .replace(/<\/?[a-z][^>]*>/gi, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1') // links → su texto
+    .replace(/[ \t]+$/gm, '') // espacios que dejan las imágenes quitadas
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * Lo que dice GitHub de un repo para describir el proyecto: metadata, lenguajes, estructura de
+ * primer nivel, dependencias y el README. Cada pieza es tolerante (un repo sin README o sin
+ * package.json no rompe nada).
+ */
+export async function getRepoProfile(repo: string): Promise<RepoProfile> {
+  const r = encRepo(repo);
+  const [meta, langs, root, readme, pkg] = await Promise.all([
+    gh<{ full_name: string; description: string | null; homepage: string | null; topics?: string[]; pushed_at: string | null }>(`/repos/${r}`),
+    ghMaybe<Record<string, number>>(`/repos/${r}/languages`),
+    ghMaybe<{ name: string; type: string }[]>(`/repos/${r}/contents/`),
+    ghMaybe<{ content?: string; encoding?: string }>(`/repos/${r}/readme`),
+    ghMaybe<{ content?: string; encoding?: string }>(`/repos/${r}/contents/package.json`),
+  ]);
+  const totalBytes = Object.values(langs ?? {}).reduce((s, n) => s + n, 0) || 1;
+  let dependencies: string[] = [];
+  const pkgText = decodeContent(pkg);
+  if (pkgText) {
+    try {
+      const j = JSON.parse(pkgText) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+      dependencies = [...Object.keys(j.dependencies ?? {}), ...Object.keys(j.devDependencies ?? {})].slice(0, 60);
+    } catch {
+      /* package.json inválido: sin dependencias */
+    }
+  }
+  const readmeText = decodeContent(readme);
+  return {
+    fullName: meta.full_name,
+    description: meta.description ?? null,
+    homepage: meta.homepage || null,
+    topics: meta.topics ?? [],
+    languages: Object.entries(langs ?? {})
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([name, bytes]) => ({ name, pct: Math.round((bytes / totalBytes) * 100) })),
+    topLevel: Array.isArray(root) ? root.slice(0, 60).map((e) => (e.type === 'dir' ? `${e.name}/` : e.name)) : [],
+    dependencies,
+    readme: readmeText ? cleanReadme(readmeText) : null,
+    pushedAt: meta.pushed_at ?? null,
+  };
+}
+
 /** Heurística barata: ¿el mensaje del commit referencia una tarea por su identificador (ABC-123,
  *  p.ej. ROZ-42)? El nombre `referencesLinearIssue` es histórico; hoy detecta IDs de tareas nativas. */
 export function referencesLinearIssue(message: string): string | null {
