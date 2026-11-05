@@ -174,6 +174,32 @@ export function chatBadge(conversations: ChatConversation[]): { count: number; d
   return { count, dot: dot && count === 0 };
 }
 
+/**
+ * ¿Este mensaje nuevo me avisa (suena)? Espejo de `chatPushRecipients` (src/chat/rules.ts) con lo
+ * que sabe el cliente, para que la app abierta suene en los mismos casos en que llega el push:
+ *   · nunca lo mío, ni un mensaje de sistema, ni una conversación silenciada o que solo leo;
+ *   · MD: siempre (también en hilo);
+ *   · canal, mensaje raíz: si me mencionan, hay @canal o estoy en nivel 'all';
+ *   · canal, hilo: solo si me mencionan (@canal no despierta al canal desde un hilo).
+ * Las respuestas en hilos donde participo sin mención no se cubren aquí (el cliente no sabe quién
+ * participa): esas las hace sonar el push.
+ */
+export function messageAlerts(
+  conv: Pick<ChatConversation, 'kind' | 'membership'>,
+  m: Pick<ChatMessage, 'kind' | 'authorDevId' | 'mentions' | 'mentionChannel' | 'parentId'>,
+  myDevId: string | null | undefined,
+): boolean {
+  if (!myDevId || m.kind !== 'user' || !m.authorDevId) return false;
+  const me = myDevId.toLowerCase();
+  if (m.authorDevId.toLowerCase() === me) return false;
+  const level = conv.membership?.notifyLevel;
+  if (!level || level === 'none') return false;
+  if (conv.kind === 'dm') return true;
+  const direct = m.mentions.some((id) => id.toLowerCase() === me);
+  if (m.parentId) return direct;
+  return direct || m.mentionChannel || level === 'all';
+}
+
 export function newNonce(): string {
   try {
     return crypto.randomUUID();

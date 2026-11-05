@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   AlertCircle, FileText, ListPlus, Loader2, MessageSquareReply, MoreHorizontal, Pencil, RotateCw, Trash2, X,
 } from 'lucide-react';

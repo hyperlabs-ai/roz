@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { ClipboardList, FileText, Loader2, Plus, SendHorizonal, TicketPlus, X } from 'lucide-react';
 import { useChat } from '@/chat/ChatContext';
 import { AvatarStack, UserAvatar } from '@/components/bits';

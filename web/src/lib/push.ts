@@ -50,6 +50,23 @@ export async function enablePush(): Promise<void> {
   await apiSend('POST', '/push/subscribe', { subscription: sub.toJSON(), userAgent: navigator.userAgent });
 }
 
+export interface TestPushDevice {
+  label: string;
+  ok: boolean;
+  gone: boolean;
+  lastUsedAt: string | null;
+}
+
+export interface TestPushResult {
+  blocked: 'vapid' | 'global' | 'muted' | null;
+  devices: TestPushDevice[];
+}
+
+/** Manda un aviso de prueba a TODOS mis dispositivos suscritos y dice a cuáles salió. */
+export function sendTestPush(): Promise<TestPushResult> {
+  return apiSend<TestPushResult>('POST', '/push/test', {});
+}
+
 export async function disablePush(): Promise<void> {
   const sub = await currentSubscription();
   if (!sub) return;

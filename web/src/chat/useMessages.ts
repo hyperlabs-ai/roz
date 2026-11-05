@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useChat } from './ChatContext';
 import { chatApi, newNonce, type ChatAttachment, type ChatEvent, type ChatMessage, type ChatTaskRef } from '@/lib/chat';
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Check, Crown, Hash, Loader2, Lock, Search, UserMinus, X } from 'lucide-react';
 import { useChat } from '@/chat/ChatContext';
 import { UserAvatar } from '@/components/bits';

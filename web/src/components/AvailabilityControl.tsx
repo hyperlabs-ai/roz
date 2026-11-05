@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useAuth } from '@/auth/AuthContext';
 import { apiSend } from '@/lib/api';
 import { cn } from '@/lib/utils';

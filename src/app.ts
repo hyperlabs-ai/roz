@@ -54,7 +54,7 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.ico': 'image/x-icon', '.json': 'application/json', '.woff': 'font/woff', '.woff2': 'font/woff2',
   '.map': 'application/json', '.webp': 'image/webp', '.gif': 'image/gif', '.txt': 'text/plain',
-  '.webmanifest': 'application/manifest+json',
+  '.webmanifest': 'application/manifest+json', '.mp3': 'audio/mpeg',
 };
 
 // El service worker y el manifest NO deben cachearse de forma agresiva: el navegador debe poder

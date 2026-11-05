@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { AlertTriangle, ChevronDown, Loader2, RotateCw, Sparkles, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiGet, apiSend, type AssignClassification, type AssignmentDetailResponse, type AssignCandidate, type Ticket } from '@/lib/api';

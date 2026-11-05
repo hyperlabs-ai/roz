@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CHANNEL_TOKEN, chatBadge, continuesGroup, dayLabel, decodeMentions, encodeMentions, mentionQueryAt,
-  mentionsMe, mentionsToMarkdown, taskQueryAt, taskRefsToMarkdown,
+  mentionsMe, mentionsToMarkdown, messageAlerts, taskQueryAt, taskRefsToMarkdown,
 } from '../web/src/lib/chat-text.js';
 import type { ChatConversation, ChatMessage } from '../web/src/lib/chat.js';
 
@@ -136,5 +136,39 @@ describe('citas de tareas', () => {
     const known = new Map([['ROZ-12', 'uuid-12']]);
     expect(taskRefsToMarkdown('ver #roz-12 y #ROZ-99', known)).toBe('ver [#ROZ-12](#task-uuid-12) y #ROZ-99');
     expect(taskRefsToMarkdown('# ROZ-12 título', known)).toBe('# ROZ-12 título');
+  });
+});
+
+describe('messageAlerts (cuándo suena un mensaje)', () => {
+  const ME = A;
+  const conv = (kind: 'dm' | 'channel', notifyLevel: 'all' | 'mentions' | 'none' = 'mentions') => ({
+    kind,
+    membership: { role: 'member' as const, notifyLevel, lastReadAt: '', hidden: false },
+  });
+  const msg = (over: Partial<Pick<ChatMessage, 'kind' | 'authorDevId' | 'mentions' | 'mentionChannel' | 'parentId'>> = {}) => ({
+    kind: 'user' as const, authorDevId: B, mentions: [] as string[], mentionChannel: false, parentId: null as string | null, ...over,
+  });
+
+  it('MD: siempre, también en hilo; lo mío y los mensajes de sistema nunca', () => {
+    expect(messageAlerts(conv('dm'), msg(), ME)).toBe(true);
+    expect(messageAlerts(conv('dm'), msg({ parentId: 'root' }), ME)).toBe(true);
+    expect(messageAlerts(conv('dm'), msg({ authorDevId: ME.toUpperCase() }), ME)).toBe(false);
+    expect(messageAlerts(conv('dm'), msg({ kind: 'system' }), ME)).toBe(false);
+  });
+
+  it('canal: mención directa o @canal en raíz; en hilo solo la mención directa', () => {
+    expect(messageAlerts(conv('channel'), msg(), ME)).toBe(false);
+    expect(messageAlerts(conv('channel'), msg({ mentions: [ME] }), ME)).toBe(true);
+    expect(messageAlerts(conv('channel'), msg({ mentionChannel: true }), ME)).toBe(true);
+    expect(messageAlerts(conv('channel'), msg({ mentionChannel: true, parentId: 'root' }), ME)).toBe(false);
+    expect(messageAlerts(conv('channel'), msg({ mentions: [ME], parentId: 'root' }), ME)).toBe(true);
+  });
+
+  it("nivel 'all' suena en raíz pero no en hilos ajenos; 'none' y sin membresía nunca", () => {
+    expect(messageAlerts(conv('channel', 'all'), msg(), ME)).toBe(true);
+    expect(messageAlerts(conv('channel', 'all'), msg({ parentId: 'root' }), ME)).toBe(false);
+    expect(messageAlerts(conv('channel', 'none'), msg({ mentions: [ME] }), ME)).toBe(false);
+    expect(messageAlerts(conv('dm', 'none'), msg(), ME)).toBe(false);
+    expect(messageAlerts({ kind: 'channel', membership: null }, msg({ mentions: [ME] }), ME)).toBe(false);
   });
 });

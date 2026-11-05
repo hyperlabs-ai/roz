@@ -44,7 +44,7 @@ import {
 } from '../calendar/accounts.js';
 import { getTeamPresence } from '../calendar/presence.js';
 import { pushEnabled } from '../adapters/web-push.js';
-import { savePushSubscription, deletePushSubscription } from '../notify/push.js';
+import { savePushSubscription, deletePushSubscription, sendTestPush } from '../notify/push.js';
 import { listSwitches, setDevSwitch, setGlobalSwitch } from '../notify/switches.js';
 import { getContributionCalendar, getRepo, listOrgRepos } from '../adapters/github.js';
 import { enqueueRepoBackfill } from '../reconcile/backfill.js';
@@ -631,6 +631,17 @@ dashboardRoutes.post('/push/unsubscribe', async (c) => {
   try {
     await deletePushSubscription(parsed.data.endpoint!); // requerido garantizado por el schema
     return c.json({ ok: true });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Aviso de prueba a TODOS mis dispositivos (teléfono y computadora): responde qué dispositivos lo
+// recibieron, para comprobar la configuración sin esperar a un aviso real.
+dashboardRoutes.post('/push/test', async (c) => {
+  const user = c.get('user')!;
+  try {
+    return c.json(await sendTestPush({ authUserId: user.id, devId: user.devId ?? null, email: user.email ?? null }));
   } catch (err) {
     return fail(c, err);
   }

@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import {
   Bell, BellOff, Sun, Moon, Monitor, LogOut, TriangleAlert, Smartphone, Check, Mail, Power, Users,
+  Volume2, VolumeX, Send, Laptop, CircleCheck, CircleX,
 } from 'lucide-react';
+import { playSound, setSoundsEnabled, soundsEnabled, subscribeSounds } from '@/lib/sound';
+import { sendTestPush, type TestPushResult } from '@/lib/push';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/auth/AuthContext';
 import { useTheme } from '@/components/theme';
@@ -95,10 +98,53 @@ function SwitchRow({
   );
 }
 
+const BLOCKED_REASON: Record<NonNullable<TestPushResult['blocked']>, string> = {
+  vapid: 'El servidor no tiene configuradas las llaves VAPID.',
+  global: 'El push del equipo está apagado (abajo, en Notificaciones del equipo).',
+  muted: 'Tienes los avisos push silenciados (interruptor de arriba).',
+};
+
+/** Resultado de la prueba: a qué dispositivos salió. Los que no aparecen no están suscritos. */
+function TestResult({ result }: { result: TestPushResult }) {
+  if (result.blocked) {
+    return <div className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">{BLOCKED_REASON[result.blocked]}</div>;
+  }
+  if (!result.devices.length) {
+    return (
+      <div className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">
+        No tienes dispositivos suscritos. Pulsa <span className="font-medium text-foreground">Activar</span> en cada uno (teléfono y computadora).
+      </div>
+    );
+  }
+  return (
+    <ul className="space-y-1.5 rounded-lg border px-3 py-2.5 text-xs">
+      {result.devices.map((d, i) => {
+        const Icon = /android|iphone|ipad/i.test(d.label) ? Smartphone : Laptop;
+        return (
+          <li key={i} className="flex items-center gap-2">
+            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">{d.label}</span>
+            {d.ok ? (
+              <span className="flex items-center gap-1 text-success"><CircleCheck className="size-3.5" /> Enviada</span>
+            ) : (
+              <span className="flex items-center gap-1 text-destructive">
+                <CircleX className="size-3.5" /> {d.gone ? 'Caducada — vuelve a activar ahí' : 'Falló'}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 export default function Settings() {
   const { user, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
   const push = usePush();
+  const sounds = useSyncExternalStore(subscribeSounds, soundsEnabled);
+  const [test, setTest] = useState<TestPushResult | null>(null);
+  const testAction = useAction();
 
   const iosNeedsInstall = isIOS && !isStandalone;
   const blocked = push.permission === 'denied';
@@ -273,6 +319,50 @@ export default function Settings() {
               </>
             ) : (
               switches.error && <div className="text-xs text-muted-foreground">No se pudieron cargar tus interruptores.</div>
+            )}
+
+            {/* Sonidos: de ESTE dispositivo (localStorage), como el toggle de push de arriba. */}
+            <SwitchRow
+              icon={sounds ? Volume2 : VolumeX}
+              title="Sonidos"
+              hint={
+                sounds
+                  ? 'Suenan los avisos, las menciones, las acciones y los errores en este dispositivo.'
+                  : 'Silenciados en este dispositivo.'
+              }
+              checked={sounds}
+              onChange={(next) => {
+                setSoundsEnabled(next);
+                if (next) void playSound('notification');
+              }}
+            />
+
+            {/* Prueba de punta a punta: llega a TODOS mis dispositivos suscritos (teléfono y compu). */}
+            {push.supported && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">Probar en mis dispositivos</div>
+                    <div className="text-xs text-muted-foreground">Envía un aviso a tu teléfono y a tu computadora para comprobar que llegan.</div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={testAction.busy('test')}
+                    onClick={() =>
+                      testAction.run('test', sendTestPush, {
+                        error: 'No se pudo enviar la prueba',
+                        onDone: setTest,
+                      })
+                    }
+                  >
+                    <Send />
+                    {testAction.busy('test') ? '…' : 'Probar'}
+                  </Button>
+                </div>
+                {test && <TestResult result={test} />}
+              </div>
             )}
           </CardContent>
         </Card>
