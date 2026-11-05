@@ -9,7 +9,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "mcp:stdio": "node dist/mcp/stdio.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit --strict false",
     "lint": "eslint src --ext .ts",
     "test": "vitest",
     "test:run": "vitest run",
