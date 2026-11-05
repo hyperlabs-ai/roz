@@ -162,6 +162,7 @@ export const QUEUE_EVENT: Record<string, QueueEventLabel> = {
   'work_item.created': { doing: 'Avisando al responsable', done: 'Tarea creada', family: 'task' },
   'work_item.assigned': { doing: 'Avisando al responsable', done: 'Tarea asignada', family: 'task' },
   'work_item.done': { doing: 'Documentando el trabajo', done: 'Tarea documentada', family: 'task' },
+  'work_item.auto_assign': { doing: 'Eligiendo responsable', done: 'Responsable elegido', family: 'task' },
   'change.documented': { doing: 'Notificando los cambios', done: 'Cambios documentados', family: 'doc' },
   'repo.detected': { doing: 'Vinculando el repo', done: 'Repo vinculado', family: 'repo' },
   'repo.renamed': { doing: 'Moviendo el historial', done: 'Repo renombrado', family: 'repo' },

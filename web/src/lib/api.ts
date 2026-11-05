@@ -179,7 +179,24 @@ export interface GithubContributions {
 
 export type ProjectKind = 'client' | 'internal';
 
-export interface ProjectListItem {
+// Tipos de proyecto: módulo puro aparte (se prueba en Node sin cargar el cliente de Supabase).
+export { PROJECT_TYPES, PROJECT_TYPE_LABEL } from './project-types';
+
+/** Perfil del proyecto (0033). profileSource 'ia' = lo propuso roz leyendo GitHub, sin revisar. */
+export interface ProjectProfileFields {
+  projectType?: string | null;
+  description?: string | null;
+  profileSource?: 'ia' | 'humano' | null;
+}
+export interface ProjectProfileSuggestion {
+  projectType: string | null;
+  description: string | null;
+  repos: string[];
+  typeBy: 'jev' | 'claude' | null;
+  descriptionBy: 'claude' | 'github' | null;
+}
+
+export interface ProjectListItem extends ProjectProfileFields {
   projectId: string; name: string; key: string; kind: ProjectKind; color: string | null; commits: number; additions: number; deletions: number;
   contributors: string[]; repos: string[]; ticketsResolved: number;
 }
@@ -217,7 +234,7 @@ export interface SyncItem extends RepoSyncStatus {
 }
 
 export interface ProjectDetail {
-  project: { id: string; name: string; key: string; kind: ProjectKind; color: string | null };
+  project: { id: string; name: string; key: string; kind: ProjectKind; color: string | null } & ProjectProfileFields;
   repos: string[];
   repoSync: RepoSyncStatus[];
   totals: { commits: number; additions: number; deletions: number; ticketsResolved: number; contributors: number };
@@ -248,6 +265,10 @@ export interface Ticket {
   parentId: string | null;
   /** Mensaje del chat del que salió la tarea (migración 0030). */
   chatMessageId?: string | null;
+  /** Última decisión de la asignación automática (migración 0031); null si nunca corrió. */
+  autoAssign?: AutoAssignSummary | null;
+  /** Tipo de solución que fijó una persona o se confirmó en /ticket (migración 0032). */
+  solutionTypeId?: string | null;
   // Agendado (calendario) + resolución
   scheduledStart: string | null; scheduledEnd: string | null;
   completedAt: string | null;
@@ -259,6 +280,122 @@ export interface Ticket {
   effort: { commits: number; lines: number; points: number };
   authors: TicketPerson[]; reviewers: TicketPerson[]; merger: TicketPerson | null;
 }
+// ---- Asignación automática (espejo de src/assign: rules.ts / policy.ts / routes) ----
+export type AutoAssignState = 'pending' | 'assigned' | 'escalated' | 'failed' | 'overridden';
+export interface AutoAssignSummary {
+  decisionId: string;
+  state: AutoAssignState;
+  chosenDevId: string | null;
+  suggestion: string | null;
+  decidedAt: string | null;
+}
+export interface AssignCandidate {
+  devId: string;
+  name: string;
+  relation: 'encargado' | 'subencargado' | 'externo' | 'externo_sin_historial';
+  tier: 'encargado' | 'subencargado' | 'especialista' | 'pool' | null;
+  position: number | null;
+  skillLevel: number | null;
+  /** Nivel en la skill secundaria del tipo de solución (ordena, no filtra). */
+  secondaryLevel?: number | null;
+  multiplier: number;
+  effectiveHours: number;
+  capacity: {
+    horizonDays: number; capacityHours: number; limitHours: number; loadHours: number;
+    effectiveHours: number; fits: boolean; unestimated: number;
+    counted: { id: string; identifier: string; hours: number; status: string; priority: string | null }[];
+  } | null;
+  status: 'elegido' | 'alternativa' | 'descartado';
+  reasons: { code: string; detail: string }[];
+}
+export interface AssignClassification {
+  projectId: string | null; projectSource: string;
+  /** q2: tipo de solución (Skills → Tipos de solución). Ausente en decisiones viejas (q1). */
+  typeState?: 'definido' | 'ninguno' | 'incierto';
+  solutionType?: { id: string; slug: string; name: string; minLevel: number; module: boolean; sizeMin: number; sizeMax: number } | null;
+  typeSource?: string;
+  skillState: 'requerida' | 'ninguna' | 'incierta';
+  skill: { id: string; tag: string; minLevel: number } | null; skillSource: string;
+  secondarySkill?: { id: string; tag: string } | null;
+  /** Bug/refactor en un proyecto con backend sin claridad de si es solo interfaz: sin filtro de skill. */
+  moduleOpen?: boolean;
+  points: number; pointsSource: string;
+  priority: string | null; dueDate: string | null;
+  urgency: 'urgente' | 'no_urgente' | 'incierta'; urgencyWhy: string;
+  signals: {
+    sizeSplit: boolean; jevPoints: number | null;
+    jevType?: string | null; fitsSolutionType?: number | null;
+    jevSkill?: string | null; serverSide?: number | null;
+    sizeRaisedToMin?: boolean; sizeAboveTypical?: boolean;
+  };
+  today?: string; deadline?: string | null; horizonDays?: number | null;
+}
+export interface AssignmentDecisionDetail {
+  id: string;
+  origin: 'create' | 'chat' | 'intake' | 'manual' | 'ticket';
+  outcome: 'preview' | 'pending' | 'assigned' | 'escalated' | 'failed' | 'skipped';
+  reason: string | null;
+  createdAt: string; decidedAt: string | null;
+  policyVersion: string; questionsVersion: string | null; jevModel: string | null;
+  request: unknown;
+  classification: AssignClassification | null;
+  candidates: AssignCandidate[];
+  tieBreaks: { tier: string; promotedDevId: string; overDevIds: string[]; reviewerDevId: string }[];
+  chosenDevId: string | null;
+  effectiveHours: number | null;
+  suggestion: { suggested: string; options: { kind: string; detail: string }[] } | null;
+  error: string | null;
+  overriddenAt: string | null; overrideDevId: string | null; overrideCategory: string | null; overrideNote: string | null;
+}
+export interface AssignmentDetailResponse {
+  decision: AssignmentDecisionDetail | null;
+  previous?: number;
+  devNames?: Record<string, string>;
+}
+
+// ---- Tipos de solución (Skills → Tipos de solución; espejo de src/dashboard/solution-types.ts) ----
+export interface SolutionType {
+  id: string; slug: string; name: string;
+  /** Lo que lee roz (Jev) para clasificar. */
+  description: string;
+  /** null = "la skill del módulo afectado". */
+  primarySkillId: string | null; primarySkillTag: string | null;
+  minLevel: number;
+  secondarySkillId: string | null; secondarySkillTag: string | null;
+  sizeMin: number; sizeMax: number;
+  active: boolean; sortOrder: number;
+  taskCount: number;
+}
+
+// ---- Tickets inteligentes (/ticket; espejo de src/tickets/smart.ts) ----
+export interface TicketCorrections {
+  solutionTypeId?: string | null;
+  points?: number | null;
+  priority?: string | null;
+  dueDate?: string | null;
+}
+export interface TicketPreviewResponse {
+  previewId: string;
+  /** Lo que haría roz: asignar o escalar. */
+  outcome: 'assigned' | 'escalated';
+  reason: string | null;
+  chosenDevId: string | null;
+  effectiveHours: number | null;
+  candidates: AssignCandidate[];
+  tieBreaks: AssignmentDecisionDetail['tieBreaks'];
+  suggestion: { suggested: string; options: { kind: string; detail: string }[] } | null;
+  classification: AssignClassification & { suggestedPriority: 'urgent' | 'medium' };
+  jevModel: string | null;
+  reused: boolean;
+  devNames: Record<string, string>;
+}
+export interface TicketCreateResponse {
+  task: Ticket | null;
+  identifier: string;
+  conversationId: string | null;
+  messageSent: boolean;
+}
+
 export interface TicketsResponse {
   total: number; overdue: number; unassigned: number;
   /** true = la consulta topó su techo de filas y hay trabajo más viejo fuera de la lista. */
@@ -357,6 +494,14 @@ export interface TicketFilterOptions {
   states: { value: string; label: string }[];
   allStates: { value: string; label: string }[];
   priorities: { value: string; label: string }[];
+  /** Asignación automática encendida (hay llave de TypeSafe): muestra la casilla y el botón. */
+  autoAssignEnabled?: boolean;
+  /** Motivos cerrados para corregir a roz (override). */
+  overrideCategories?: { value: string; label: string; hint: string }[];
+  /** Escala de story points (1 pt = 2 h). */
+  estimatePoints?: number[];
+  /** Tipos de solución para el select de la tarea (migración 0032). */
+  solutionTypes?: { id: string; name: string; active: boolean }[];
 }
 
 export type ServiceProvider = 'vercel' | 'railway' | 'supabase';

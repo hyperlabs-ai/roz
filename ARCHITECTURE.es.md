@@ -50,6 +50,7 @@ Cuatro patrones se repiten en TODOS los dominios de roz:
 | Lenguaje | **TypeScript** (ESM, `strict`) |
 | Datos + vectores | **Supabase Postgres + pgvector** (service role, server-side) |
 | Razonamiento | **Claude** (Anthropic SDK, con prompt caching) — spec, clasificación, reconciliación |
+| Juicios | **TypeSafe Jev** (`fetch` directo, opcional) — preguntas tipadas sobre una tarea para la asignación automática |
 | Embeddings | **OpenAI** `text-embedding-3-large` (3072 dims) — vía API |
 | Cola async | **Outbox en Postgres drenado por Vercel Cron** — sin servicio externo |
 | Cara interactiva | **Servidor MCP** sobre HTTP (JSON-RPC stateless propio) |
@@ -95,10 +96,11 @@ roz/
     middleware/         # logger, auth del MCP
     utils/              # errores, verificación de firmas de webhook
     events/outbox.ts    # emit() + drenado idempotente con reintentos (drainOutbox)
-    adapters/           # github, email(resend), anthropic, embeddings(openai)
+    adapters/           # github, email(resend), anthropic, embeddings(openai), typesafe(jev)
     mcp/server.ts       # servidor MCP: define las tools (cara interactiva)
     intake/             # propuesta -> evaluación -> tarea nativa (MCP + apps) [fase 1]
-    router/             # sugiere asignado por skill + carga     [fase 2]
+    assign/             # asignación automática: Jev juzga, la política pura decide, registro de decisiones
+    router/             # sugerencia por embeddings (MCP, e intake con assign/ apagado) [fase 2]
     notify/             # email (Resend): asignación, cierre, doc, repo, digest [fase 3]
     brain/              # second brain: átomos, embeddings, grafo, retrieval [fase 4]
     reconcile/          # commits (dedup/auto-doc) + repos nuevos (detección/vínculo) [fase 5-6]
@@ -133,10 +135,69 @@ ya asignada** (`source='native'`, identificador local `ROZ-123`), guarda el `Wor
 evento al outbox. De ahí en adelante la tarea vive en roz y su estado lo manejan el dashboard y la
 actividad de GitHub.
 
-### 2. Router de devs
-roz tiene contexto de todos los devs: skills (con embedding de perfil), disponibilidad manual y
-**carga derivada** (nº de tareas `in progress`). Calcula `match_skill × disponibilidad`,
-**propone** y un humano confirma.
+### 2. Tickets inteligentes y asignación automática (`src/tickets/`, `src/assign/`)
+**`/ticket`** (la pestaña *Ticket* en `/app/ticket`, o escribir `/ticket` en el chat): cualquiera del
+equipo escribe solo **nombre, proyecto y descripción**. roz lo lee con Jev, completa el resto (tipo de
+solución, skills, nivel, puntos, urgencia), propone responsable y lo muestra en una **vista previa**
+corregible. Corregir tipo, puntos, prioridad o fecha NO vuelve a llamar a Jev: se reusa su respuesta y
+solo se recalcula la política. Al **crear**, la tarea queda asignada y el responsable recibe un DM
+**desde el perfil de quien pidió el ticket** ("Te asigné una nueva tarea #KEY-12"). La vista previa es
+una fila `preview` de `assignment_decision` que, al crear, pasa a ser la decisión de la tarea.
+
+La misma asignación corre con `/v1/intake` y con el botón "Asignar automáticamente" de una tarea
+abierta sin responsable. El diálogo normal de "Nueva tarea" ya **no** autoasigna (`POST /tickets` solo
+lo hace con `autoAssign: true`).
+
+**Skills ≠ tipos de solución.** Una *skill* es lo que sabe una persona (nivel 1–5). Un *tipo de
+solución* (`roz.solution_type`, 0032, editable en Skills → Tipos de solución) es qué clase de trabajo
+es la tarea, y fija skill primaria (o "la del módulo afectado", para bugs y refactor), nivel mínimo,
+skill secundaria y tamaño típico. Jev solo elige el tipo; la tabla decide el resto.
+
+**Jev juzga, el código decide.** Una sola request a TypeSafe por tarea (`jev-questions.ts`, el único
+lugar con la redacción y los umbrales; preguntas `q2`) responde solo lo que exige leer la tarea: qué
+tipo de solución es (Choice + Noul compañero), qué skill/módulo toca (Choice + Noul), qué tan grande
+(Score → 1/2/3/5/8/13 puntos; por debajo del mínimo del tipo se sube al mínimo, por encima del máximo se
+respeta y se avisa), si hay producción caída / un cliente bloqueado (dos Nouls) y el proyecto si falta.
+Las preguntas van en inglés (donde Jev es más preciso); el texto de la tarea y la tabla de tipos van
+tal cual. Jev nunca ve personas ni fechas. Lo que fijó una persona gana (proyecto, tipo, prioridad,
+fecha, estimación). Sin tipo claro, la tarea pide decisión humana.
+
+**Contexto del proyecto (q3, migración 0033).** Jev recibe el *perfil* del proyecto —tipo principal
+(landing, e-commerce, app web con backend, app móvil, API, producto con IA) y una descripción—, para no
+leer "arreglar un botón" igual en una landing que en una app con backend. Y una pregunta más,
+`server_side` (¿toca el lado del servidor?): en un bug/refactor de un proyecto **con backend**, si el
+ticket no es claramente solo interfaz, la skill que adivinó Jev no filtra y la tarea va primero con
+quien lleva el proyecto. El perfil lo propone roz leyendo los repos en GitHub (`src/projects/profile.ts`):
+Jev juzga el tipo; la descripción la redacta Claude o, si no está disponible, se arma con lo que dice
+GitHub (descripción/README y stack detectado). Queda marcado "IA" hasta que una persona lo revisa;
+`scripts/fill-project-profiles.ts` llena los vacíos de todos los proyectos sin pisar lo humano.
+
+Todo lo demás es una **política pura y probada** (`policy.ts`, `p2`):
+
+1. **Filtros duros** (excluyen, nunca penalizan): activo, rol asignable (dev/designer/intern),
+   disponibilidad > 0, skill ≥ nivel pedido, WIP ≤ 3 tareas activas (`en_progreso` + `revision`, como
+   principal) y ≤ 2 proyectos simultáneos.
+2. **Orden:** encargado (`dev_assignment` principal) → subencargado (secundaria) → especialista (nivel
+   ≥ 4) → pool. Si la tarea pide nivel ≥ 4, el especialista va primero. La skill secundaria del tipo no
+   excluye a nadie: entre especialistas y en el pool ordena a quienes empatan en la primaria.
+3. **Desempate** (dentro de cada grupo): entre candidatos a ≤ 1 nivel, gana el de nivel menor si la
+   tarea es de ≤ 3 pts, no urgente y hay revisor senior (nivel ≥ 4) — evita el punto único de falla.
+4. **Tamaño efectivo** (costo de contexto): ×1.0 encargado, ×1.15 subencargado, ×1.3 externo, ×1.5
+   externo sin historial en el proyecto (1 pt = 2 h).
+5. **Capacidad como filtro por candidato:** carga + horas efectivas ≤ 85% de las horas que le quedan
+   antes de la fecha límite (días hábiles × horas semanales / 5 × disponibilidad). Gana el primero que cabe.
+6. **Escalar** si nadie cabe: sugiere dividir (el especialista define el approach en 1–2 h, el encargado
+   implementa), repriorizar (quién cabría posponiendo trabajo de menor prioridad) o backlog. La tarea
+   queda sin asignar con un "Necesita decisión" visible; nada se divide solo.
+
+**Registro y overrides.** Cada corrida escribe `roz.assignment_decision` (0031): el payload exacto que
+se mandó a Jev y el modelo, la clasificación con la fuente de cada campo, cada candidato con sus
+motivos y el resultado. Cambiar al responsable que eligió roz pide un **motivo de categoría cerrada**
+(una vez): ese log es lo que hace que el algoritmo mejore en vez de discutirse cada sprint. Un fallo de
+Jev es un error (tarea sin asignar y marcada, reintentada por el outbox), nunca un "no". Crear una
+tarea nunca espera a Jev: la corrida va por el evento `work_item.auto_assign` del outbox, procesado al
+instante en segundo plano. Sin `TYPESAFE_API_KEY` la función está apagada y el intake sigue con el
+router de embeddings (`src/router/`).
 
 ### 3. Notificaciones (vía outbox → drain)
 Adapter de **email (Resend)** con plantillas HTML branded: asignación, cierre, cambio documentado,
@@ -235,6 +296,14 @@ Ver `migrations/0001_roz_schema.sql`:
 - **outbox_event / idempotency_key** — núcleo de eventos e idempotencia.
 - **chat_conversation / chat_member / chat_message / chat_attachment** — chat del equipo (0030).
   `work_item.chat_message_id` enlaza una tarea con el mensaje del que nació.
+- **assignment_decision** — registro de la asignación automática (0031): payload/modelo de Jev,
+  clasificación, candidatos con motivos, resultado y el override humano (categoría cerrada).
+  `work_item.estimate` (story points) ahora lo escriben el diálogo de tareas y la asignación automática.
+  Desde 0032 también guarda la vista previa de un ticket (`outcome='preview'`, sin tarea todavía).
+- **solution_type** — tipos de solución (0032): skill primaria (o "del módulo"), nivel mínimo, skill
+  secundaria y tamaño típico. `work_item.solution_type_id` es el tipo que fijó una persona.
+- **project.project_type / description / profile_source** — perfil del proyecto (0033): el contexto que
+  lee Jev; `profile_source='ia'` = propuesto por roz desde GitHub, pendiente de revisión.
 
 ### El SPA del dashboard (`web/`)
 

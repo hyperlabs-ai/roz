@@ -95,6 +95,17 @@ import {
   setDevAvailability,
 } from '../dashboard/queries.js';
 import { queuePulse, listQueue, retryQueueEvent } from '../dashboard/queue.js';
+import { autoAssign, autoAssignEnabled, enqueueAutoAssign } from '../assign/index.js';
+import { OVERRIDE_CATEGORY_VALUES, isOverride, shouldAutoAssign, validateOverride } from '../assign/rules.js';
+import { countDecisions, latestDecision, recordOverride, type DecisionRow } from '../assign/decisions.js';
+import { loadTask } from '../assign/context.js';
+import { listSolutionTypes, createSolutionType, updateSolutionType } from '../dashboard/solution-types.js';
+import { previewTicket, createTicket } from '../tickets/smart.js';
+import { PROJECT_TYPE_VALUES, suggestProfile } from '../projects/profile.js';
+import { consume } from '../events/outbox.js';
+import { inBackground } from '../utils/background.js';
+import { AppError } from '../utils/errors.js';
+import { db } from '../db/supabase.js';
 
 export const dashboardRoutes = new Hono<RozContext>();
 
@@ -474,14 +485,27 @@ const ProjectPatch = z
     key: z.string().min(1).optional(),
     kind: z.enum(['client', 'internal']).optional(),
     color: HexColor.nullish(),
+    // Perfil (0033): tipo principal y descripción. Lo lee Jev al clasificar los tickets del proyecto.
+    projectType: z.enum(PROJECT_TYPE_VALUES).nullish(),
+    description: z.string().max(1000).nullish(),
   })
-  .refine((b) => b.name !== undefined || b.key !== undefined || b.kind !== undefined || b.color !== undefined, 'sin cambios');
+  .refine((b) => Object.values(b).some((v) => v !== undefined), 'sin cambios');
 
 dashboardRoutes.patch('/projects/:id', requireAdmin, async (c) => {
   const parsed = ProjectPatch.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     return c.json({ project: await updateProject(c.req.param('id'), parsed.data) });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Perfil sugerido por IA leyendo GitHub (README, lenguajes, dependencias, estructura). No escribe:
+// la persona revisa y guarda con el PATCH de arriba.
+dashboardRoutes.post('/projects/:id/profile/suggest', requireAdmin, async (c) => {
+  try {
+    return c.json({ suggestion: await suggestProfile(c.req.param('id')) });
   } catch (err) {
     return fail(c, err);
   }
@@ -714,6 +738,8 @@ dashboardRoutes.get('/tickets/:id', async (c) => {
 
 const TASK_STATE = z.enum(['planificada', 'pendiente', 'en_progreso', 'revision', 'completada', 'cancelada']);
 const TASK_PRIORITY = z.enum(['urgent', 'high', 'medium', 'low']);
+// Story points: la escala de la asignación automática (1 pt = 2 h).
+const TASK_POINTS = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(5), z.literal(8), z.literal(13)]);
 
 const TaskCreateBody = z.object({
   projectId: z.string().uuid(),
@@ -730,6 +756,12 @@ const TaskCreateBody = z.object({
   parentId: z.string().uuid().nullish(),
   // Mensaje del chat del que sale la tarea ("Crear tarea" en un mensaje).
   chatMessageId: z.string().uuid().nullish(),
+  estimate: TASK_POINTS.nullish(),
+  // Tipo de solución (Skills → Tipos de solución) que fija la persona.
+  solutionTypeId: z.string().uuid().nullish(),
+  // Asignación automática al crear: SOLO si se pide explícito (true). El diálogo normal ya no la
+  // pide; los tickets inteligentes van por /ticket.
+  autoAssign: z.boolean().optional(),
 });
 
 dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
@@ -737,7 +769,7 @@ dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
     // z.infer marca requeridos como opcionales en el build de prod → destructurar + `!`.
-    const { projectId, name, description, status, priority, assigneeDevId, assigneeDevIds, scheduledStart, scheduledEnd, dueDate, labels, parentId, chatMessageId } = parsed.data;
+    const { projectId, name, description, status, priority, assigneeDevId, assigneeDevIds, scheduledStart, scheduledEnd, dueDate, labels, parentId, chatMessageId, estimate, solutionTypeId, autoAssign: wantsAuto } = parsed.data;
     const user = c.get('user')!;
     // El mensaje de origen tiene que ser visible para quien crea la tarea: si no, cualquiera podría
     // enlazar (y anunciar en su hilo) una tarea a un mensaje de un canal privado ajeno.
@@ -757,15 +789,41 @@ dashboardRoutes.post('/tickets', requireAdmin, async (c) => {
       parentId,
       chatMessageId: origin?.id ?? null,
       createdBy: c.get('user')?.id ?? null,
+      estimate: estimate ?? null,
+      solutionTypeId: solutionTypeId ?? null,
     });
+    const logger = c.get('logger');
     if (origin) {
-      const logger = c.get('logger');
       await announceTaskFromMessage(user.devId, origin, { id: task.id, identifier: task.identifier, name: name! }, (err) =>
         logger?.warn({ err }, 'chat: no se pudo anunciar la tarea en el hilo'),
       );
     }
+    // Asignación automática: sin responsable → se encola (reintentos + visible en la cola) y se
+    // procesa al instante en segundo plano, para no hacer esperar la creación por Jev. Un fallo al
+    // encolar no tumba la creación: la tarea ya existe y se puede asignar con el botón.
+    let autoPending = false;
+    if (shouldAutoAssign({ assigneeDevId, assigneeDevIds, autoAssign: wantsAuto, status }, autoAssignEnabled())) {
+      try {
+        const eventId = await enqueueAutoAssign({
+          taskId: task.id,
+          identifier: task.identifier,
+          origin: origin ? 'chat' : 'create',
+          requestedBy: user.id ?? null,
+        });
+        if (eventId) {
+          autoPending = true;
+          inBackground(() => consume(eventId), (err) => logger?.warn({ err, taskId: task.id }, 'auto-assign: falló en segundo plano'));
+        }
+      } catch (err) {
+        logger?.warn({ err, taskId: task.id }, 'auto-assign: no se pudo encolar');
+      }
+    }
     // Completa (igual que el PATCH): el dashboard inserta la fila nueva sin recargar la lista.
-    return c.json({ task: (await getTicketById(task.id)) ?? task }, 201);
+    const full = await getTicketById(task.id);
+    if (full && autoPending && !full.autoAssign) {
+      full.autoAssign = { decisionId: '', state: 'pending', chosenDevId: null, suggestion: null, decidedAt: null };
+    }
+    return c.json({ task: full ?? task }, 201);
   } catch (err) {
     return fail(c, err);
   }
@@ -784,6 +842,10 @@ const TaskPatchBody = z
     dueDate: z.string().nullish(),
     labels: z.array(z.string()).optional(),
     parentId: z.string().uuid().nullish(),
+    estimate: TASK_POINTS.nullish(),
+    solutionTypeId: z.string().uuid().nullish(),
+    // Motivo al cambiar al responsable que eligió la asignación automática (override).
+    override: z.object({ category: z.enum(OVERRIDE_CATEGORY_VALUES), note: z.string().max(1000).nullish() }).optional(),
   })
   .refine((b) => Object.keys(b).length > 0, 'sin cambios');
 
@@ -791,12 +853,197 @@ dashboardRoutes.patch('/tickets/:id', requireAdmin, async (c) => {
   const parsed = TaskPatchBody.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
   try {
-    const { id } = await updateTask(c.req.param('id'), parsed.data);
+    const taskId = c.req.param('id');
+    const { override, ...patch } = parsed.data;
+
+    // ¿Este cambio corrige a la asignación automática? Entonces exige categoría: es lo que permite
+    // que el algoritmo aprenda en vez de discutirse cada sprint. Solo la primera corrección cuenta.
+    const nextIds =
+      patch.assigneeDevIds !== undefined
+        ? patch.assigneeDevIds
+        : patch.assigneeDevId !== undefined
+          ? patch.assigneeDevId ? [patch.assigneeDevId] : []
+          : undefined;
+    let overrideOf: { decision: DecisionRow; category: string; note: string | null } | null = null;
+    if (nextIds !== undefined) {
+      // Tolerante: sin la migración 0031 no hay decisiones que corregir.
+      const latest = await latestDecision(taskId).catch(() => null);
+      if (latest) {
+        const current = await loadTask(taskId);
+        const lite = { outcome: latest.outcome, chosenDevId: latest.chosen_dev_id, overriddenAt: latest.overridden_at };
+        if (isOverride(lite, current?.assignee_dev_id ?? null, nextIds)) {
+          if (!override) {
+            throw new AppError('OVERRIDE_REASON_REQUIRED', 'Cuéntanos por qué cambias al responsable que eligió roz', 409);
+          }
+          overrideOf = { decision: latest, ...validateOverride(override) };
+        }
+      }
+    }
+
+    const { id } = await updateTask(taskId, patch);
+    if (overrideOf) {
+      await recordOverride(overrideOf.decision.id, {
+        userId: c.get('user')?.id ?? null,
+        devId: nextIds?.[0] ?? null,
+        category: overrideOf.category,
+        note: overrideOf.note,
+      }).catch((err) => c.get('logger')?.warn({ err, taskId }, 'auto-assign: no se pudo registrar el override'));
+    }
     // Se devuelve la tarea COMPLETA, con la misma forma que trae la lista: así el dashboard
     // reemplaza esa fila y nada más. Antes esto respondía `{ id }` y el cliente no tenía con qué
     // reconciliar, así que re-pedía /tickets entero — la consulta más cara de la app — después de
     // cada cambio de estado, prioridad o responsable.
     return c.json({ task: (await getTicketById(id)) ?? { id } });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// Botón "Asignar automáticamente" en una tarea abierta sin responsable. Corre EN LÍNEA: la persona
+// hizo clic y espera ver a quién se eligió y por qué.
+dashboardRoutes.post('/tickets/:id/auto-assign', requireAdmin, async (c) => {
+  try {
+    if (!autoAssignEnabled()) {
+      throw new AppError('AUTO_ASSIGN_DISABLED', 'La asignación automática está apagada (falta TYPESAFE_API_KEY)', 409);
+    }
+    const logger = c.get('logger');
+    const result = await autoAssign(c.req.param('id'), 'manual', {
+      requestedBy: c.get('user')?.id ?? null,
+      log: (msg, data) => logger?.info(data, msg),
+    });
+    if (result.outcome === 'running') throw new AppError('AUTO_ASSIGN_RUNNING', 'roz ya está eligiendo responsable para esta tarea', 409);
+    if (result.outcome === 'skipped') {
+      const why: Record<string, string> = {
+        ya_asignada: 'la tarea ya tiene responsable',
+        cerrada: 'la tarea está cerrada',
+        no_nativa: 'solo se asignan automáticamente las tareas creadas en roz',
+        no_existe: 'la tarea no existe',
+      };
+      throw new AppError(result.reason === 'no_existe' ? 'NOT_FOUND' : 'AUTO_ASSIGN_SKIPPED', why[result.reason ?? ''] ?? 'no aplica', result.reason === 'no_existe' ? 404 : 409);
+    }
+    // assigned / escalated / failed: la tarea ya trae su estado (y el panel pide el detalle).
+    return c.json({ task: await getTicketById(c.req.param('id')), result });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// El porqué de la última decisión: clasificación, candidatos con motivos, desempate, sugerencia y el
+// payload EXACTO que se mandó a Jev ("ver lo que se envió").
+dashboardRoutes.get('/tickets/:id/assignment', async (c) => {
+  try {
+    const decision = await latestDecision(c.req.param('id')).catch(() => null);
+    if (!decision) return c.json({ decision: null });
+    const [{ data: devs }, total] = await Promise.all([db().from('dev').select('id, name'), countDecisions(decision.work_item_id ?? c.req.param('id'))]);
+    return c.json({
+      decision: {
+        id: decision.id,
+        origin: decision.origin,
+        outcome: decision.outcome,
+        reason: decision.reason,
+        createdAt: decision.created_at,
+        decidedAt: decision.decided_at,
+        policyVersion: decision.policy_version,
+        questionsVersion: decision.questions_version,
+        jevModel: decision.jev_model,
+        request: decision.jev_request,
+        classification: decision.classification,
+        candidates: decision.candidates,
+        tieBreaks: decision.tie_breaks,
+        chosenDevId: decision.chosen_dev_id,
+        effectiveHours: decision.effective_hours,
+        suggestion: decision.suggestion,
+        error: decision.error,
+        overriddenAt: decision.overridden_at,
+        overrideDevId: decision.override_dev_id,
+        overrideCategory: decision.override_category,
+        overrideNote: decision.override_note,
+      },
+      previous: Math.max(0, total - 1),
+      devNames: Object.fromEntries(((devs ?? []) as { id: string; name: string }[]).map((d) => [d.id, d.name])),
+    });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// ---- Tickets inteligentes (/ticket): vista previa con Jev → crear asignado + DM ----
+// Cualquier persona del equipo (requireAdmin solo exige sesión). El DM sale desde SU perfil.
+
+const TicketCorrectionsBody = z
+  .object({
+    solutionTypeId: z.string().uuid().nullish(),
+    points: TASK_POINTS.nullish(),
+    priority: TASK_PRIORITY.nullish(),
+    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  })
+  .optional();
+
+const TicketPreviewBody = z.object({
+  title: z.string().min(1).max(200),
+  projectId: z.string().uuid(),
+  description: z.string().max(8000).default(''),
+  previewId: z.string().uuid().nullish(),
+  corrections: TicketCorrectionsBody,
+});
+
+function ticketUser(c: { get: (k: 'user') => { id: string; devId: string } | undefined }) {
+  const user = c.get('user');
+  if (!user?.devId) throw new AppError('NOT_REGISTERED', 'Necesitas un perfil de developer en roz para crear tickets', 403);
+  return { userId: user.id, devId: user.devId };
+}
+
+function ticketsReady(): void {
+  if (!autoAssignEnabled()) {
+    throw new AppError('AUTO_ASSIGN_DISABLED', 'Los tickets inteligentes necesitan TypeSafe (falta TYPESAFE_API_KEY o ROZ_AUTO_ASSIGN está apagado)', 409);
+  }
+}
+
+dashboardRoutes.post('/ticket/preview', requireAdmin, async (c) => {
+  const parsed = TicketPreviewBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    ticketsReady();
+    const logger = c.get('logger');
+    const { title, projectId, description, previewId, corrections } = parsed.data;
+    const result = await previewTicket(ticketUser(c), { title: title!, projectId: projectId!, description: description ?? '' }, {
+      previewId: previewId ?? null,
+      corrections,
+      log: (msg, data) => logger?.info(data, msg),
+    });
+    return c.json(result);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const TicketCreateBody = TicketPreviewBody.extend({
+  previewId: z.string().uuid(),
+  assigneeDevId: z.string().uuid().nullable(),
+  override: z.object({ category: z.enum(OVERRIDE_CATEGORY_VALUES), note: z.string().max(1000).nullish() }).optional(),
+});
+
+dashboardRoutes.post('/ticket', requireAdmin, async (c) => {
+  const parsed = TicketCreateBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    ticketsReady();
+    const logger = c.get('logger');
+    const { title, projectId, description, previewId, corrections, assigneeDevId, override } = parsed.data;
+    const result = await createTicket(
+      ticketUser(c),
+      {
+        title: title!,
+        projectId: projectId!,
+        description: description ?? '',
+        previewId: previewId!,
+        corrections,
+        assigneeDevId: assigneeDevId ?? null,
+        override: override ? { category: override.category!, note: override.note ?? null } : undefined,
+      },
+      { log: (msg, data) => logger?.warn(data, msg) },
+    );
+    return c.json(result, 201);
   } catch (err) {
     return fail(c, err);
   }
@@ -1137,6 +1384,68 @@ dashboardRoutes.get('/skills', async (c) => {
 dashboardRoutes.get('/skills/matrix', async (c) => {
   try {
     return c.json(await getSkillsMatrix());
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+// ---- Tipos de solución (Skills → Tipos de solución) ----
+// Qué clase de trabajo es una tarea y qué pide. El nombre y la descripción son lo que lee Jev.
+
+dashboardRoutes.get('/solution-types', async (c) => {
+  try {
+    return c.json({ types: await listSolutionTypes() });
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const SOLUTION_POINTS = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(5), z.literal(8), z.literal(13)]);
+const SolutionTypeBody = z.object({
+  name: z.string().min(1).max(80),
+  description: z.string().min(1).max(1000),
+  primarySkillId: z.string().uuid().nullable(),
+  minLevel: z.number().int().min(1).max(5),
+  secondarySkillId: z.string().uuid().nullish(),
+  sizeMin: SOLUTION_POINTS,
+  sizeMax: SOLUTION_POINTS,
+  active: z.boolean().optional(),
+  sortOrder: z.number().int().optional(),
+});
+
+dashboardRoutes.post('/solution-types', requireAdmin, async (c) => {
+  const parsed = SolutionTypeBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    const b = parsed.data;
+    return c.json(
+      {
+        type: await createSolutionType({
+          name: b.name!,
+          description: b.description!,
+          primarySkillId: b.primarySkillId ?? null,
+          minLevel: b.minLevel!,
+          secondarySkillId: b.secondarySkillId ?? null,
+          sizeMin: b.sizeMin!,
+          sizeMax: b.sizeMax!,
+          active: b.active,
+          sortOrder: b.sortOrder,
+        }),
+      },
+      201,
+    );
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+const SolutionTypePatch = SolutionTypeBody.partial().refine((b) => Object.keys(b).length > 0, 'sin cambios');
+
+dashboardRoutes.patch('/solution-types/:id', requireAdmin, async (c) => {
+  const parsed = SolutionTypePatch.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: parsed.error.message } }, 400);
+  try {
+    return c.json({ type: await updateSolutionType(c.req.param('id'), parsed.data) });
   } catch (err) {
     return fail(c, err);
   }

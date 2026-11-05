@@ -202,3 +202,22 @@ export function saveDraft(key: string, text: string): void {
     /* sin storage: el borrador vive solo en memoria */
   }
 }
+
+// ---- Comandos "/" ----
+//
+// `/ticket [nombre]` no se envía como mensaje: abre el formulario de ticket inteligente con lo que
+// siga como nombre. Mientras se escribe `/`, `/t`, `/tic`… se sugiere el comando.
+
+const TICKET_CMD_RE = /^\/ticket(?:\s+([\s\S]*))?$/i;
+
+/** `"/ticket Arreglar login"` → `{ title: "Arreglar login" }`; cualquier otro texto → null. */
+export function ticketCommand(text: string): { title: string } | null {
+  const m = TICKET_CMD_RE.exec(text.trim());
+  return m ? { title: (m[1] ?? '').trim() } : null;
+}
+
+/** ¿Se está escribiendo el comando (prefijo de `/ticket`, sin espacios todavía)? */
+export function slashHint(text: string): boolean {
+  const t = text.trimStart();
+  return t.startsWith('/') && !/\s/.test(t) && '/ticket'.startsWith(t.toLowerCase());
+}

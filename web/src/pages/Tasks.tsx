@@ -9,7 +9,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Plus, ChevronDown, Inbox, Trash2, Copy, X, Search, Loader2, Users, User, CircleDot, RefreshCw,
-  List, Columns3,
+  List, Columns3, Sparkles, AlertTriangle, XCircle,
 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { TaskDialog } from '@/components/TaskDialog';
@@ -27,6 +27,8 @@ import {
   RowCheck, StatusIcon, StateCell, PriorityCell, ProjectCell, DateCell, AssigneesCell, assigneesOf,
 } from '@/components/tasks/inline-cells';
 import { TaskBoard } from '@/components/tasks/board';
+import { OverrideReasonDialog } from '@/components/tasks/OverrideReasonDialog';
+import { needsOverride } from '@/lib/assign';
 import { toast } from 'sonner';
 import { useApi } from '@/lib/useApi';
 import { useIsMobile } from '@/lib/useIsMobile';
@@ -315,13 +317,53 @@ export default function Tasks() {
   // toma `ids[0]` como primario, y `assigneesOf` reordena la fila usando `assignee`. Sin esto,
   // promover a un apoyo se veía como si no hubiera pasado nada — el orden viejo volvía a ganar
   // hasta que respondía el servidor.
-  const setAssignees = useCallback((t: Ticket, ids: string[]) => {
+  const applyAssignees = useCallback((t: Ticket, ids: string[], extra: Record<string, unknown> = {}) => {
     const people = ids.map((id) => {
       const d = devs.find((x) => x.id === id);
       return { id, name: d?.name ?? '—', avatarUrl: d?.avatarUrl ?? null };
     });
-    return patch(t, { assigneeDevIds: ids }, { assignees: people, assignee: people[0] ?? null });
+    return patch(t, { assigneeDevIds: ids, ...extra }, { assignees: people, assignee: people[0] ?? null });
   }, [patch, devs]);
+  // Cambiar al responsable que eligió roz pide motivo (una sola vez): queda pendiente hasta elegirlo.
+  const [overrideAsk, setOverrideAsk] = useState<{ task: Ticket; ids: string[] } | null>(null);
+  const setAssignees = useCallback((t: Ticket, ids: string[]) => {
+    if (needsOverride(t, ids)) {
+      setOverrideAsk({ task: t, ids });
+      return Promise.resolve();
+    }
+    return applyAssignees(t, ids);
+  }, [applyAssignees]);
+
+  // Filas que roz sigue asignando en segundo plano: se consultan hasta que terminen (~45 s).
+  const pendingIds = useMemo(
+    () => tasks.filter((t) => t.autoAssign?.state === 'pending').map((t) => t.id).sort().join(','),
+    [tasks],
+  );
+  useEffect(() => {
+    if (!pendingIds) return;
+    let alive = true;
+    let tries = 0;
+    const tick = async () => {
+      if (!alive || tries++ >= 15) return;
+      for (const id of pendingIds.split(',')) {
+        try {
+          const { task } = await apiGet<{ task: Ticket }>(`/tickets/${id}`);
+          if (alive && task.autoAssign?.state !== 'pending') {
+            setTasks((prev) => prev.map((x) => (x.id === task.id ? task : x)));
+            setDialogTask((cur) => (cur?.id === task.id ? task : cur));
+          }
+        } catch {
+          /* siguiente intento */
+        }
+      }
+      if (alive) timer = setTimeout(tick, 3000);
+    };
+    let timer = setTimeout(tick, 3000);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [pendingIds]);
 
   /** El círculo de la izquierda alterna completada ⇄ pendiente, como en Ops. */
   const toggleDone = useCallback((t: Ticket) =>
@@ -340,6 +382,8 @@ export default function Tasks() {
         assigneeDevIds: assigneesOf(t).map((a) => a.id),
         dueDate: t.dueDate ?? undefined,
         labels: t.labels ?? [],
+        // Una copia conserva a sus responsables; si el original no tenía, la copia tampoco.
+        autoAssign: false,
       });
       setTasks((prev) => [task, ...prev.filter((x) => x.id !== task.id)]);
       toast.success('Tarea duplicada', { description: `${task.identifier} · ${task.name}` });
@@ -758,6 +802,21 @@ export default function Tasks() {
           if (mode !== 'deleted') setDialogTask(task);
         }}
       />
+      <OverrideReasonDialog
+        open={overrideAsk !== null}
+        categories={filters.data?.overrideCategories ?? []}
+        chosenName={
+          overrideAsk?.task.autoAssign?.chosenDevId
+            ? devs.find((d) => d.id === overrideAsk.task.autoAssign!.chosenDevId)?.name ?? null
+            : null
+        }
+        onConfirm={(category, note) => {
+          const ask = overrideAsk;
+          setOverrideAsk(null);
+          if (ask) void applyAssignees(ask.task, ask.ids, { override: { category, note } });
+        }}
+        onCancel={() => setOverrideAsk(null)}
+      />
     </Layout>
   );
 }
@@ -812,6 +871,7 @@ const TaskRow = memo(function TaskRow({
       title={t.name}
     >
       {t.name}
+      <AutoAssignMark task={t} />
       {/* Dentro del botón, no como columna hermana: así no desplaza las columnas respecto al
           encabezado en pantallas anchas. */}
       {!!t.labels?.length && (
@@ -875,6 +935,18 @@ const TaskRow = memo(function TaskRow({
     </div>
   );
 });
+
+/** Marca de la asignación automática junto al título: pensando, la eligió roz, necesita decisión o
+ *  falló. Solo un ícono con su tooltip — el porqué completo vive en el detalle de la tarea. */
+function AutoAssignMark({ task }: { task: Ticket }) {
+  const s = task.autoAssign?.state;
+  if (!s || s === 'overridden') return null;
+  const common = 'ml-1.5 inline size-3.5 align-[-2px]';
+  if (s === 'pending') return <Loader2 className={cn(common, 'animate-spin text-muted-foreground')} aria-label="roz está eligiendo responsable" />;
+  if (s === 'assigned') return <Sparkles className={cn(common, 'text-primary')} aria-label="Asignada automáticamente"><title>Asignada automáticamente</title></Sparkles>;
+  if (s === 'escalated') return <AlertTriangle className={cn(common, 'text-warning')} aria-label="Necesita decisión"><title>roz no encontró a quién asignarla: necesita decisión</title></AlertTriangle>;
+  return <XCircle className={cn(common, 'text-destructive')} aria-label="No se pudo asignar"><title>No se pudo asignar automáticamente</title></XCircle>;
+}
 
 /** El menú también se monta al primer clic: un DropdownMenu de Radix por fila × 300 filas pesa
  *  tanto como las celdas, y casi nunca se abre. */

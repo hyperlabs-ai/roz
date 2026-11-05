@@ -77,6 +77,19 @@ const raw = z
     // imposible de diagnosticar desde el código.
     GOOGLE_REDIRECT_URI: z.string().default(''),
 
+    // TypeSafe (Jev): clasifica las tareas para la asignación automática (src/assign). Opcional: sin
+    // llave la asignación automática se apaga y /v1/intake sigue con el router de embeddings. El
+    // modelo va FIJADO a una versión (no `jev-latest`): los umbrales se calibran contra un modelo
+    // concreto y un alias que avanza solo cambiaría las respuestas sin aviso.
+    TYPESAFE_API_KEY: z.string().default(''),
+    TYPESAFE_MODEL: z.string().default('jev-1.14.0'),
+    TYPESAFE_BASE_URL: z.string().default('https://api.typesafe.ai'),
+    // Interruptor de emergencia de la asignación automática, aunque haya llave.
+    ROZ_AUTO_ASSIGN: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((v) => v === 'true'),
+
     // Llave de cifrado (32 bytes en base64) para los tokens de terceros guardados por-dev. Generar
     // una vez con: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
     ROZ_ENCRYPTION_KEY: z.string().default(''),
@@ -159,6 +172,12 @@ export const config = {
     clientSecret: raw.GOOGLE_CLIENT_SECRET,
     redirectUri: raw.GOOGLE_REDIRECT_URI,
   },
+  typesafe: {
+    apiKey: raw.TYPESAFE_API_KEY,
+    model: raw.TYPESAFE_MODEL,
+    baseUrl: raw.TYPESAFE_BASE_URL.replace(/\/$/, ''),
+  },
+  autoAssign: { enabled: raw.ROZ_AUTO_ASSIGN },
   encryptionKey: raw.ROZ_ENCRYPTION_KEY,
   mcp: { token: raw.ROZ_MCP_TOKEN },
   ingest: { token: raw.ROZ_INGEST_TOKEN },

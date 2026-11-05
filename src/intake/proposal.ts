@@ -35,6 +35,8 @@ export interface ProposeInput {
   attachments?: string[];
   /** Opcional: procedencia (apps de clientes). */
   source?: ProposalSource;
+  /** true = no rankear devs por embeddings (la asignación automática elige después). */
+  skipRanking?: boolean;
 }
 
 export interface ProposalVerdict {
@@ -181,7 +183,7 @@ export async function evaluateProposal(input: ProposeInput): Promise<ProposalVer
   if (error) throw error;
 
   // Candidatos (varios) — recomendación, no decisión.
-  const candidates = await rankAssignees(project.id, `${name}\n${description}`, 3);
+  const candidates = input.skipRanking ? [] : await rankAssignees(project.id, `${name}\n${description}`, 3);
 
   return {
     proposalId: proposal.id,
@@ -206,9 +208,14 @@ export interface ConfirmResult {
   url: string;
 }
 
+/**
+ * Materializa la propuesta como tarea nativa. `assigneeDevId = null` la crea SIN responsable: lo usa
+ * el intake cuando la asignación automática (src/assign) está encendida y elige después. El MCP
+ * (confirm_proposal) sigue exigiendo un dev explícito.
+ */
 export async function confirmProposal(
   proposalId: string,
-  assigneeDevId: string,
+  assigneeDevId: string | null,
 ): Promise<ConfirmResult> {
   const supabase = db();
 
@@ -228,13 +235,17 @@ export async function confirmProposal(
     throw new ValidationError(`La propuesta ${proposalId} no tiene proyecto asociado.`);
   }
 
-  const { data: dev } = await supabase
-    .from('dev')
-    .select('id, active')
-    .eq('id', assigneeDevId)
-    .single();
-  if (!dev) throw new ValidationError(`Dev no encontrado: ${assigneeDevId}`);
-  if (dev.active === false) throw new ValidationError(`El dev ${assigneeDevId} está inactivo.`);
+  let devId: string | null = null;
+  if (assigneeDevId) {
+    const { data: dev } = await supabase
+      .from('dev')
+      .select('id, active')
+      .eq('id', assigneeDevId)
+      .single();
+    if (!dev) throw new ValidationError(`Dev no encontrado: ${assigneeDevId}`);
+    if (dev.active === false) throw new ValidationError(`El dev ${assigneeDevId} está inactivo.`);
+    devId = dev.id;
+  }
 
   // Materializa la tarea NATIVA: asignada, con prioridad, estado inicial "Por hacer".
   // createTask genera el identificador local (KEY-N), fija source='native' y emite el aviso de
@@ -245,7 +256,7 @@ export async function confirmProposal(
     description: proposal.description,
     status: 'pendiente',
     priority: proposal.priority ?? null,
-    assigneeDevId: dev.id,
+    assigneeDevId: devId,
   });
 
   await supabase.from('proposal').update({ status: 'promoted' }).eq('id', proposalId);

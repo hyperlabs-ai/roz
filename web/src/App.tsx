@@ -17,6 +17,7 @@ import Ideas from '@/pages/Ideas';
 import Tasks from '@/pages/Tasks';
 import Capacity from '@/pages/Capacity';
 import Tickets from '@/pages/Tickets';
+import Ticket from '@/pages/Ticket';
 import Skills from '@/pages/Skills';
 import Settings from '@/pages/Settings';
 import Chat from '@/pages/Chat';
@@ -154,6 +155,8 @@ export default function App() {
             <Route path="chat/m/:messageId" element={<Chat />} />
             <Route path="chat/:conversationId" element={<Chat />} />
             <Route path="capacity" element={<Capacity />} />
+            {/* Ticket inteligente (crear). Reportes sigue en /tickets. */}
+            <Route path="ticket" element={<Ticket />} />
             <Route path="tickets" element={<Tickets />} />
             <Route path="skills" element={<Skills />} />
             <Route path="settings" element={<Settings />} />

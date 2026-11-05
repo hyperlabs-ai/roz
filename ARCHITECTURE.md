@@ -49,6 +49,7 @@ Four patterns recur across ALL of roz's domains:
 | Language | **TypeScript** (ESM, `strict`) |
 | Data + vectors | **Supabase Postgres + pgvector** (service role, server-side) |
 | Reasoning | **Claude** (Anthropic SDK, with prompt caching) — spec, classification, reconciliation |
+| Judgments | **TypeSafe Jev** (plain `fetch`, optional) — typed questions about a task for automatic assignment |
 | Embeddings | **OpenAI** `text-embedding-3-large` (3072 dims) — via API |
 | Async queue | **Postgres outbox drained by Vercel Cron** — no external service |
 | Interactive face | **MCP server** over HTTP (own stateless JSON-RPC) |
@@ -93,10 +94,11 @@ roz/
     middleware/         # logger, MCP auth
     utils/              # errors, webhook signature verification
     events/outbox.ts    # emit() + idempotent drain with retries (drainOutbox)
-    adapters/           # github, email(resend), anthropic, embeddings(openai)
+    adapters/           # github, email(resend), anthropic, embeddings(openai), typesafe(jev)
     mcp/server.ts       # MCP server: defines the tools (interactive face)
     intake/             # proposal -> evaluation -> native task (MCP + apps) [phase 1]
-    router/             # suggests assignee by skill + load          [phase 2]
+    assign/             # automatic assignment: Jev judges, pure policy decides, decision log
+    router/             # embedding-based suggestion (MCP, and intake when assign/ is off) [phase 2]
     notify/             # email (Resend): assignment, close, doc, repo, digest [phase 3]
     brain/              # second brain: atoms, embeddings, graph, retrieval [phase 4]
     reconcile/          # commits (dedup/auto-doc) + new repos (detection/link) [phase 5-6]
@@ -131,10 +133,69 @@ assigned** (`source='native'`, local `ROZ-123` identifier), saves the `WorkItem`
 to the outbox. From then on, the task lives in roz and its state is driven by the dashboard and by
 GitHub activity.
 
-### 2. Developer router
-roz has context on every dev: skills (with a profile embedding), manual availability and **derived
-load** (number of tasks `in progress`). It computes `skill_match × availability`, **proposes**
-and a human confirms.
+### 2. Smart tickets and automatic assignment (`src/tickets/`, `src/assign/`)
+**`/ticket`** (the *Ticket* tab at `/app/ticket`, or typing `/ticket` in chat): anyone on the team
+writes only **name, project and description**. roz reads it with Jev, fills in the rest (solution
+type, skills, level, points, urgency), proposes an assignee and shows it all in an editable
+**preview**. Correcting the type, points, priority or due date does NOT call Jev again: its answer is
+reused and only the policy is recomputed. On **create**, the task is assigned and the assignee gets a
+DM **from the requester's own profile** ("Te asigné una nueva tarea #KEY-12"). The preview is an
+`assignment_decision` row with `outcome='preview'` that becomes the task's decision on create.
+
+The same assignment runs for `/v1/intake` and for the "Asignar automáticamente" button on an open,
+unassigned task. The regular "New task" dialog no longer auto-assigns (`POST /tickets` only does it
+with `autoAssign: true`).
+
+**Skills ≠ solution types.** A *skill* is what a person knows (level 1–5). A *solution type*
+(`roz.solution_type`, 0032, editable under Skills → Tipos de solución) is what kind of work the task
+is, and sets the primary skill (or "the affected module's", for bugs and refactors), minimum level,
+secondary skill and typical size. Jev only picks the type; the table decides the rest.
+
+**Jev judges, code decides.** One TypeSafe request per task (`jev-questions.ts`, the only place with
+question wording and thresholds; questions `q2`) answers only what needs reading the task text: which
+solution type it is (Choice + companion Noul), which skill/module it touches (Choice + Noul), how big
+(Score → 1/2/3/5/8/13 points; below the type's minimum it is raised to the minimum, above its maximum
+it is kept and flagged), whether production is broken / a client is blocked (two Nouls), and the
+project if missing. Questions are in English (Jev's strongest language); the task text and the type
+table go as-is. Jev never sees people or dates. Anything a human set wins (project, type, priority,
+due date, estimate). Without a clear type, the task asks for a human decision.
+
+**Project context (q3, migration 0033).** Jev receives the project's *profile* — its main type
+(landing, e-commerce, web app with backend, mobile app, API, AI product) and a description — so "fix a
+button" isn't read the same in a landing page as in an app with a backend. Plus one more question,
+`server_side` (does it touch the server side?): for a bug/refactor in a project **with a backend**, if
+the ticket isn't clearly UI-only, the skill Jev guessed doesn't filter and the task goes to
+whoever runs the project first. roz proposes the profile by reading the project's GitHub repos
+(`src/projects/profile.ts`): Jev judges the type; Claude writes the description or, when unavailable,
+it's assembled from GitHub (description/README and detected stack). It stays flagged "IA" until a
+person reviews it; `scripts/fill-project-profiles.ts` fills every project's empty fields without
+overwriting human input.
+
+Everything else is a **pure, tested policy** (`policy.ts`, `p2`):
+
+1. **Hard filters** (exclude, never penalize): active, assignable role (dev/designer/intern),
+   availability > 0, skill ≥ required level, WIP ≤ 3 active tasks (`en_progreso` + `revision`, as
+   primary) and ≤ 2 simultaneous projects.
+2. **Order:** project lead (`dev_assignment` principal) → secondary → specialist (level ≥ 4) → pool.
+   If the task needs level ≥ 4, specialists go first. The type's secondary skill excludes nobody: among
+   specialists and in the pool it orders people who tie on the primary skill.
+3. **Tie-break** (within a tier): among candidates ≤ 1 level apart, the lower level wins when the task
+   is ≤ 3 pts, not urgent and a senior reviewer (level ≥ 4) exists — avoids a single point of failure.
+4. **Effective size** (context cost): ×1.0 lead, ×1.15 secondary, ×1.3 external, ×1.5 external with no
+   history on the project (1 pt = 2 h).
+5. **Capacity as a per-candidate filter:** load + effective hours ≤ 85% of the hours left before the
+   due date (business days × weekly hours / 5 × availability). First that fits wins.
+6. **Escalate** when nobody fits: suggest splitting (specialist defines the approach in 1–2 h, lead
+   implements), reprioritizing (who would fit by deferring lower-priority work) or backlog. The task
+   stays unassigned with a visible "Necesita decisión"; nothing is split automatically.
+
+**Log and overrides.** Every run writes `roz.assignment_decision` (0031): the exact Jev payload and
+model, the classification with the source of each field, every candidate with its reasons, and the
+outcome. Changing the assignee roz chose asks for a **closed-category reason** (once): that log is
+what lets the algorithm improve instead of being argued every sprint. A Jev failure is an error
+(task unassigned and marked, retried by the outbox), never a "no". Creation never waits for Jev: the
+run goes through the `work_item.auto_assign` outbox event, processed right away in the background.
+Without `TYPESAFE_API_KEY` the feature is off and intake keeps the embedding router (`src/router/`).
 
 ### 3. Notifications (via outbox → drain)
 An **email (Resend)** adapter with branded HTML templates: assignment, close, change documented,
@@ -233,6 +294,14 @@ See `migrations/0001_roz_schema.sql`:
 - **outbox_event / idempotency_key** — the event core and idempotency.
 - **chat_conversation / chat_member / chat_message / chat_attachment** — team chat (0030).
   `work_item.chat_message_id` links a task to the message it came from.
+- **assignment_decision** — automatic-assignment log (0031): Jev payload/model, classification,
+  candidates with reasons, outcome, and the human override (closed category). `work_item.estimate`
+  (story points) is now written by the task dialog and by automatic assignment. Since 0032 it also
+  stores a ticket preview (`outcome='preview'`, no task yet).
+- **solution_type** — solution types (0032): primary skill (or "the module's"), minimum level,
+  secondary skill and typical size. `work_item.solution_type_id` is the type a person set.
+- **project.project_type / description / profile_source** — project profile (0033): the context Jev
+  reads; `profile_source='ia'` = proposed by roz from GitHub, pending review.
 
 ### The dashboard SPA (`web/`)
 
