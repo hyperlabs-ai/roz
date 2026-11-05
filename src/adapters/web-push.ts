@@ -24,6 +24,19 @@ export interface PushPayload {
   data?: Record<string, unknown>;
 }
 
+/** Opciones de ENTREGA (cabeceras del push service, no viajan en el payload). */
+export interface PushSendOptions {
+  /** `high` despierta a un Android en reposo (Doze) al momento; `normal` puede esperar a la
+   *  siguiente ventana de mantenimiento. Para chat, asignaciones y caídas: `high`. */
+  urgency?: 'very-low' | 'low' | 'normal' | 'high';
+  /** Segundos que el push service guarda el aviso si el dispositivo está apagado o sin red. */
+  ttl?: number;
+}
+
+// 24 h: un teléfono sin señal o apagado unas horas sigue recibiendo lo que pasó al reconectar
+// (antes era 1 h y esos avisos se perdían). El `tag` evita que se apilen repetidos.
+const DEFAULT_TTL = 24 * 60 * 60;
+
 export interface PushSendResult {
   ok: boolean;
   gone: boolean; // 404/410 → la suscripción ya no existe; el caller debe borrarla
@@ -46,13 +59,17 @@ function ensure(): boolean {
   return true;
 }
 
-export async function sendPush(sub: PushSubscriptionKeys, payload: PushPayload): Promise<PushSendResult> {
+export async function sendPush(
+  sub: PushSubscriptionKeys,
+  payload: PushPayload,
+  opts: PushSendOptions = {},
+): Promise<PushSendResult> {
   if (!ensure()) return { ok: false, gone: false, error: 'web push no configurado' };
   try {
     await webpush.sendNotification(
       { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
       JSON.stringify(payload),
-      { TTL: 3600 },
+      { TTL: opts.ttl ?? DEFAULT_TTL, urgency: opts.urgency ?? 'normal' },
     );
     return { ok: true, gone: false };
   } catch (err) {

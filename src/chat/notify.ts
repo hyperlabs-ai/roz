@@ -81,10 +81,15 @@ export async function notifyChatMessage(input: {
     url: chatUrl(conv.id, msg.parent_id),
     // Una notificación por conversación: la nueva reemplaza a la anterior en vez de apilar 20.
     tag: `chat:${conv.id}`,
-    data: { kind: 'chat', conversationId: conv.id, threadId: msg.parent_id },
+    // `messageId`: la app abierta usa la misma llave para el sonido que dispara por tiempo real, así
+    // el mensaje suena UNA vez aunque llegue por los dos caminos (socket y push).
+    data: { kind: 'chat', conversationId: conv.id, threadId: msg.parent_id, messageId: msg.id },
   };
 
   await Promise.all(
-    recipients.map((devId) => pushToDev(devId, devById.get(devId)?.email ?? null, payload, 'chat_message', { logSent: false })),
+    recipients.map((devId) =>
+      // `high`: un chat que llega al teléfono cuando éste sale del reposo no sirve.
+      pushToDev(devId, devById.get(devId)?.email ?? null, payload, 'chat_message', { logSent: false, urgency: 'high' }),
+    ),
   );
 }

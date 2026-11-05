@@ -12,6 +12,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { ErrorBoundary, ErrorScreen } from '@/components/ErrorScreen';
 import App from '@/App';
+import { installSounds } from '@/lib/sound';
 // Geist (tipografía de marca, variable) — sans para UI, mono para números/código.
 import '@fontsource-variable/geist';
 import '@fontsource-variable/geist-mono';
@@ -24,6 +25,9 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   });
 }
+
+// Sonidos: desbloqueo del audio con el primer gesto + puente con el service worker (lib/sound.ts).
+installSounds();
 
 const root = createRoot(document.getElementById('root')!);
 

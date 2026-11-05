@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { isPushSupported, currentSubscription, enablePush, disablePush } from '@/lib/push';
 
 // Estado de las notificaciones push de ESTE dispositivo, en UN solo sitio.

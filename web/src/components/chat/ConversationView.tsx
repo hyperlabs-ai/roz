@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   ArrowLeft, Bell, BellOff, BellRing, Check, Hash, Loader2, Lock, LogOut, MoreVertical, Pencil, Trash2, Users,
 } from 'lucide-react';

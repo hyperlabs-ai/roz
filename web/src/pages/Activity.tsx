@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { CircleCheck, Inbox, RotateCw, TriangleAlert } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { EmptyState, ErrorCard, RefreshButton } from '@/components/bits';

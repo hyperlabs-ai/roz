@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Loader2, Pencil, Plus } from 'lucide-react';
 import { EmptyState, ErrorCard, Revalidating } from '@/components/bits';
 import { Badge } from '@/components/ui/badge';

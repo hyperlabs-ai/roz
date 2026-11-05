@@ -21,7 +21,7 @@ import {
   updateMembership,
 } from '../chat/conversations.js';
 import { deleteMessage, editMessage, getThread, listMessages, locateMessage, sendMessage } from '../chat/messages.js';
-import { MAX_CHAT_ATTACHMENT_BYTES, uploadAttachment } from '../chat/attachments.js';
+import { MAX_CHAT_ATTACHMENT_BYTES, completeUpload, requestUpload, tooLargeMessage } from '../chat/attachments.js';
 import { MAX_MESSAGE_LENGTH, MAX_STATUS_TASKS } from '../chat/text.js';
 import { searchTasks } from '../chat/tasks.js';
 
@@ -277,19 +277,29 @@ chatRoutes.get('/tasks', async (c) => {
 
 // ---- Adjuntos ----
 
-chatRoutes.post('/conversations/:id/attachments', async (c) => {
+// El archivo NO pasa por aquí (Vercel corta los cuerpos en 4.5 MB): se pide una URL firmada, el
+// navegador sube directo a Storage y luego confirma. Ver src/chat/attachments.ts.
+const UploadUrlBody = z.object({
+  name: z.string().min(1).max(255),
+  contentType: z.string().max(255).nullish(),
+  size: z.number().int().positive(),
+});
+
+chatRoutes.post('/conversations/:id/attachments/upload-url', async (c) => {
+  const parsed = UploadUrlBody.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return invalid(c, parsed.error.message);
+  const { name, contentType, size } = parsed.data;
+  if (size! > MAX_CHAT_ATTACHMENT_BYTES) return invalid(c, tooLargeMessage(name!, size!));
   try {
-    const body = await c.req.parseBody();
-    const file = body['file'];
-    if (!(file instanceof File)) return invalid(c, 'falta el archivo');
-    if (file.size > MAX_CHAT_ATTACHMENT_BYTES) return invalid(c, 'el archivo supera 4MB');
-    const attachment = await uploadAttachment(devIdOf(c), c.req.param('id'), {
-      body: Buffer.from(await file.arrayBuffer()),
-      name: file.name || 'archivo',
-      contentType: file.type,
-      size: file.size,
-    });
-    return c.json({ attachment }, 201);
+    return c.json(await requestUpload(devIdOf(c), c.req.param('id'), { name: name!, contentType: contentType ?? null, size: size! }), 201);
+  } catch (err) {
+    return fail(c, err);
+  }
+});
+
+chatRoutes.post('/attachments/:id/complete', async (c) => {
+  try {
+    return c.json({ attachment: await completeUpload(devIdOf(c), c.req.param('id')) });
   } catch (err) {
     return fail(c, err);
   }

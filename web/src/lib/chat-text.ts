@@ -143,6 +143,42 @@ export function timeLabel(iso: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+// ---- Adjuntos: tipo, galería y límite ----
+
+export type AttachmentKind = 'image' | 'video' | 'markdown' | 'html' | 'file';
+
+/** Cómo se pinta un adjunto. Por MIME y por extensión: los `.md` suelen llegar sin MIME, y un
+ *  `.mov` de iPhone a veces como `video/quicktime`. SVG va como archivo: puede llevar scripts. */
+export function attachmentKind(a: { name: string; contentType: string | null }): AttachmentKind {
+  const type = (a.contentType ?? '').toLowerCase();
+  const ext = a.name.toLowerCase().split('.').pop() ?? '';
+  if (type === 'image/svg+xml' || ext === 'svg') return 'file';
+  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp'].includes(ext)) return 'image';
+  if (type.startsWith('video/') || ['mp4', 'webm', 'mov', 'm4v', 'ogv'].includes(ext)) return 'video';
+  if (type === 'text/markdown' || type === 'text/x-markdown' || ['md', 'markdown', 'mdx'].includes(ext)) return 'markdown';
+  if (type === 'text/html' || ['html', 'htm'].includes(ext)) return 'html';
+  return 'file';
+}
+
+/** Celdas de la mini galería (estilo WhatsApp): cuántos cuadros se ven y cuántos quedan en "+N".
+ *  1 → uno grande; 2 → dos columnas; 3 → uno alto + dos apilados; 4+ → rejilla 2×2. */
+export function galleryLayout(count: number): { shape: 'single' | 'pair' | 'trio' | 'grid'; visible: number; extra: number } {
+  if (count <= 1) return { shape: 'single', visible: count, extra: 0 };
+  if (count === 2) return { shape: 'pair', visible: 2, extra: 0 };
+  if (count === 3) return { shape: 'trio', visible: 3, extra: 0 };
+  return { shape: 'grid', visible: 4, extra: count - 4 };
+}
+
+/** Aviso del compositor para un archivo que pasa del límite (mismo texto que el backend). */
+export function tooLargeMessage(name: string, size: number, limit: number): string {
+  return `${name} pesa ${(size / (1024 * 1024)).toFixed(1)} MB y el límite es ${Math.round(limit / (1024 * 1024))} MB`;
+}
+
+/** URL firmada de Storage con descarga forzada (Content-Disposition: attachment). */
+export function downloadUrl(url: string, name: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}download=${encodeURIComponent(name)}`;
+}
+
 export function formatBytes(n: number | null | undefined): string {
   if (!n) return '';
   if (n < 1024) return `${n} B`;
@@ -172,6 +208,32 @@ export function chatBadge(conversations: ChatConversation[]): { count: number; d
     }
   }
   return { count, dot: dot && count === 0 };
+}
+
+/**
+ * ¿Este mensaje nuevo me avisa (suena)? Espejo de `chatPushRecipients` (src/chat/rules.ts) con lo
+ * que sabe el cliente, para que la app abierta suene en los mismos casos en que llega el push:
+ *   · nunca lo mío, ni un mensaje de sistema, ni una conversación silenciada o que solo leo;
+ *   · MD: siempre (también en hilo);
+ *   · canal, mensaje raíz: si me mencionan, hay @canal o estoy en nivel 'all';
+ *   · canal, hilo: solo si me mencionan (@canal no despierta al canal desde un hilo).
+ * Las respuestas en hilos donde participo sin mención no se cubren aquí (el cliente no sabe quién
+ * participa): esas las hace sonar el push.
+ */
+export function messageAlerts(
+  conv: Pick<ChatConversation, 'kind' | 'membership'>,
+  m: Pick<ChatMessage, 'kind' | 'authorDevId' | 'mentions' | 'mentionChannel' | 'parentId'>,
+  myDevId: string | null | undefined,
+): boolean {
+  if (!myDevId || m.kind !== 'user' || !m.authorDevId) return false;
+  const me = myDevId.toLowerCase();
+  if (m.authorDevId.toLowerCase() === me) return false;
+  const level = conv.membership?.notifyLevel;
+  if (!level || level === 'none') return false;
+  if (conv.kind === 'dm') return true;
+  const direct = m.mentions.some((id) => id.toLowerCase() === me);
+  if (m.parentId) return direct;
+  return direct || m.mentionChannel || level === 'all';
 }
 
 export function newNonce(): string {

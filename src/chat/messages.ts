@@ -2,6 +2,7 @@
 //
 // Cada escritura se reparte por tiempo real al buzón de cada miembro con el mensaje COMPLETO (ya
 // enriquecido con adjuntos firmados y tareas), así el cliente no tiene que volver a pedirlo.
+import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { inBackground } from '../utils/background.js';
@@ -19,6 +20,7 @@ import {
   MAX_MESSAGE_LENGTH, MAX_STATUS_TASKS, extractMentions, extractTaskIdentifiers, hasChannelMention, statusTaskIds,
 } from './text.js';
 import { tasksByIdentifier, tasksByIds, tasksByMessage } from './tasks.js';
+import { unfurlBody } from './unfurl.js';
 
 const PAGE_SIZE = 50;
 const MAX_THREAD = 500;
@@ -93,8 +95,40 @@ async function enrich(rows: MessageRow[]): Promise<ChatMessage[]> {
       tasks: tasks.get(r.id) ?? [],
       citedTasks: (citedByMessage.get(r.id) ?? []).map((i) => cited.get(i)).filter((t): t is NonNullable<typeof t> => !!t),
       statusTasks: (statusByMessage.get(r.id) ?? []).map((i) => statusCards.get(i)).filter((t): t is NonNullable<typeof t> => !!t),
+      linkPreviews: deleted ? [] : r.link_previews ?? [],
     };
   });
+}
+
+/** El dominio de roz: sus propios links no se "desenrollan" (sería la tarjeta del SPA). */
+function ownHosts(): string[] {
+  try {
+    return config.dashboard.url ? [new URL(config.dashboard.url).hostname] : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Calcula las tarjetas de los links del mensaje y, si cambiaron, las guarda y reparte el mensaje
+ * actualizado. Corre en segundo plano después de enviar o editar (tarda lo que tarde el sitio más
+ * lento, hasta 5 s). El filtro por `edited_at` evita que un unfurl viejo pise uno nuevo si la
+ * persona editó mientras tanto (y no se filtra por `body`: 8000 caracteres no caben en la URL).
+ */
+async function refreshLinkPreviews(row: MessageRow, memberDevIds: string[]): Promise<void> {
+  const previews = await unfurlBody(row.body, { skipHosts: ownHosts() });
+  if (!previews.length && !row.link_previews?.length) return;
+  let q = db()
+    .from('chat_message')
+    .update({ link_previews: previews.length ? previews : null })
+    .eq('id', row.id)
+    .is('deleted_at', null);
+  q = row.edited_at ? q.eq('edited_at', row.edited_at) : q.is('edited_at', null);
+  const { data, error } = await q.select(MESSAGE_COLUMNS).maybeSingle();
+  if (error) throw error;
+  if (!data) return;
+  const [message] = await enrich([data as unknown as MessageRow]);
+  await broadcastToDevs(memberDevIds, 'message.updated', { message });
 }
 
 /** Mensajes del canal (sin respuestas de hilo), del más viejo al más nuevo. `before` pagina hacia atrás. */
@@ -234,6 +268,9 @@ export async function sendMessage(devId: string, conversationId: string, input: 
     const devs = await loadChatDevs();
     await notifyChatMessage({ conversation: conv, message: row, members, devs, attachmentCount: linked });
   }, onError);
+  // Aparte del push: un sitio lento no debe retrasar el aviso, y un aviso fallido no debe dejar al
+  // mensaje sin tarjetas.
+  inBackground(() => refreshLinkPreviews(row, members.map((m) => m.dev_id)), onError);
   return message!;
 }
 
@@ -273,8 +310,14 @@ export async function editMessage(devId: string, id: string, rawBody: string, on
     .single();
   if (error) throw error;
 
-  const [message] = await enrich([data as unknown as MessageRow]);
-  inBackground(() => broadcastToDevs(members.map((m) => m.dev_id), 'message.updated', { message }), onError);
+  const updated = data as unknown as MessageRow;
+  const [message] = await enrich([updated]);
+  const memberDevIds = members.map((m) => m.dev_id);
+  inBackground(async () => {
+    await broadcastToDevs(memberDevIds, 'message.updated', { message });
+    // El texto cambió: los links también pudieron cambiar (o desaparecer).
+    await refreshLinkPreviews(updated, memberDevIds);
+  }, onError);
   return message!;
 }
 
@@ -284,7 +327,7 @@ export async function deleteMessage(devId: string, id: string, onError?: OnError
   await removeMessageFiles(id);
   const { error } = await db()
     .from('chat_message')
-    .update({ deleted_at: new Date().toISOString(), body: '', mentions: [], mention_channel: false })
+    .update({ deleted_at: new Date().toISOString(), body: '', mentions: [], mention_channel: false, link_previews: null })
     .eq('id', id);
   if (error) throw error;
   const members = await listMembers(row.conversation_id);

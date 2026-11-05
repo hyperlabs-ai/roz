@@ -20,7 +20,7 @@ import { useAuth } from '@/auth/AuthContext';
 import { useApi } from '@/lib/useApi';
 import { apiGet, apiSend, type CapacityResponse } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 export default function Capacity() {
   const { user } = useAuth();

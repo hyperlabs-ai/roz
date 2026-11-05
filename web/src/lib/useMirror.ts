@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 /**
  * Copia local espejo de una lista del servidor, con mutaciones optimistas.

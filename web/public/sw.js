@@ -44,7 +44,7 @@ self.addEventListener('fetch', (event) => {
 
 // ---- Web Push ----
 // El backend envía un JSON: { title, body, url, tag, icon, badge, requireInteraction, data }.
-// `data.kind === 'chat'` trae `conversationId` (y `threadId` si es una respuesta en hilo).
+// `data.kind === 'chat'` trae `conversationId`, `messageId` (y `threadId` si es una respuesta en hilo).
 
 /** ¿Hay una ventana de roz enfocada mostrando esa conversación? Entonces el aviso sobra: la
  *  persona ya lo está viendo (y el chat lo recibe por tiempo real). Se le avisa a esa ventana por
@@ -65,22 +65,61 @@ async function chatAlreadyVisible(info) {
   return visible;
 }
 
+// ---- Sonido propio (notificacion.mp3) ----
+// Ningún navegador respeta la opción `sound` de showNotification: el aviso del sistema suena con el
+// tono del sistema operativo. Y un service worker no puede reproducir audio. Así que, si hay una
+// ventana de roz abierta, se le pide a ELLA que suene (lib/sound.ts) y el aviso se muestra en
+// silencio para no oír dos. Si ninguna contesta a tiempo (app cerrada, o pestaña congelada en el
+// teléfono), el aviso sale con el sonido y la vibración del sistema.
+
+const SOUND_TIMEOUT_MS = 800;
+
+function askClientToPlay(client, msg) {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => resolve(false), SOUND_TIMEOUT_MS);
+    channel.port1.onmessage = (e) => { clearTimeout(timer); resolve(!!(e.data && e.data.handled)); };
+    try { client.postMessage(msg, [channel.port2]); } catch (_) { clearTimeout(timer); resolve(false); }
+  });
+}
+
+/** ¿Alguna ventana abierta hizo sonar el aviso? Se pregunta en orden (la enfocada, luego las
+ *  visibles, luego el resto) y la primera que suena gana: dos ventanas no suenan a la vez. */
+async function playInOpenWindow(key) {
+  const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  const rank = (c) => (c.focused ? 0 : c.visibilityState === 'visible' ? 1 : 2);
+  const ordered = all.slice().sort((a, b) => rank(a) - rank(b)).slice(0, 3);
+  for (const client of ordered) {
+    if (await askClientToPlay(client, { type: 'play-sound', sound: 'notification', key })) return true;
+  }
+  return false;
+}
+
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = { body: event.data && event.data.text() }; }
 
   const title = data.title || 'ROZ';
-  const options = {
-    body: data.body || '',
-    icon: data.icon || '/icon-192.png',
-    badge: data.badge || '/icon-192.png',
-    tag: data.tag || undefined,
-    renotify: !!data.tag,
-    requireInteraction: !!data.requireInteraction,
-    data: { url: data.url || '/app/infra' },
-  };
+  const info = data.data || {};
+  // Misma llave que usa la app al recibir el mensaje por tiempo real: suena una sola vez.
+  const soundKey = info.kind === 'chat' && info.messageId ? 'chat:' + info.messageId : data.tag || undefined;
+
   event.waitUntil((async () => {
-    if (await chatAlreadyVisible(data.data)) return;
+    if (await chatAlreadyVisible(info)) return;
+    const silent = await playInOpenWindow(soundKey);
+    const options = {
+      body: data.body || '',
+      icon: data.icon || '/icon-192.png',
+      badge: data.badge || '/icon-192.png',
+      tag: data.tag || undefined,
+      renotify: !!data.tag,
+      requireInteraction: !!data.requireInteraction,
+      timestamp: Date.now(),
+      silent,
+      data: { url: data.url || '/app/infra' },
+    };
+    // Vibración tipo mensaje en Android. Una notificación silenciosa no puede llevarla (lanza).
+    if (!silent) options.vibrate = [120, 60, 120];
     await self.registration.showNotification(title, options);
   })());
 });

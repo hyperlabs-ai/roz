@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Link } from 'react-router-dom';
 import { Trash2, Send, ImagePlus, X, GitPullRequest, GitCommit, Loader2, GitMerge, Eye, Pencil, Check, ChevronUp, ChevronsUpDown, MessagesSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';

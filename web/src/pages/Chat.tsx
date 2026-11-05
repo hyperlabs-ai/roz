@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Loader2, MessagesSquare } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { useChat } from '@/chat/ChatContext';

@@ -3,8 +3,9 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import { useAuth } from '@/auth/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { usePoll } from '@/lib/usePoll';
+import { playSound } from '@/lib/sound';
 import {
-  chatApi, chatBadge, type ChatConversation, type ChatDev, type ChatEvent, type ChatMessage,
+  chatApi, chatBadge, messageAlerts, type ChatConversation, type ChatDev, type ChatEvent, type ChatMessage,
 } from '@/lib/chat';
 
 /**
@@ -158,10 +159,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     (e: ChatEvent) => {
       if (e.type === 'message.created') {
         const m: ChatMessage = e.message;
-        const known = convsRef.current.some((c) => c.id === m.conversationId);
-        if (!known) {
-          void reloadConversation(m.conversationId);
+        // Sonido de aviso (notificacion). Misma llave que el push de ese mensaje (chat/notify.ts):
+        // si llega por los dos caminos suena una vez, y el aviso del sistema sale en silencio.
+        const alert = (c: ChatConversation) => {
+          if (!isViewing(c.id) && messageAlerts(c, m, meRef.current)) void playSound('notification', { key: `chat:${m.id}` });
+        };
+        const knownConv = convsRef.current.find((c) => c.id === m.conversationId);
+        if (!knownConv) {
+          // Conversación nueva para mí (un MD que acaba de abrirme alguien): suena al conocerla.
+          void reloadConversation(m.conversationId).then((c) => c && alert(c));
         } else {
+          alert(knownConv);
           const mine = meRef.current;
           const fromOther = m.kind === 'user' && m.authorDevId !== mine;
           const viewing = isViewing(m.conversationId);

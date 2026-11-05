@@ -1,6 +1,6 @@
 // Chat del equipo: tipos espejo del backend (src/chat/model.ts), llamadas a la API y utilidades
 // PURAS de texto y agrupado (las prueba test/chat-web.test.ts, por eso este módulo no importa React).
-import { apiGet, apiSend, apiUpload } from './api';
+import { apiGet, apiSend } from './api';
 
 export type NotifyLevel = 'all' | 'mentions' | 'none';
 export type ConversationKind = 'channel' | 'dm';
@@ -53,6 +53,20 @@ export interface ChatTaskRef {
   assigneeDevIds: string[];
 }
 
+/** Tarjeta de un link del mensaje (espejo de src/chat/unfurl.ts). */
+export interface LinkPreview {
+  url: string;
+  kind: 'video' | 'post' | 'link';
+  provider: string | null;
+  siteName: string | null;
+  title: string | null;
+  description: string | null;
+  image: string | null;
+  icon: string | null;
+  author: string | null;
+  embed: { type: 'youtube' | 'vimeo' | 'tiktok'; id: string } | null;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -77,6 +91,9 @@ export interface ChatMessage {
   citedTasks: ChatTaskRef[];
   /** Tareas del bloque Status (`meta.type === 'status'`), con su estado actual. */
   statusTasks: ChatTaskRef[];
+  /** Tarjetas de los links (llegan unos segundos después del mensaje, por message.updated). Opcional:
+   *  un mensaje cacheado de antes de la migración 0034 no la trae. */
+  linkPreviews?: LinkPreview[];
   /** Solo cliente: envío optimista en vuelo / fallido. */
   pending?: boolean;
   failed?: boolean;
@@ -161,12 +178,74 @@ export const chatApi = {
   /** Autocompletado `@tarea <persona> <texto>`. */
   searchTasks: (q: string, limit?: number) =>
     apiGet<{ tasks: ChatTaskRef[] }>(`/chat/tasks?q=${enc(q)}${limit ? `&limit=${limit}` : ''}`),
-  upload: (conversationId: string, file: File) =>
-    apiUpload<{ attachment: ChatAttachment }>(`/chat/conversations/${conversationId}/attachments`, file),
+  upload: uploadAttachment,
 };
 
-/** Debe coincidir con el backend (src/chat/attachments.ts). */
-export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+/** Debe coincidir con el backend (src/chat/attachments.ts) y el bucket (migración 0034). */
+export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+/**
+ * PUT directo a Storage con la URL firmada (mismo formato que `uploadToSignedUrl` de storage-js:
+ * multipart con `cacheControl` y el archivo en el campo vacío). XHR y no fetch para tener progreso.
+ */
+function putToSignedUrl(signedUrl: string, file: File, onProgress?: (fraction: number) => void, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', signedUrl);
+    xhr.setRequestHeader('x-upsert', 'false');
+    const anon = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+    if (anon) xhr.setRequestHeader('apikey', anon);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve();
+      let message = `Storage respondió ${xhr.status}`;
+      try {
+        const body = JSON.parse(xhr.responseText) as { message?: string; error?: string };
+        message = body.message ?? body.error ?? message;
+      } catch {
+        /* cuerpo no JSON */
+      }
+      // El bucket rechaza lo que pasa de 20 MB aunque el cliente lo haya dejado pasar.
+      if (xhr.status === 413 || /exceeded the maximum allowed size|too large/i.test(message)) {
+        message = 'El archivo supera el límite de 20 MB';
+      }
+      reject(new Error(message));
+    };
+    xhr.onerror = () => reject(new Error('Sin conexión con el almacenamiento'));
+    xhr.onabort = () => reject(new DOMException('Subida cancelada', 'AbortError'));
+    signal?.addEventListener('abort', () => xhr.abort(), { once: true });
+    const form = new FormData();
+    form.append('cacheControl', '3600');
+    form.append('', file);
+    xhr.send(form);
+  });
+}
+
+// Las URLs de subida se piden EN FILA: el backend crea la fila del adjunto en ese momento y la
+// galería se ordena por su created_at. En paralelo, 5 fotos elegidas en orden salían revueltas.
+// Solo se encola ese paso (≈200 ms); las subidas en sí siguen en paralelo.
+let uploadUrlQueue: Promise<unknown> = Promise.resolve();
+
+/** Sube un adjunto: pide la URL firmada, sube directo a Storage (con progreso) y confirma. */
+async function uploadAttachment(
+  conversationId: string,
+  file: File,
+  opts: { onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+): Promise<{ attachment: ChatAttachment }> {
+  const ticket = uploadUrlQueue.then(() =>
+    apiSend<{ attachmentId: string; signedUrl: string }>(
+      'POST',
+      `/chat/conversations/${conversationId}/attachments/upload-url`,
+      { name: file.name || 'archivo', contentType: file.type || null, size: file.size },
+    ),
+  );
+  uploadUrlQueue = ticket.catch(() => {});
+  const { attachmentId, signedUrl } = await ticket;
+  await putToSignedUrl(signedUrl, file, opts.onProgress, opts.signal);
+  return apiSend<{ attachment: ChatAttachment }>('POST', `/chat/attachments/${attachmentId}/complete`, {});
+}
 export const MAX_MESSAGE_LENGTH = 8000;
 export const MAX_STATUS_TASKS = 30;
 

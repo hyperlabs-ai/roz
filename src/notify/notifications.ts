@@ -230,7 +230,7 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
       body: name || 'Nueva tarea asignada',
       url: taskUrl(workItemId) ?? `${config.dashboard.url}/app/tasks`,
       tag: `assign:${identifier}`,
-    }, 'assigned');
+    }, 'assigned', { urgency: 'high' });
   } catch (err) {
     await supabase.from('notification').insert({
       channel: 'email',

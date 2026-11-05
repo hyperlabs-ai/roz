@@ -29,7 +29,7 @@ import {
 import { TaskBoard } from '@/components/tasks/board';
 import { OverrideReasonDialog } from '@/components/tasks/OverrideReasonDialog';
 import { needsOverride } from '@/lib/assign';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useApi } from '@/lib/useApi';
 import { useIsMobile } from '@/lib/useIsMobile';
 import { apiGet, apiSend, type TicketsResponse, type TicketFilterOptions, type Ticket } from '@/lib/api';
