@@ -875,7 +875,8 @@ dashboardRoutes.patch('/tickets/:id', requireAdmin, async (c) => {
           if (!override) {
             throw new AppError('OVERRIDE_REASON_REQUIRED', 'Cuéntanos por qué cambias al responsable que eligió roz', 409);
           }
-          overrideOf = { decision: latest, ...validateOverride(override) };
+          // `!`: el build de Vercel compila sin strict y zod marca `category` como opcional.
+          overrideOf = { decision: latest, ...validateOverride({ category: override.category!, note: override.note ?? null }) };
         }
       }
     }
