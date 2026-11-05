@@ -143,6 +143,42 @@ export function timeLabel(iso: string): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+// ---- Adjuntos: tipo, galería y límite ----
+
+export type AttachmentKind = 'image' | 'video' | 'markdown' | 'html' | 'file';
+
+/** Cómo se pinta un adjunto. Por MIME y por extensión: los `.md` suelen llegar sin MIME, y un
+ *  `.mov` de iPhone a veces como `video/quicktime`. SVG va como archivo: puede llevar scripts. */
+export function attachmentKind(a: { name: string; contentType: string | null }): AttachmentKind {
+  const type = (a.contentType ?? '').toLowerCase();
+  const ext = a.name.toLowerCase().split('.').pop() ?? '';
+  if (type === 'image/svg+xml' || ext === 'svg') return 'file';
+  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp'].includes(ext)) return 'image';
+  if (type.startsWith('video/') || ['mp4', 'webm', 'mov', 'm4v', 'ogv'].includes(ext)) return 'video';
+  if (type === 'text/markdown' || type === 'text/x-markdown' || ['md', 'markdown', 'mdx'].includes(ext)) return 'markdown';
+  if (type === 'text/html' || ['html', 'htm'].includes(ext)) return 'html';
+  return 'file';
+}
+
+/** Celdas de la mini galería (estilo WhatsApp): cuántos cuadros se ven y cuántos quedan en "+N".
+ *  1 → uno grande; 2 → dos columnas; 3 → uno alto + dos apilados; 4+ → rejilla 2×2. */
+export function galleryLayout(count: number): { shape: 'single' | 'pair' | 'trio' | 'grid'; visible: number; extra: number } {
+  if (count <= 1) return { shape: 'single', visible: count, extra: 0 };
+  if (count === 2) return { shape: 'pair', visible: 2, extra: 0 };
+  if (count === 3) return { shape: 'trio', visible: 3, extra: 0 };
+  return { shape: 'grid', visible: 4, extra: count - 4 };
+}
+
+/** Aviso del compositor para un archivo que pasa del límite (mismo texto que el backend). */
+export function tooLargeMessage(name: string, size: number, limit: number): string {
+  return `${name} pesa ${(size / (1024 * 1024)).toFixed(1)} MB y el límite es ${Math.round(limit / (1024 * 1024))} MB`;
+}
+
+/** URL firmada de Storage con descarga forzada (Content-Disposition: attachment). */
+export function downloadUrl(url: string, name: string): string {
+  return `${url}${url.includes('?') ? '&' : '?'}download=${encodeURIComponent(name)}`;
+}
+
 export function formatBytes(n: number | null | undefined): string {
   if (!n) return '';
   if (n < 1024) return `${n} B`;

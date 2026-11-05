@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   CHANNEL_TOKEN, chatBadge, continuesGroup, dayLabel, decodeMentions, encodeMentions, mentionQueryAt,
-  mentionsMe, mentionsToMarkdown, messageAlerts, taskQueryAt, taskRefsToMarkdown,
+  mentionsMe, mentionsToMarkdown, messageAlerts, taskQueryAt, taskRefsToMarkdown, attachmentKind, galleryLayout,
+  tooLargeMessage, downloadUrl,
 } from '../web/src/lib/chat-text.js';
 import type { ChatConversation, ChatMessage } from '../web/src/lib/chat.js';
 
@@ -170,5 +171,33 @@ describe('messageAlerts (cuándo suena un mensaje)', () => {
     expect(messageAlerts(conv('channel', 'none'), msg({ mentions: [ME] }), ME)).toBe(false);
     expect(messageAlerts(conv('dm', 'none'), msg(), ME)).toBe(false);
     expect(messageAlerts({ kind: 'channel', membership: null }, msg({ mentions: [ME] }), ME)).toBe(false);
+  });
+});
+
+describe('adjuntos: tipo, galería y límite', () => {
+  it('clasifica por MIME y, si falta, por extensión; SVG nunca se pinta como imagen', () => {
+    expect(attachmentKind({ name: 'foto.jpg', contentType: 'image/jpeg' })).toBe('image');
+    expect(attachmentKind({ name: 'IMG_0001.MOV', contentType: 'video/quicktime' })).toBe('video');
+    expect(attachmentKind({ name: 'clip.mp4', contentType: null })).toBe('video');
+    expect(attachmentKind({ name: 'README.md', contentType: '' })).toBe('markdown');
+    expect(attachmentKind({ name: 'reporte.HTML', contentType: null })).toBe('html');
+    expect(attachmentKind({ name: 'logo.svg', contentType: 'image/svg+xml' })).toBe('file');
+    expect(attachmentKind({ name: 'datos.csv', contentType: 'text/csv' })).toBe('file');
+  });
+
+  it('galería estilo WhatsApp: 1, 2, 3 y 4+ con "+N"', () => {
+    expect(galleryLayout(1)).toEqual({ shape: 'single', visible: 1, extra: 0 });
+    expect(galleryLayout(2)).toEqual({ shape: 'pair', visible: 2, extra: 0 });
+    expect(galleryLayout(3)).toEqual({ shape: 'trio', visible: 3, extra: 0 });
+    expect(galleryLayout(4)).toEqual({ shape: 'grid', visible: 4, extra: 0 });
+    expect(galleryLayout(5)).toEqual({ shape: 'grid', visible: 4, extra: 1 });
+  });
+
+  it('el aviso de límite dice cuánto pesa y cuál es el tope', () => {
+    expect(tooLargeMessage('video.mov', 34.2 * 1024 * 1024, 20 * 1024 * 1024)).toBe('video.mov pesa 34.2 MB y el límite es 20 MB');
+  });
+
+  it('la descarga respeta la query de la URL firmada', () => {
+    expect(downloadUrl('https://x.supabase.co/o/a.png?token=t', 'mi foto.png')).toBe('https://x.supabase.co/o/a.png?token=t&download=mi%20foto.png');
   });
 });

@@ -16,31 +16,36 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MessageBody } from './MessageBody';
+import { MediaGallery } from './MediaGallery';
+import { DocumentAttachment } from './DocumentAttachment';
+import { LinkPreviews } from './LinkPreviews';
 import { MessageTasks, StatusBlock, TaskCreatedNotice, useTaskBridge } from './TaskChip';
 import {
-  decodeMentions, encodeMentions, formatBytes, mentionsMe, timeLabel, type ChatAttachment, type ChatMessage,
+  attachmentKind, decodeMentions, encodeMentions, formatBytes, mentionsMe, timeLabel, type ChatAttachment,
+  type ChatMessage,
 } from '@/lib/chat';
 import { relative } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
+/**
+ * Adjuntos de un mensaje: imágenes y videos como mini galería (con visor), .md / .html
+ * renderizados y el resto como tarjeta de archivo.
+ */
 function Attachments({ items }: { items: ChatAttachment[] }) {
   if (!items.length) return null;
-  const images = items.filter((a) => a.contentType?.startsWith('image/') && a.url);
-  const files = items.filter((a) => !images.includes(a));
+  const media = items.filter((a) => a.url && ['image', 'video'].includes(attachmentKind(a)));
+  const docs = items.filter((a) => a.url && ['markdown', 'html'].includes(attachmentKind(a)));
+  const files = items.filter((a) => !media.includes(a) && !docs.includes(a));
   return (
     <div className="mt-1.5 space-y-1.5">
-      {images.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {images.map((a) => (
-            <a key={a.id} href={a.url!} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-lg border bg-muted">
-              <img src={a.url!} alt={a.name} loading="lazy" className="max-h-60 max-w-[min(20rem,100%)] object-cover" />
-            </a>
-          ))}
-        </div>
-      )}
+      {media.length > 0 && <MediaGallery items={media} />}
+      {docs.map((a) => (
+        <DocumentAttachment key={a.id} a={a} kind={attachmentKind(a) as 'markdown' | 'html'} />
+      ))}
       {files.map((a) => (
         <a
           key={a.id}
+          // Igual que antes: se abre en pestaña nueva (un PDF se ve en el navegador).
           href={a.url ?? undefined}
           target="_blank"
           rel="noreferrer noopener"
@@ -255,6 +260,7 @@ export const MessageItem = memo(function MessageItem({
               </div>
             )}
             {(m.meta as { type?: string } | null)?.type === 'status' && <StatusBlock message={m} />}
+            <LinkPreviews previews={m.linkPreviews} />
             <Attachments items={m.attachments} />
           </>
         )}

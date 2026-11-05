@@ -3,12 +3,13 @@
 import { db } from '../db/supabase.js';
 import { avatarFor } from '../dashboard/queries.js';
 import type { ConversationKind, NotifyLevel } from './rules.js';
+import type { LinkPreview } from './unfurl.js';
 
 export const CONVERSATION_COLUMNS =
   'id, kind, name, topic, description, is_private, is_default, dm_key, created_by, last_message_at, created_at, updated_at';
 export const MEMBER_COLUMNS = 'conversation_id, dev_id, role, notify_level, last_read_at, hidden, joined_at';
 export const MESSAGE_COLUMNS =
-  'id, conversation_id, author_dev_id, parent_id, kind, body, mentions, mention_channel, meta, client_nonce, reply_count, last_reply_at, edited_at, deleted_at, created_at';
+  'id, conversation_id, author_dev_id, parent_id, kind, body, mentions, mention_channel, meta, client_nonce, reply_count, last_reply_at, edited_at, deleted_at, created_at, link_previews';
 
 export interface ConversationRow {
   id: string;
@@ -51,6 +52,8 @@ export interface MessageRow {
   edited_at: string | null;
   deleted_at: string | null;
   created_at: string;
+  /** Tarjetas de los links (src/chat/unfurl.ts). Null = sin links o aún no calculadas. */
+  link_previews: LinkPreview[] | null;
 }
 
 export interface ChatMembership {
@@ -127,6 +130,8 @@ export interface ChatMessage {
   citedTasks: ChatTaskRef[];
   /** Tareas del bloque Status (`meta.type = 'status'`), con su estado ACTUAL, en el orden elegido. */
   statusTasks: ChatTaskRef[];
+  /** Tarjetas de los links del mensaje (YouTube, posts, artículos). */
+  linkPreviews: LinkPreview[];
 }
 
 export interface ChatDev {

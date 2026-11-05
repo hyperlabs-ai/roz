@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { toast } from '@/lib/toast';
-import { ClipboardList, FileText, Loader2, Plus, SendHorizonal, TicketPlus, X } from 'lucide-react';
+import { ClipboardList, FileText, Loader2, Play, Plus, SendHorizonal, TicketPlus, X } from 'lucide-react';
 import { useChat } from '@/chat/ChatContext';
 import { AvatarStack, UserAvatar } from '@/components/bits';
 import { StatusIcon } from '@/components/tasks/inline-cells';
@@ -8,17 +8,30 @@ import { Button } from '@/components/ui/button';
 import { TicketDialog } from '@/components/tickets/TicketDialog';
 import { StatusDialog } from './StatusDialog';
 import {
-  MAX_ATTACHMENT_BYTES, MAX_MESSAGE_LENGTH, chatApi, encodeMentions, fold, loadDraft, mentionQueryAt, saveDraft,
-  slashHint, taskQueryAt, ticketCommand, type ChatAttachment, type ChatTaskRef,
+  MAX_ATTACHMENT_BYTES, MAX_MESSAGE_LENGTH, attachmentKind, chatApi, encodeMentions, fold, loadDraft, mentionQueryAt,
+  saveDraft, slashHint, taskQueryAt, ticketCommand, tooLargeMessage, type ChatAttachment, type ChatTaskRef,
 } from '@/lib/chat';
 import { cn } from '@/lib/utils';
 
 interface Upload {
   key: string;
   file: File;
+  /** Object URL para la miniatura (imagen o video); null para otros archivos. */
   preview: string | null;
+  isVideo: boolean;
+  /** 0..1 mientras sube directo a Storage. */
+  progress: number;
   attachment: ChatAttachment | null;
   error: string | null;
+  abort: AbortController;
+}
+
+/** Suelta miniaturas y corta las subidas que siguen en vuelo (cambio de conversación, quitar, enviar). */
+function discard(list: Upload[]) {
+  for (const u of list) {
+    if (u.preview) URL.revokeObjectURL(u.preview);
+    if (!u.attachment && !u.error) u.abort.abort();
+  }
 }
 
 interface Suggestion {
@@ -74,7 +87,7 @@ export function Composer({
     keyRef.current = draftKey;
     setText(loadDraft(draftKey));
     setUploads((prev) => {
-      prev.forEach((u) => u.preview && URL.revokeObjectURL(u.preview));
+      discard(prev);
       return [];
     });
     setMention(null);
@@ -194,25 +207,41 @@ export function Composer({
     const list = Array.from(files);
     for (const file of list) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
-        toast.error(`${file.name} supera 4MB`);
+        // toast.error también hace sonar el aviso de error.
+        toast.error(tooLargeMessage(file.name, file.size, MAX_ATTACHMENT_BYTES), {
+          description: 'Comprímelo o compártelo con un link (Drive, YouTube…).',
+        });
         continue;
       }
       const key = `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`;
-      const preview = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
-      setUploads((u) => [...u, { key, file, preview, attachment: null, error: null }]);
+      const kind = attachmentKind({ name: file.name, contentType: file.type || null });
+      const preview = kind === 'image' || kind === 'video' ? URL.createObjectURL(file) : null;
+      const abort = new AbortController();
+      const patch = (p: Partial<Upload>) => setUploads((u) => u.map((x) => (x.key === key ? { ...x, ...p } : x)));
+      setUploads((u) => [...u, { key, file, preview, isVideo: kind === 'video', progress: 0, attachment: null, error: null, abort }]);
+      let shown = 0;
       chatApi
-        .upload(conversationId, file)
-        .then(({ attachment }) => setUploads((u) => u.map((x) => (x.key === key ? { ...x, attachment } : x))))
-        .catch((e) =>
-          setUploads((u) => u.map((x) => (x.key === key ? { ...x, error: e instanceof Error ? e.message : String(e) } : x))),
-        );
+        .upload(conversationId, file, {
+          signal: abort.signal,
+          // Un re-render por cada 2 %: el evento de progreso dispara decenas de veces por segundo.
+          onProgress: (f) => {
+            if (f - shown >= 0.02 || f === 1) {
+              shown = f;
+              patch({ progress: f });
+            }
+          },
+        })
+        .then(({ attachment }) => patch({ attachment, progress: 1 }))
+        .catch((e) => {
+          if (abort.signal.aborted) return; // se quitó a propósito
+          patch({ error: e instanceof Error ? e.message : String(e) });
+        });
     }
   }
 
   function removeUpload(key: string) {
     setUploads((u) => {
-      const gone = u.find((x) => x.key === key);
-      if (gone?.preview) URL.revokeObjectURL(gone.preview);
+      discard(u.filter((x) => x.key === key));
       return u.filter((x) => x.key !== key);
     });
   }
@@ -243,7 +272,7 @@ export function Composer({
     setText('');
     saveDraft(keyRef.current, '');
     setUploads((prev) => {
-      prev.forEach((u) => u.preview && URL.revokeObjectURL(u.preview));
+      discard(prev);
       return [];
     });
     setMention(null);
@@ -445,7 +474,12 @@ export function Composer({
           <div className="flex flex-wrap gap-2 border-b p-2">
             {uploads.map((u) => (
               <div key={u.key} className={cn('relative flex items-center gap-2 rounded-lg border bg-background p-1.5 pr-7 text-xs', u.error && 'border-destructive/50')}>
-                {u.preview ? (
+                {u.preview && u.isVideo ? (
+                  <span className="relative size-10 overflow-hidden rounded bg-black">
+                    <video src={u.preview} muted playsInline preload="metadata" className="size-full object-cover" />
+                    <Play className="absolute inset-0 m-auto size-4 fill-white text-white" />
+                  </span>
+                ) : u.preview ? (
                   <img src={u.preview} alt="" className="size-10 rounded object-cover" />
                 ) : (
                   <span className="grid size-10 place-items-center rounded bg-primary/10 text-primary">
@@ -454,9 +488,14 @@ export function Composer({
                 )}
                 <span className="max-w-[10rem]">
                   <span className="block truncate font-medium">{u.file.name}</span>
-                  <span className={cn('block', u.error ? 'text-destructive' : 'text-muted-foreground')}>
-                    {u.error ? 'No se subió' : u.attachment ? 'Listo' : 'Subiendo…'}
+                  <span className={cn('block truncate', u.error ? 'text-destructive' : 'text-muted-foreground')} title={u.error ?? undefined}>
+                    {u.error ? `No se subió — ${u.error}` : u.attachment ? 'Listo' : `Subiendo… ${Math.round(u.progress * 100)}%`}
                   </span>
+                  {!u.attachment && !u.error && (
+                    <span className="mt-1 block h-1 overflow-hidden rounded-full bg-muted">
+                      <span className="block h-full rounded-full bg-primary transition-[width]" style={{ width: `${Math.max(4, u.progress * 100)}%` }} />
+                    </span>
+                  )}
                 </span>
                 {!u.attachment && !u.error && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
                 <button
