@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { toast } from '@/lib/toast';
-import { ClipboardList, FileText, Loader2, Play, Plus, SendHorizonal, TicketPlus, X } from 'lucide-react';
+import { ClipboardList, FileText, FolderKanban, Loader2, Play, Plus, SendHorizonal, TicketPlus, X } from 'lucide-react';
 import { useChat } from '@/chat/ChatContext';
+import { useChatProjects } from '@/chat/useChatProjects';
 import { AvatarStack, UserAvatar } from '@/components/bits';
 import { StatusIcon } from '@/components/tasks/inline-cells';
 import { Button } from '@/components/ui/button';
@@ -9,7 +10,8 @@ import { TicketDialog } from '@/components/tickets/TicketDialog';
 import { StatusDialog } from './StatusDialog';
 import {
   MAX_ATTACHMENT_BYTES, MAX_MESSAGE_LENGTH, attachmentKind, chatApi, encodeMentions, fold, loadDraft, mentionQueryAt,
-  saveDraft, slashHint, taskQueryAt, ticketCommand, tooLargeMessage, type ChatAttachment, type ChatTaskRef,
+  parseTicketMentions, projectQueryAt, saveDraft, slashHint, taskQueryAt, ticketCommand, tooLargeMessage,
+  type ChatAttachment, type ChatTaskRef,
 } from '@/lib/chat';
 import { cn } from '@/lib/utils';
 
@@ -39,12 +41,20 @@ interface Suggestion {
   name: string;
   avatarUrl: string | null;
   hint?: string;
+  /** Un proyecto (no una persona): se inserta como `@Nombre` y viaja como `<@proyecto:id|Nombre>`. */
+  kind?: 'project';
 }
+
+/** ¿El nombre (o alguna de sus palabras) empieza con la consulta? Sin acentos ni mayúsculas. */
+const matches = (name: string, q: string) =>
+  !q || fold(name).startsWith(q) || fold(name).split(/[\s._-]+/).some((w) => w.startsWith(q));
 
 /**
  * Compositor del chat (conversación o hilo). Enter envía, Shift+Enter hace salto de línea; `@` abre
- * el autocompletado de personas y `@canal`, y `@tarea <persona> <texto>` busca una tarea para
- * citarla (se inserta como `#ROZ-12` y el mensaje la muestra con su tarjeta del kanban). Los archivos
+ * el autocompletado de personas, proyectos y `@canal`; `@proyecto <texto>` busca solo proyectos, y
+ * `@tarea <persona> <texto>` busca una tarea para citarla (se inserta como `#ROZ-12` y el mensaje la
+ * muestra con su tarjeta del kanban). Las personas y el proyecto mencionados son los que toma
+ * "Crear tarea" (y `/ticket`) para asignarla sin que la elija nadie más. Los archivos
  * se suben al elegirlos (con progreso por archivo) y el mensaje viaja con sus ids. El borrador
  * sobrevive a cambiar de conversación.
  */
@@ -66,17 +76,25 @@ export function Composer({
   compact?: boolean;
 }) {
   const { devs, devOf } = useChat();
+  const projects = useChatProjects();
   const [text, setText] = useState(() => loadDraft(draftKey));
   const [uploads, setUploads] = useState<Upload[]>([]);
-  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+  // `projectsOnly`: se abrió con `@proyecto …` (solo proyectos, el texto admite espacios).
+  const [mention, setMention] = useState<{ start: number; query: string; projectsOnly?: boolean } | null>(null);
   const [taskQuery, setTaskQuery] = useState<{ start: number; query: string } | null>(null);
   const [taskResults, setTaskResults] = useState<ChatTaskRef[]>([]);
   const [taskLoading, setTaskLoading] = useState(false);
   const [active, setActive] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
-  // `/ticket [nombre]`: abre el formulario de ticket inteligente en vez de enviar.
-  const [ticket, setTicket] = useState<{ open: boolean; title: string }>({ open: false, title: '' });
+  // `/ticket [nombre] [@persona] [@proyecto]`: abre el formulario de ticket inteligente en vez de
+  // enviar, con el responsable y el proyecto que se mencionaron ya elegidos.
+  const [ticket, setTicket] = useState<{ open: boolean; title: string; projectId: string | null; assigneeId: string | null }>({
+    open: false,
+    title: '',
+    projectId: null,
+    assigneeId: null,
+  });
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -114,17 +132,28 @@ export function Composer({
   const suggestions = useMemo<Suggestion[]>(() => {
     if (!mention) return [];
     const q = fold(mention.query.trim());
+    const projectHits = (limit: number) =>
+      projects
+        .filter((p) => matches(p.name, q))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, limit)
+        .map<Suggestion>((p) => ({ id: p.id, name: p.name, avatarUrl: null, hint: 'proyecto', kind: 'project' }));
+    // `@proyecto …`: solo proyectos.
+    if (mention.projectsOnly) return projectHits(8);
+
     const members = new Set(memberIds);
     const people = devs
       .filter((d) => d.active)
-      .filter((d) => !q || fold(d.name).split(/\s+/).some((w) => w.startsWith(q)) || fold(d.name).startsWith(q))
+      .filter((d) => matches(d.name, q))
       .sort((a, b) => Number(members.has(b.id)) - Number(members.has(a.id)) || a.name.localeCompare(b.name))
       .slice(0, 7)
       .map((d) => ({ id: d.id, name: d.name, avatarUrl: d.avatarUrl, hint: members.has(d.id) ? undefined : 'no está en la conversación' }));
     const canal = 'canal'.startsWith(q) ? [{ id: '__canal', name: 'canal', avatarUrl: null, hint: 'avisa a todos los miembros' }] : [];
     const tarea = 'tarea'.startsWith(q) ? [{ id: '__tarea', name: 'tarea', avatarUrl: null, hint: 'citar una tarea' }] : [];
-    return [...canal, ...tarea, ...people];
-  }, [mention, devs, memberIds]);
+    const proyecto = 'proyecto'.startsWith(q) ? [{ id: '__proyecto', name: 'proyecto', avatarUrl: null, hint: 'buscar un proyecto' }] : [];
+    // Con la `@` sola no se listan proyectos (serían ruido): aparecen en cuanto se escribe algo.
+    return [...canal, ...tarea, ...proyecto, ...people, ...(q ? projectHits(4) : [])];
+  }, [mention, devs, memberIds, projects]);
 
   useEffect(() => setActive(0), [mention?.query, taskQuery?.query]);
 
@@ -160,13 +189,19 @@ export function Composer({
   // `@tarea` (la consulta ahora admite `@` y espacios, así que si no se recordara volvería sola).
   const dismissedTaskAt = useRef<number | null>(null);
 
-  /** Decide qué autocompletado va abierto según el texto antes del cursor (`@tarea` gana a `@persona`). */
+  /** Decide qué autocompletado va abierto según el texto antes del cursor (`@tarea` gana a
+   *  `@proyecto`, que gana a la `@` suelta). */
   const updateTriggers = useCallback((value: string, caret: number) => {
     const found = taskQueryAt(value, caret);
     if (!found) dismissedTaskAt.current = null;
     const tq = found && found.start !== dismissedTaskAt.current ? found : null;
     setTaskQuery(tq);
-    setMention(tq ? null : mentionQueryAt(value, caret));
+    if (tq) {
+      setMention(null);
+      return;
+    }
+    const pq = projectQueryAt(value, caret);
+    setMention(pq ? { ...pq, projectsOnly: true } : mentionQueryAt(value, caret));
   }, []);
 
   const updateMention = useCallback(() => {
@@ -193,8 +228,9 @@ export function Composer({
   function pick(s: Suggestion) {
     if (!mention) return;
     setMention(null);
-    // "@tarea " abre la búsqueda de tareas en vez de insertar una mención.
-    replaceAtCaret(mention.start, s.id === '__tarea' ? '@tarea ' : `@${s.name} `);
+    // "@tarea " / "@proyecto " abren su búsqueda en vez de insertar una mención.
+    const insert = s.id === '__tarea' ? '@tarea ' : s.id === '__proyecto' ? '@proyecto ' : `@${s.name} `;
+    replaceAtCaret(mention.start, insert);
   }
 
   function pickTask(t: ChatTaskRef) {
@@ -251,9 +287,11 @@ export function Composer({
   const canSend = !uploading && (text.trim().length > 0 || ready.length > 0) && text.length <= MAX_MESSAGE_LENGTH;
   const showSlash = !mention && !taskQuery && slashHint(text);
 
-  /** `/ticket …` no es un mensaje: abre el formulario y limpia el compositor (los adjuntos se quedan). */
-  function openTicket(title: string) {
-    setTicket({ open: true, title });
+  /** `/ticket …` no es un mensaje: abre el formulario y limpia el compositor (los adjuntos se quedan).
+   *  `@persona` y `@proyecto` en el texto salen del título y llegan ya elegidos al formulario. */
+  function openTicket(raw: string) {
+    const { title, assigneeId, projectId } = parseTicketMentions(raw, devs, projects);
+    setTicket({ open: true, title, assigneeId, projectId });
     setText('');
     saveDraft(keyRef.current, '');
     setMention(null);
@@ -267,7 +305,7 @@ export function Composer({
       return;
     }
     if (!canSend) return;
-    const body = encodeMentions(text.trim(), devs);
+    const body = encodeMentions(text.trim(), devs, projects);
     onSend(body, ready);
     setText('');
     saveDraft(keyRef.current, '');
@@ -438,7 +476,9 @@ export function Composer({
 
       {mention && suggestions.length > 0 && (
         <div className="absolute bottom-full left-4 right-4 z-20 mb-1 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg md:left-5 md:right-auto md:w-80">
-          <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Mencionar</div>
+          <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            {mention.projectsOnly ? 'Proyecto' : 'Mencionar'}
+          </div>
           {suggestions.map((s, i) => (
             <button
               key={s.id}
@@ -450,7 +490,11 @@ export function Composer({
               onMouseEnter={() => setActive(i)}
               className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm', i === active && 'bg-accent')}
             >
-              {s.id === '__canal' || s.id === '__tarea' ? (
+              {s.kind === 'project' || s.id === '__proyecto' ? (
+                <span className="grid size-6 place-items-center rounded-md bg-success/10 text-success">
+                  <FolderKanban className="size-3.5" />
+                </span>
+              ) : s.id === '__canal' || s.id === '__tarea' ? (
                 <span className="grid size-6 place-items-center rounded-md bg-primary/10 text-xs font-bold text-primary">
                   {s.id === '__tarea' ? '#' : '@'}
                 </span>
@@ -571,7 +615,7 @@ export function Composer({
             </Button>
           )}
           <span className="ml-1 hidden text-[11px] text-muted-foreground md:inline">
-            <kbd className="font-sans">Shift + Enter</kbd> para salto de línea · <kbd className="font-sans">@</kbd> para mencionar
+            <kbd className="font-sans">Shift + Enter</kbd> para salto de línea · <kbd className="font-sans">@</kbd> para mencionar personas o proyectos
             {' · '}
             <kbd className="font-sans">@tarea</kbd> para citar una tarea · <kbd className="font-sans">/ticket</kbd> para crear un ticket
           </span>
@@ -598,6 +642,8 @@ export function Composer({
       <TicketDialog
         open={ticket.open}
         initialTitle={ticket.title}
+        initialProjectId={ticket.projectId ?? undefined}
+        initialAssigneeId={ticket.assigneeId ?? undefined}
         onOpenChange={(open) => setTicket((t) => ({ ...t, open }))}
       />
 
@@ -605,7 +651,7 @@ export function Composer({
         <StatusDialog
           open={statusOpen}
           onOpenChange={setStatusOpen}
-          onSend={(note, tasks) => onSend(encodeMentions(note, devs), [], tasks)}
+          onSend={(note, tasks) => onSend(encodeMentions(note, devs, projects), [], tasks)}
         />
       )}
     </div>

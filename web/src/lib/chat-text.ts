@@ -6,35 +6,115 @@ import type { ChatConversation, ChatMessage } from './chat';
 //
 // En el compositor se escribe `@Nombre Apellido` (lo inserta el autocompletado); al enviar se
 // guarda como `<@devId>` para que un cambio de nombre no rompa mensajes viejos. `@canal` ↔ `<!canal>`.
+//
+// Proyectos: `@Nombre del proyecto` se guarda como `<@proyecto:id|Nombre>`. El nombre va DENTRO
+// del token para que el push y el render lo muestren sin consultar proyectos (un mensaje viejo de
+// un proyecto renombrado conserva el nombre de entonces, como una cita). Sirve para crear la tarea
+// del mensaje en ese proyecto sin que nadie (ni la IA) tenga que elegirlo.
 
 export const CHANNEL_TOKEN = '<!canal>';
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
-const TOKEN_RE = new RegExp(`<@(${UUID})>|<!canal>`, 'g');
+const PROJECT_TOKEN = `<@proyecto:(${UUID})\\|([^>|\\n]{1,120})>`;
+const TOKEN_RE = new RegExp(`<@(${UUID})>|<!canal>|${PROJECT_TOKEN}`, 'g');
+const PROJECT_TOKEN_RE = new RegExp(PROJECT_TOKEN, 'g');
+const DEV_TOKEN_RE = new RegExp(`<@(${UUID})>`, 'g');
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Texto del compositor → cuerpo con tokens. Nombres más largos primero (no partir "Ana María" en "Ana"). */
-export function encodeMentions(text: string, devs: { id: string; name: string }[]): string {
+/** Token de un proyecto mencionado. El nombre se limpia de lo que rompería el token. */
+export function projectToken(id: string, name: string): string {
+  const clean = name.replace(/[<>|\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'proyecto';
+  return `<@proyecto:${id}|${clean}>`;
+}
+
+/**
+ * Texto del compositor → cuerpo con tokens. Personas y proyectos juntos, los nombres más largos
+ * primero: no partir "Ana María" en "Ana", ni el proyecto "Ana App" en la persona "Ana".
+ */
+export function encodeMentions(
+  text: string,
+  devs: { id: string; name: string }[],
+  projects: { id: string; name: string }[] = [],
+): string {
   let out = text.replace(/(^|[^\p{L}\p{N}_])@canal(?![\p{L}\p{N}_])/giu, `$1${CHANNEL_TOKEN}`);
-  const sorted = [...devs].filter((d) => d.name.trim()).sort((a, b) => b.name.length - a.name.length);
-  for (const d of sorted) {
-    const re = new RegExp(`(^|[^\\p{L}\\p{N}_<])@${escapeRe(d.name.trim())}(?![\\p{L}\\p{N}_])`, 'giu');
-    out = out.replace(re, `$1<@${d.id}>`);
+  const targets = [
+    ...devs.map((d) => ({ name: d.name.trim(), token: () => `<@${d.id}>` })),
+    ...projects.map((p) => ({ name: p.name.trim(), token: () => projectToken(p.id, p.name) })),
+  ]
+    .filter((t) => t.name)
+    .sort((a, b) => b.name.length - a.name.length);
+  for (const t of targets) {
+    // `<` antes de la `@` = ya es un token (`<@id>`, `<@proyecto:…>`): no se vuelve a tocar.
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}_<|])@${escapeRe(t.name)}(?![\\p{L}\\p{N}_])`, 'giu');
+    out = out.replace(re, (_m, pre: string) => `${pre}${t.token()}`);
   }
   return out;
 }
 
 /** Cuerpo con tokens → texto editable (para editar un mensaje). */
 export function decodeMentions(body: string, nameOf: (id: string) => string | undefined): string {
-  return body.replace(TOKEN_RE, (_tok, id?: string) => (id ? `@${nameOf(id.toLowerCase()) ?? 'alguien'}` : '@canal'));
+  return body.replace(TOKEN_RE, (_tok, id?: string, _pid?: string, pname?: string) =>
+    pname ? `@${pname}` : id ? `@${nameOf(id.toLowerCase()) ?? 'alguien'}` : '@canal',
+  );
 }
 
-/** Cuerpo con tokens → markdown con enlaces `#mention-<id>` que el render convierte en píldoras. */
+/** Cuerpo con tokens → markdown con enlaces `#mention-<id>` / `#project-<id>` que el render
+ *  convierte en píldoras. */
 export function mentionsToMarkdown(body: string, nameOf: (id: string) => string | undefined): string {
-  return body.replace(TOKEN_RE, (_tok, id?: string) => {
+  return body.replace(TOKEN_RE, (_tok, id?: string, pid?: string, pname?: string) => {
+    if (pid) return `[@${pname!.replace(/[[\]]/g, '')}](#project-${pid.toLowerCase()})`;
     if (!id) return '[@canal](#mention-canal)';
     const name = (nameOf(id.toLowerCase()) ?? 'alguien').replace(/[[\]]/g, '');
     return `[@${name}](#mention-${id.toLowerCase()})`;
   });
+}
+
+/** Personas mencionadas en el cuerpo (ids en minúsculas, sin repetir, en orden). A diferencia de
+ *  `message.mentions` incluye a quien no es miembro de la conversación: para ASIGNAR una tarea
+ *  cuenta a quién se arrobó, no a quién le llega el aviso. */
+export function extractDevMentions(body: string): string[] {
+  const out: string[] = [];
+  for (const m of body.matchAll(DEV_TOKEN_RE)) {
+    const id = m[1]!.toLowerCase();
+    if (!out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/** Proyectos mencionados en el cuerpo, sin repetir y en orden de aparición. */
+export function extractProjectMentions(body: string): { id: string; name: string }[] {
+  const out: { id: string; name: string }[] = [];
+  for (const m of body.matchAll(PROJECT_TOKEN_RE)) {
+    const id = m[1]!.toLowerCase();
+    if (!out.some((p) => p.id === id)) out.push({ id, name: m[2]! });
+  }
+  return out;
+}
+
+/** El cuerpo sin menciones (personas, proyectos, @canal): para el NOMBRE de una tarea, donde
+ *  "@Ana arregla el login @HyperHub" debe quedar "arregla el login". */
+export function withoutMentions(body: string): string {
+  return body
+    .replace(TOKEN_RE, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/^[ \t]+|[ \t]+$/gm, '')
+    .replace(/^[,:;.\-–—\s]+/, '')
+    .trim();
+}
+
+/**
+ * `/ticket …` con menciones: `/ticket arreglar login @Ana @HyperHub` → título "arreglar login",
+ * responsable Ana y proyecto HyperHub, sin que roz (ni Jev) tenga que elegirlos. Si hay varias
+ * personas o proyectos, cuenta el primero de cada uno.
+ */
+export function parseTicketMentions(
+  raw: string,
+  devs: { id: string; name: string }[],
+  projects: { id: string; name: string }[],
+): { title: string; assigneeId: string | null; projectId: string | null } {
+  const encoded = encodeMentions(raw, devs, projects);
+  const assigneeId = [...encoded.matchAll(DEV_TOKEN_RE)][0]?.[1]?.toLowerCase() ?? null;
+  const projectId = extractProjectMentions(encoded)[0]?.id ?? null;
+  return { title: withoutMentions(encoded), assigneeId, projectId };
 }
 
 // ---- Citas de tareas ----
@@ -72,6 +152,19 @@ export function taskQueryAt(text: string, caret: number): { start: number; query
   if (!m) return null;
   const query = (m[2] ?? '').trimStart();
   if (query.length > MAX_TASK_QUERY) return null;
+  return { start: m.index + m[1]!.length, query };
+}
+
+/**
+ * `@proyecto <texto>` bajo el cursor: abre la búsqueda SOLO de proyectos. A diferencia de la `@`
+ * suelta, el texto admite varios espacios ("@proyecto Hyper Hub App"). null = no aplica.
+ */
+export function projectQueryAt(text: string, caret: number): { start: number; query: string } | null {
+  const before = text.slice(0, caret);
+  const m = /(^|[\s(])@proyecto(?:[ \t]+([^\n@]*))?$/iu.exec(before);
+  if (!m) return null;
+  const query = (m[2] ?? '').trimStart();
+  if (query.length > 60) return null;
   return { start: m.index + m[1]!.length, query };
 }
 

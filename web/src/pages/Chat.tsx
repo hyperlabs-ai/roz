@@ -13,7 +13,9 @@ import { TaskBridgeContext, type TaskBridge } from '@/components/chat/TaskChip';
 import { TaskDialog } from '@/components/TaskDialog';
 import { apiGet, type Ticket, type TicketFilterOptions } from '@/lib/api';
 import { useApi } from '@/lib/useApi';
-import { chatApi, conversationTitle, decodeMentions, type ChatMessage, type ChatTaskRef } from '@/lib/chat';
+import {
+  chatApi, conversationTitle, decodeMentions, extractDevMentions, extractProjectMentions, withoutMentions, type ChatMessage, type ChatTaskRef,
+} from '@/lib/chat';
 import { cn } from '@/lib/utils';
 
 const LAST_KEY = 'roz-chat-last';
@@ -195,13 +197,19 @@ export default function Chat() {
     const conv = chat.conversations.find((c) => c.id === m.conversationId);
     const author = m.authorDevId ? chat.nameOf(m.authorDevId) ?? 'Alguien' : 'Alguien';
     const text = decodeMentions(m.body, chat.nameOf).trim();
+    // El nombre de la tarea va sin las menciones ("@Ana arregla el login @HyperHub" → "arregla el
+    // login"): quién y dónde ya quedan en responsables y proyecto.
+    const bare = decodeMentions(withoutMentions(m.body), chat.nameOf).trim();
     const where = conv ? (conv.kind === 'channel' ? `#${conv.name}` : `MD con ${conversationTitle(conv, chat.nameOf, chat.me)}`) : 'el chat';
     const link = `${window.location.origin}/app/chat/m/${m.id}`;
-    const activeIds = new Set(chat.devs.filter((d) => d.active).map((d) => d.id));
+    const activeById = new Map(chat.devs.filter((d) => d.active).map((d) => [d.id.toLowerCase(), d.id]));
     return {
-      name: firstLinePlain(text) || `Seguimiento del mensaje de ${author}`,
+      name: firstLinePlain(bare) || firstLinePlain(text) || `Seguimiento del mensaje de ${author}`,
       description: `${text}${text ? '\n\n' : ''}— Desde [${where}](${link}) · ${author}`,
-      assigneeDevIds: m.mentions.filter((id) => activeIds.has(id)),
+      // Asignación SIN IA: las personas arrobadas son las responsables y el `@proyecto` mencionado
+      // es el proyecto. Lo que no se mencionó, se elige en el diálogo.
+      assigneeDevIds: extractDevMentions(m.body).map((id) => activeById.get(id)).filter((id): id is string => !!id),
+      projectId: extractProjectMentions(m.body)[0]?.id,
     };
   }, [taskDialog, chat.conversations, chat.nameOf, chat.devs, chat.me]);
 

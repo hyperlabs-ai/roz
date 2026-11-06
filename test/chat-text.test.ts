@@ -98,3 +98,12 @@ describe('statusTaskIds (bloque Status)', () => {
     expect(statusTaskIds({ type: 'status', taskIds: 'nope' })).toEqual([]);
   });
 });
+
+describe('menciones de proyecto en el push', () => {
+  const P = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+  it('el push muestra el nombre del proyecto, no el token; no cuenta como persona mencionada', () => {
+    const body = `<@${A}> revisa el login <@proyecto:${P}|Hyper Hub>`;
+    expect(previewText(body, nameOf)).toBe('@Carmen Vega revisa el login @Hyper Hub');
+    expect(extractMentions(body)).toEqual([A]);
+  });
+});
