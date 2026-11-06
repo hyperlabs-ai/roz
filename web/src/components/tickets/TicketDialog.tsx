@@ -7,17 +7,21 @@ import { TicketForm, useTicketReady } from './TicketForm';
 
 /**
  * `/ticket` en el chat: el mismo formulario de la pestaña Ticket, en un modal. Lo que se escribió
- * después de `/ticket` llega como nombre.
+ * después de `/ticket` llega como nombre; la `@persona` y el `@proyecto` mencionados, ya elegidos.
  */
 export function TicketDialog({
   open,
   onOpenChange,
   initialTitle,
+  initialProjectId,
+  initialAssigneeId,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   initialTitle?: string;
+  initialProjectId?: string;
+  initialAssigneeId?: string;
   onCreated?: (r: TicketCreateResponse) => void;
 }) {
   // Las opciones de filtro son casi estáticas y las comparten Tareas, Chat y Ticket (misma caché).
@@ -44,10 +48,12 @@ export function TicketDialog({
         ) : (
           // `key`: cada apertura empieza limpia (con el título que venga del chat).
           <TicketForm
-            key={`${open}-${initialTitle ?? ''}`}
+            key={`${open}-${initialTitle ?? ''}-${initialProjectId ?? ''}-${initialAssigneeId ?? ''}`}
             dense
             filters={filters.data}
             initialTitle={initialTitle}
+            initialProjectId={initialProjectId}
+            initialAssigneeId={initialAssigneeId}
             onCancel={() => onOpenChange(false)}
             onDone={(r) => {
               onCreated?.(r);

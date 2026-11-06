@@ -19,6 +19,8 @@ import { SUGGESTION_LABEL, isOverrideRequired } from '@/lib/assign';
 import { cn } from '@/lib/utils';
 
 const NONE = '__none__';
+/** Override automático cuando el responsable vino de una `@mención` (categoría cerrada del backend). */
+const MENTION_OVERRIDE = { category: 'preferencia', note: 'Asignado con @mención en /ticket del chat' };
 const textareaCls =
   'scroll-thin w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm leading-relaxed shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
@@ -35,6 +37,7 @@ export function TicketForm({
   filters,
   initialTitle = '',
   initialProjectId,
+  initialAssigneeId,
   onDone,
   onCancel,
   dense = false,
@@ -42,6 +45,9 @@ export function TicketForm({
   filters: TicketFilterOptions;
   initialTitle?: string;
   initialProjectId?: string;
+  /** Responsable elegido con `@persona` en el `/ticket` del chat: gana a la propuesta de roz y no
+   *  pide motivo (la persona ya dijo a quién). */
+  initialAssigneeId?: string;
   /** Se creó el ticket (el modal del chat se cierra con esto). */
   onDone?: (r: TicketCreateResponse) => void;
   onCancel?: () => void;
@@ -60,8 +66,10 @@ export function TicketForm({
   // Texto con el que se hizo la vista previa: si la persona lo edita después, hay que volver a leerlo.
   const [previewedText, setPreviewedText] = useState<{ title: string; projectId: string; description: string } | null>(null);
   const [corrections, setCorrections] = useState<TicketCorrections>({});
+  // Responsable por `@mención` (solo si es un dev que existe en las opciones).
+  const mentioned = initialAssigneeId && (filters.devs ?? []).some((d) => d.id === initialAssigneeId) ? initialAssigneeId : undefined;
   // undefined = lo que propone roz; null = sin responsable; string = alguien elegido a mano.
-  const [assignee, setAssignee] = useState<string | null | undefined>(undefined);
+  const [assignee, setAssignee] = useState<string | null | undefined>(mentioned);
   const [askReason, setAskReason] = useState(false);
   const [result, setResult] = useState<TicketCreateResponse | null>(null);
 
@@ -146,6 +154,12 @@ export function TicketForm({
 
   function onCreateClick() {
     if (!preview) return;
+    // Elegido con `@persona` en el chat: el motivo ya está dicho. Queda registrado como preferencia
+    // del equipo (sirve igual para que roz aprenda) sin interrumpir con el diálogo.
+    if (mentioned && finalAssignee === mentioned && preview.chosenDevId && finalAssignee !== preview.chosenDevId) {
+      void create(MENTION_OVERRIDE);
+      return;
+    }
     // Cambiar al que propuso roz pide motivo (lo mismo que corregir una asignación automática).
     if (preview.chosenDevId && finalAssignee !== preview.chosenDevId) {
       setAskReason(true);
@@ -438,8 +452,13 @@ export function TicketForm({
                   ))}
                 </SelectContent>
               </Select>
-              {preview.chosenDevId && finalAssignee !== preview.chosenDevId && (
-                <p className="text-xs text-muted-foreground">Al crear te pregunto por qué cambias la propuesta de roz (ayuda a que aprenda).</p>
+              {mentioned && finalAssignee === mentioned ? (
+                <p className="text-xs text-muted-foreground">Elegido con @mención en el chat.</p>
+              ) : (
+                preview.chosenDevId &&
+                finalAssignee !== preview.chosenDevId && (
+                  <p className="text-xs text-muted-foreground">Al crear te pregunto por qué cambias la propuesta de roz (ayuda a que aprenda).</p>
+                )
               )}
             </div>
 

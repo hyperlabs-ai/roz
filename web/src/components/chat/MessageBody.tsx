@@ -1,5 +1,7 @@
 import { memo, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
+import { FolderKanban } from 'lucide-react';
 import remarkGfm from 'remark-gfm';
 import { useChat } from '@/chat/ChatContext';
 import { mentionsToMarkdown, taskRefsToMarkdown, type ChatTaskRef } from '@/lib/chat';
@@ -9,6 +11,7 @@ import { cn } from '@/lib/utils';
 /**
  * Cuerpo de un mensaje: markdown (GFM, sin HTML crudo → sin XSS) con menciones y citas de tareas.
  *   · Menciones: tokens `<@id>` → enlaces `#mention-<id>` → píldoras como en Slack (la tuya resalta).
+ *   · Proyectos: `<@proyecto:id|Nombre>` → enlace `#project-<id>` → píldora que lleva al proyecto.
  *   · Tareas: `#ROZ-12` que existe → enlace `#task-<id>` → ficha en línea que abre la tarea. Su
  *     tarjeta del kanban va debajo del mensaje (MessageTasks); aquí solo el identificador clicable.
  */
@@ -42,6 +45,18 @@ export const MessageBody = memo(function MessageBody({
                 <span className={cn('rounded px-0.5 font-medium', isMe ? 'bg-warning/15 text-warning' : 'bg-primary/10 text-primary')}>
                   {children}
                 </span>
+              );
+            }
+            if (href?.startsWith('#project-')) {
+              const id = href.slice('#project-'.length);
+              return (
+                <Link
+                  to={`/app/projects/${id}`}
+                  className="inline-flex items-baseline gap-0.5 rounded bg-success/10 px-1 font-medium text-success no-underline hover:bg-success/20"
+                >
+                  <FolderKanban className="size-3 translate-y-[1px] self-center" />
+                  {children}
+                </Link>
               );
             }
             if (href?.startsWith('#task-')) {

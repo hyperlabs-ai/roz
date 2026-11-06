@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   CHANNEL_TOKEN, chatBadge, continuesGroup, dayLabel, decodeMentions, encodeMentions, mentionQueryAt,
   mentionsMe, mentionsToMarkdown, messageAlerts, taskQueryAt, taskRefsToMarkdown, attachmentKind, galleryLayout,
-  tooLargeMessage, downloadUrl,
+  tooLargeMessage, downloadUrl, extractDevMentions, extractProjectMentions, withoutMentions, parseTicketMentions,
+  projectQueryAt,
 } from '../web/src/lib/chat-text.js';
 import type { ChatConversation, ChatMessage } from '../web/src/lib/chat.js';
 
@@ -199,5 +200,55 @@ describe('adjuntos: tipo, galería y límite', () => {
 
   it('la descarga respeta la query de la URL firmada', () => {
     expect(downloadUrl('https://x.supabase.co/o/a.png?token=t', 'mi foto.png')).toBe('https://x.supabase.co/o/a.png?token=t&download=mi%20foto.png');
+  });
+});
+
+describe('menciones de proyecto y tareas sin IA', () => {
+  const P1 = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+  const P2 = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+  const projects = [
+    { id: P1, name: 'Hyper Hub' },
+    { id: P2, name: 'Ana App' },
+  ];
+
+  it('codifica proyectos junto a personas, el nombre más largo primero', () => {
+    // "Ana App" (proyecto) no se parte en "Ana" (persona) + " App".
+    expect(encodeMentions('@Ana App y @Ana', devs, projects)).toBe(`<@proyecto:${P2}|Ana App> y <@${A}>`);
+    expect(encodeMentions('ve @hyper hub', devs, projects)).toBe(`ve <@proyecto:${P1}|Hyper Hub>`);
+    // Sin lista de proyectos, el texto se queda igual (compatibilidad con quien no los pasa).
+    expect(encodeMentions('@Hyper Hub', devs)).toBe('@Hyper Hub');
+  });
+
+  it('decodifica para editar y arma la píldora del render', () => {
+    const body = `<@${A}> en <@proyecto:${P1}|Hyper Hub>`;
+    expect(decodeMentions(body, nameOf)).toBe('@Ana en @Hyper Hub');
+    expect(mentionsToMarkdown(body, nameOf)).toBe(`[@Ana](#mention-${A}) en [@Hyper Hub](#project-${P1})`);
+  });
+
+  it('extrae personas (aunque no sean miembros) y proyectos, sin repetir', () => {
+    const body = `<@${B}> y <@${A}> en <@proyecto:${P1}|Hyper Hub> <@${B}> <@proyecto:${P1}|Hyper Hub>`;
+    expect(extractDevMentions(body)).toEqual([B, A]);
+    expect(extractProjectMentions(body)).toEqual([{ id: P1, name: 'Hyper Hub' }]);
+  });
+
+  it('el nombre de la tarea va sin menciones', () => {
+    expect(withoutMentions(`<@${A}> arregla el login <@proyecto:${P1}|Hyper Hub>`)).toBe('arregla el login');
+    expect(withoutMentions(`<@${A}>: revisa esto ${CHANNEL_TOKEN}`)).toBe('revisa esto');
+  });
+
+  it('/ticket toma responsable y proyecto de las menciones y los quita del título', () => {
+    expect(parseTicketMentions('arreglar login @Ana @Hyper Hub', devs, projects)).toEqual({
+      title: 'arreglar login',
+      assigneeId: A,
+      projectId: P1,
+    });
+    expect(parseTicketMentions('solo texto', devs, projects)).toEqual({ title: 'solo texto', assigneeId: null, projectId: null });
+  });
+
+  it('@proyecto abre la búsqueda solo de proyectos y admite espacios', () => {
+    expect(projectQueryAt('mira @proyecto', 14)).toEqual({ start: 5, query: '' });
+    expect(projectQueryAt('mira @proyecto Hyper Hub', 24)).toEqual({ start: 5, query: 'Hyper Hub' });
+    expect(projectQueryAt('@proyectos', 10)).toBeNull();
+    expect(projectQueryAt('ana@proyecto x', 14)).toBeNull();
   });
 });

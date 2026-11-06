@@ -4,6 +4,7 @@ import {
   AlertCircle, FileText, ListPlus, Loader2, MessageSquareReply, MoreHorizontal, Pencil, RotateCw, Trash2, X,
 } from 'lucide-react';
 import { useChat } from '@/chat/ChatContext';
+import { useChatProjects } from '@/chat/useChatProjects';
 import { useMessageActions } from '@/chat/useMessages';
 import { AvatarStack, UserAvatar } from '@/components/bits';
 import { Button } from '@/components/ui/button';
@@ -66,6 +67,7 @@ function Attachments({ items }: { items: ChatAttachment[] }) {
 
 function EditBox({ message, onDone }: { message: ChatMessage; onDone: () => void }) {
   const { nameOf, devs } = useChat();
+  const projects = useChatProjects();
   const { edit } = useMessageActions();
   const [text, setText] = useState(() => decodeMentions(message.body, nameOf));
   const [busy, setBusy] = useState(false);
@@ -86,7 +88,7 @@ function EditBox({ message, onDone }: { message: ChatMessage; onDone: () => void
   }, [text]);
 
   async function save() {
-    const body = encodeMentions(text.trim(), devs);
+    const body = encodeMentions(text.trim(), devs, projects);
     if (body === message.body) return onDone();
     if (!body && !message.attachments.length) {
       toast.error('El mensaje no puede quedar vacío', { description: 'Si ya no sirve, elimínalo.' });

@@ -11,6 +11,9 @@
 const UUID = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
 const MENTION_RE = new RegExp(`<@(${UUID})>`, 'g');
 export const CHANNEL_TOKEN = '<!canal>';
+// Proyecto mencionado: `<@proyecto:id|Nombre>` (lo arma el compositor; ver web/src/lib/chat-text.ts).
+// No es una persona: no entra en `extractMentions` ni avisa a nadie. El nombre va en el token.
+const PROJECT_RE = new RegExp(`<@proyecto:${UUID}\\|([^>|\\n]{1,120})>`, 'g');
 
 // Citas de tareas: `#ROZ-12` (el identificador canónico, ver ARCHITECTURE: KEY-N). No se guarda un
 // token aparte: el identificador ya es estable y legible, así que el texto se queda como lo escribió
@@ -63,6 +66,7 @@ export function hasChannelMention(body: string): boolean {
  */
 export function previewText(body: string, nameOf: (devId: string) => string | undefined, max = 140): string {
   const text = body
+    .replace(PROJECT_RE, (_, name: string) => `@${name}`)
     .replace(MENTION_RE, (_, id: string) => `@${nameOf(id.toLowerCase()) ?? 'alguien'}`)
     .replaceAll(CHANNEL_TOKEN, '@canal')
     .replace(/```[\s\S]*?```/g, ' [código] ')
