@@ -1,118 +1,65 @@
-// Notificaciones [fase 3]. Efectos disparados por el drain del outbox. Canal: EMAIL (Resend).
-// Cada envío deja un registro en `notification` (sent/failed con provider_id o error). La
-// idempotencia la da el outbox: el evento solo se marca `done` si el efecto no lanzó; si el
-// envío falla, se lanza para que el drain reintente (backoff).
+// Notificaciones de roz. Efectos disparados por el drain del outbox (asignación, cierre, cambios
+// documentados, repo nuevo) y avisos directos por push (PR integrada/revisada, junta lista, fechas).
+//
+// El TEXTO de cada aviso vive en ./copy.ts (puro, con pruebas): aquí solo se junta el contexto del
+// evento (quién, qué tarea, qué proyecto), se respeta cada interruptor y se entrega.
+//
+// Canal correo (Resend): cada envío deja un registro en `notification`. La idempotencia la da el
+// outbox: el evento solo se marca `done` si el efecto no lanzó; si el envío falla, se lanza para que
+// el drain reintente (backoff). Los avisos solo-push son best-effort y nunca lanzan.
 import { db } from '../db/supabase.js';
 import { config } from '../config.js';
 import { sendEmail } from '../adapters/email.js';
 import { pushToDev, pushToEmail } from './push.js';
 import { emailAllowed, emailEnabled } from './switches.js';
 import { claimOnce, releaseOnce } from '../events/outbox.js';
+import {
+  assignedNotice,
+  documentedNotice,
+  dueNotice,
+  meetingReadyNotice,
+  prMergedNotice,
+  prReviewedNotice,
+  renderEmail,
+  repoDetectedNotice,
+  toPush,
+  workDoneNotice,
+  type DueItem,
+  type PrRef,
+  type ReviewState,
+} from './copy.js';
 
-interface AssignedPayload {
+export interface AssignedPayload {
   workItemId?: string;
   devId?: string;
   identifier?: string;
+  /** Quien asignó (dev de roz). Ausente = no se sabe. */
+  actorDevId?: string | null;
+  /** A quién se le quitó la tarea para dársela a `devId`. */
+  previousDevId?: string | null;
+  /** La asignó roz por reglas (asignación automática). */
+  auto?: boolean;
 }
 
-/** "Manuel (AI Developer)" -> "Manuel". Quita el rol entre paréntesis del nombre. */
-function firstName(name?: string | null): string {
-  if (!name) return '';
-  return name.replace(/\s*\(.*\)\s*$/, '').trim();
-}
+interface DevRow { id: string; name: string | null; email: string | null }
+
+const OPEN_STATUSES = ['planificada', 'pendiente', 'en_progreso', 'revision'];
 
 /** Deep-link a la tarea nativa en el dashboard de roz (abre el detalle vía ?task=<id>). */
 function taskUrl(id?: string | null): string | null {
   return id && config.dashboard.url ? `${config.dashboard.url}/app/tasks?task=${id}` : null;
 }
 
-/** Plantilla de correo: branding ROZ, bien formateada, con botón directo a la tarea en el dashboard. */
-function renderEmail(opts: {
-  greeting: string;
-  identifier: string;
-  name: string;
-  priority?: string | null;
-  url?: string | null;
-}): { html: string; text: string } {
-  const { greeting, identifier, name, priority, url } = opts;
-  const button = url
-    ? `<a href="${url}" style="display:inline-block;background:#5e6ad2;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Abrir tarea →</a>`
-    : '';
-  const prioBadge = priority
-    ? `<span style="display:inline-block;background:#eef0ff;color:#5e6ad2;border-radius:6px;padding:3px 10px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.4px">${priority}</span>`
-    : '';
-
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-    <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e8eb">
-      <tr><td style="background:#0d0d12;padding:20px 28px">
-        <span style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:3px">ROZ</span>
-      </td></tr>
-      <tr><td style="padding:28px">
-        <p style="margin:0 0 4px;color:#6b7280;font-size:13px">${greeting}</p>
-        <p style="margin:0 0 18px;color:#111827;font-size:17px;font-weight:600">Te asignaron una tarea</p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:10px;margin-bottom:22px">
-          <tr><td style="padding:16px 18px">
-            <div style="color:#5e6ad2;font-size:13px;font-weight:700;margin-bottom:4px">${identifier} &nbsp;${prioBadge}</div>
-            <div style="color:#111827;font-size:15px;line-height:1.4">${name}</div>
-          </td></tr>
-        </table>
-        ${button}
-      </td></tr>
-      <tr><td style="padding:16px 28px;border-top:1px solid #eef0f2">
-        <span style="color:#9ca3af;font-size:12px">Enviado por ROZ · enrutamiento y contexto de desarrollo</span>
-      </td></tr>
-    </table>
-  </td></tr></table>
-</body></html>`;
-
-  const text =
-    `${greeting}\nTe asignaron ${identifier}${name ? ` — ${name}` : ''}` +
-    (priority ? ` (prioridad: ${priority})` : '') +
-    (url ? `\n\nAbrir tarea: ${url}` : '') +
-    `\n\n— ROZ`;
-
-  return { html, text };
+async function devById(id?: string | null): Promise<DevRow | null> {
+  if (!id) return null;
+  const { data } = await db().from('dev').select('id, name, email').eq('id', id).maybeSingle();
+  return (data as DevRow | null) ?? null;
 }
 
-/** Plantilla de cierre: avisa a quien propuso que su cambio quedó cerrado y documentado. */
-function renderDoneEmail(opts: {
-  identifier: string;
-  name: string;
-  url?: string | null;
-}): { html: string; text: string } {
-  const { identifier, name, url } = opts;
-  const button = url
-    ? `<a href="${url}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver tarea →</a>`
-    : '';
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-    <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e8eb">
-      <tr><td style="background:#0d0d12;padding:20px 28px">
-        <span style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:3px">ROZ</span>
-      </td></tr>
-      <tr><td style="padding:28px">
-        <p style="margin:0 0 4px;color:#16a34a;font-size:13px;font-weight:600">✓ Completado</p>
-        <p style="margin:0 0 18px;color:#111827;font-size:17px;font-weight:600">Tu solicitud quedó cerrada y documentada</p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:10px;margin-bottom:22px">
-          <tr><td style="padding:16px 18px">
-            <div style="color:#5e6ad2;font-size:13px;font-weight:700;margin-bottom:4px">${identifier}</div>
-            <div style="color:#111827;font-size:15px;line-height:1.4">${name}</div>
-          </td></tr>
-        </table>
-        ${button}
-      </td></tr>
-      <tr><td style="padding:16px 28px;border-top:1px solid #eef0f2">
-        <span style="color:#9ca3af;font-size:12px">Enviado por ROZ · enrutamiento y contexto de desarrollo</span>
-      </td></tr>
-    </table>
-  </td></tr></table>
-</body></html>`;
-  const text =
-    `✓ Completado\nTu solicitud ${identifier}${name ? ` — ${name}` : ''} quedó cerrada y documentada.` +
-    (url ? `\n\nVer tarea: ${url}` : '') +
-    `\n\n— ROZ`;
-  return { html, text };
+async function projectName(id?: string | null): Promise<string | null> {
+  if (!id) return null;
+  const { data } = await db().from('project').select('name').eq('id', id).maybeSingle();
+  return (data as { name: string } | null)?.name ?? null;
 }
 
 /** Avisa a quien propuso (requester) que su cambio cerró. Registra el envío en `notification`. */
@@ -127,8 +74,11 @@ export async function notifyProposerDone(opts: {
   // aplica el interruptor global.
   if (!(await emailEnabled())) return;
   const supabase = db();
-  const subject = `ROZ · ${opts.identifier} completado${opts.name ? ` — ${opts.name}` : ''}`;
-  const { html, text } = renderDoneEmail(opts);
+  // Quien reportó suele ser del equipo: si lo es, se le habla por su nombre.
+  const { data: who } = await supabase.from('dev').select('name').ilike('email', opts.to).limit(1);
+  const recipient = (who as { name: string | null }[] | null)?.[0]?.name ?? null;
+  const notice = workDoneNotice({ seed: `done:${opts.identifier}`, recipient, identifier: opts.identifier, name: opts.name, url: opts.url });
+  const { subject, html, text } = renderEmail(notice, config.dashboard.url);
   try {
     const res = await sendEmail({ to: opts.to, subject, html, text });
     await supabase.from('notification').insert({
@@ -139,12 +89,7 @@ export async function notifyProposerDone(opts: {
       status: 'sent',
       provider_id: res.id,
     });
-    await pushToEmail(opts.to, {
-      title: `${opts.identifier} completado`,
-      body: opts.name ? `Cerrado y documentado — ${opts.name}` : 'Tu solicitud quedó cerrada y documentada',
-      url: `${config.dashboard.url}/app/tickets`,
-      tag: `done:${opts.identifier}`,
-    }, 'work_done');
+    await pushToEmail(opts.to, toPush(notice, { url: `${config.dashboard.url}/app/tickets`, tag: `done:${opts.identifier}` }), 'work_done');
   } catch (err) {
     await supabase.from('notification').insert({
       channel: 'email',
@@ -158,10 +103,12 @@ export async function notifyProposerDone(opts: {
   }
 }
 
-/** Avisa por correo al dev que le asignaron un issue. */
+/** Avisa al dev que le asignaron una tarea (correo + push), con quién, qué y para cuándo. */
 export async function notifyAssignment(payload: AssignedPayload): Promise<void> {
   const { workItemId, devId, identifier } = payload;
   if (!devId || !identifier) return;
+  // Tomar una tarea uno mismo no necesita aviso.
+  if (payload.actorDevId && payload.actorDevId === devId) return;
 
   // Interruptores (global + el del dev) ANTES del guard anti-duplicado: si se consumiera el claim
   // con los avisos apagados, al reencenderlos este dev ya nunca recibiría el correo.
@@ -175,39 +122,45 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
   const notifyKey = `notify-assign:${identifier}:${devId}`;
   const firstTime = await claimOnce(notifyKey, 'notify-assign');
   if (!firstTime) return;
-  const releaseAndThrow = async (err: unknown): Promise<never> => {
-    await supabase.from('idempotency_key').delete().eq('key', notifyKey);
-    throw err;
-  };
-  const { data: dev } = await supabase
-    .from('dev')
-    .select('id, name, email')
-    .eq('id', devId)
-    .single();
-  const { data: wi } = workItemId
-    ? await supabase
-        .from('work_item')
-        .select('name, url, priority')
-        .eq('id', workItemId)
-        .single()
-    : { data: null };
 
-  const name = wi?.name ?? '';
-  const greeting = dev?.name ? `Hola ${firstName(dev.name)},` : 'Hola,';
-  const subject = `ROZ · Te asignaron ${identifier}${name ? ` — ${name}` : ''}`;
-  const { html, text } = renderEmail({
-    greeting,
-    identifier,
-    name,
-    priority: wi?.priority,
-    // Tareas nativas no tienen url externa → deep-link al detalle en roz; cae a la url del ticket si existiera.
-    url: taskUrl(workItemId) ?? wi?.url,
+  const dev = await devById(devId);
+  const { data: wiData } = workItemId
+    ? await supabase.from('work_item').select('name, url, priority, due_date, estimate, project_id').eq('id', workItemId).maybeSingle()
+    : { data: null };
+  const wi = wiData as { name: string | null; url: string | null; priority: string | null; due_date: string | null; estimate: number | null; project_id: string | null } | null;
+
+  // Contexto que hace el aviso concreto. Todo tolerante: si algo falla, el aviso sale más corto.
+  const [actor, previous, project, openBefore] = await Promise.all([
+    devById(payload.actorDevId).catch(() => null),
+    devById(payload.previousDevId).catch(() => null),
+    projectName(wi?.project_id).catch(() => null),
+    (async () => {
+      let q = supabase.from('work_item').select('id', { count: 'exact', head: true }).eq('assignee_dev_id', devId).in('status', OPEN_STATUSES);
+      if (workItemId) q = q.neq('id', workItemId);
+      const { count, error } = await q;
+      return error ? null : count ?? null;
+    })().catch(() => null),
+  ]);
+
+  // Tareas nativas no tienen url externa → deep-link al detalle en roz; cae a la url del ticket si existiera.
+  const url = taskUrl(workItemId) ?? wi?.url ?? null;
+  const notice = assignedNotice({
+    seed: `assign:${identifier}:${devId}`,
+    recipient: dev?.name,
+    actor: actor?.name,
+    auto: !!payload.auto,
+    previous: previous?.name,
+    task: { identifier, name: wi?.name, project, priority: wi?.priority, dueDate: wi?.due_date, estimate: wi?.estimate },
+    openBefore,
+    url,
   });
+  const { subject, html, text } = renderEmail(notice, config.dashboard.url);
 
   if (!dev?.email) {
     await supabase.from('notification').insert({
       channel: 'email',
       to_dev_id: devId,
+      template: 'assigned',
       body: text,
       status: 'failed',
       error: 'dev sin email',
@@ -221,85 +174,41 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
       channel: 'email',
       to_dev_id: devId,
       to_address: dev.email,
+      template: 'assigned',
       body: text,
       status: 'sent',
       provider_id: res.id,
     });
-    await pushToDev(devId, dev.email, {
-      title: `Te asignaron ${identifier}`,
-      body: name || 'Nueva tarea asignada',
-      url: taskUrl(workItemId) ?? `${config.dashboard.url}/app/tasks`,
-      tag: `assign:${identifier}`,
-    }, 'assigned', { urgency: 'high' });
+    await pushToDev(
+      devId,
+      dev.email,
+      toPush(notice, {
+        url: url ?? `${config.dashboard.url}/app/tasks`,
+        tag: `assign:${identifier}`,
+        requireInteraction: wi?.priority === 'urgent',
+        data: { kind: 'assigned', workItemId: workItemId ?? null },
+      }),
+      'assigned',
+      { urgency: 'high' },
+    );
   } catch (err) {
     await supabase.from('notification').insert({
       channel: 'email',
       to_dev_id: devId,
       to_address: dev.email,
+      template: 'assigned',
       body: text,
       status: 'failed',
       error: String(err),
     });
-    await releaseAndThrow(err); // libera el guard y relanza para que el drain reintente
+    await releaseOnce(notifyKey); // libera el guard y relanza para que el drain reintente
+    throw err;
   }
-}
-
-/** Plantilla: cambios documentados (trabajo ya hecho, auto-creado desde commits). */
-function renderDocumentedEmail(opts: { greeting: string; items: { identifier: string; name: string; url: string | null }[] }): { html: string; text: string } {
-  const { greeting, items } = opts;
-  const n = items.length;
-  const heading = n === 1 ? 'Se documentó tu cambio' : `Se documentaron ${n} de tus cambios`;
-  const rows = items
-    .map(
-      (i) =>
-        `<tr><td style="padding:10px 16px;border-bottom:1px solid #eef0f2">
-           <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
-             <td style="vertical-align:top">
-               <span style="color:#5e6ad2;font-size:13px;font-weight:700">${i.identifier}</span>
-               <div style="color:#111827;font-size:14px;line-height:1.4;margin-top:2px">${i.name}</div>
-             </td>
-             ${i.url ? `<td align="right" style="vertical-align:middle;white-space:nowrap"><a href="${i.url}" style="color:#5e6ad2;text-decoration:none;font-size:13px;font-weight:600">Abrir →</a></td>` : ''}
-           </tr></table>
-         </td></tr>`,
-    )
-    .join('');
-
-  // Con un solo cambio, botón directo a la tarea resuelta en el dashboard (verde = completado).
-  const button =
-    n === 1 && items[0]!.url
-      ? `<a href="${items[0]!.url}" style="display:inline-block;background:#16a34a;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver tarea →</a>`
-      : '';
-
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-    <table role="presentation" width="500" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e8eb">
-      <tr><td style="background:#0d0d12;padding:20px 28px"><span style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:3px">ROZ</span></td></tr>
-      <tr><td style="padding:28px 28px 12px">
-        <p style="margin:0 0 4px;color:#16a34a;font-size:13px;font-weight:600">✓ Cambio documentado</p>
-        <p style="margin:0 0 6px;color:#111827;font-size:17px;font-weight:600">${heading}</p>
-        <p style="margin:0 0 16px;color:#6b7280;font-size:13px">${greeting} roz registró tu trabajo (ya completado). No necesitas hacer nada.</p>
-      </td></tr>
-      <tr><td style="padding:0 12px 16px">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:10px">${rows}</table>
-      </td></tr>
-      ${button ? `<tr><td style="padding:0 28px 20px">${button}</td></tr>` : ''}
-      <tr><td style="padding:16px 28px;border-top:1px solid #eef0f2"><span style="color:#9ca3af;font-size:12px">Enviado por ROZ · documentación automática de cambios</span></td></tr>
-    </table>
-  </td></tr></table>
-</body></html>`;
-
-  const text =
-    `${heading}\n${greeting} roz registró tu trabajo (ya completado):\n\n` +
-    items.map((i) => `• ${i.identifier} — ${i.name}${i.url ? ` (${i.url})` : ''}`).join('\n') +
-    `\n\n— ROZ`;
-
-  return { html, text };
 }
 
 /**
  * Notifica al dev, en UN solo correo, los cambios que roz auto-documentó recientemente.
- * Agrupa por ventana de tiempo (el caller dedup-ea por dev+hora vía el outbox), así una PR con
- * muchos commits genera un único correo. Lista los issues completados creados desde `since`.
+ * Agrupa por estado (change_notified=false), así una PR con muchos commits genera un único correo.
  */
 export async function notifyChangesDocumented(devId: string): Promise<void> {
   if (!devId) return;
@@ -317,21 +226,21 @@ export async function notifyChangesDocumented(devId: string): Promise<void> {
     return;
   }
 
-  const { data: dev } = await supabase.from('dev').select('id, name, email').eq('id', devId).single();
+  const dev = await devById(devId);
 
   // Cambios auto-documentados PENDIENTES de notificar (change_notified=false). Agrupa por estado,
   // no por tiempo: cada PR genera nuevos pendientes (siempre notifica) y el primer evento del
   // push agarra todos; los siguientes ven 0 y no envían.
   const { data: items } = await supabase
     .from('work_item')
-    .select('id, identifier, name, url')
+    .select('id, identifier, name, url, repo')
     .eq('assignee_dev_id', devId)
     .eq('documented', true)
     .eq('change_notified', false)
     .order('completed_at', { ascending: false })
     .limit(50);
 
-  const list = (items ?? []) as { id: string; identifier: string; name: string; url: string | null }[];
+  const list = (items ?? []) as { id: string; identifier: string; name: string; url: string | null; repo: string | null }[];
   if (!list.length) return; // nada pendiente (otro evento del mismo push ya notificó)
 
   const ids = list.map((i) => i.id);
@@ -342,75 +251,30 @@ export async function notifyChangesDocumented(devId: string): Promise<void> {
     return;
   }
 
-  const greeting = dev.name ? `Hola ${firstName(dev.name)},` : 'Hola,';
-  const subject = list.length === 1 ? `ROZ · Cambio documentado — ${list[0]!.identifier}` : `ROZ · ${list.length} cambios documentados`;
-  // Deep-link a la tarea nativa (url del work_item es null en nativas) → botón/enlace "Ver tarea".
-  const emailItems = list.map((i) => ({ identifier: i.identifier, name: i.name, url: taskUrl(i.id) ?? i.url }));
-  const { html, text } = renderDocumentedEmail({ greeting, items: emailItems });
+  const listUrl = `${config.dashboard.url}/app/tasks`;
+  const notice = documentedNotice({
+    seed: `documented:${devId}:${ids[0]}`,
+    recipient: dev.name,
+    // Deep-link a la tarea nativa (url del work_item es null en nativas).
+    items: list.map((i) => ({ identifier: i.identifier, name: i.name, url: taskUrl(i.id) ?? i.url, repo: i.repo })),
+    listUrl,
+  });
+  const { subject, html, text } = renderEmail(notice, config.dashboard.url);
 
   const res = await sendEmail({ to: dev.email, subject, html, text }); // si falla, lanza → reintento (pendientes intactos)
   // Marca como notificados SOLO tras enviar OK, para que un fallo reintente sin perder el aviso.
   await supabase.from('work_item').update({ change_notified: true }).in('id', ids);
   await supabase.from('notification').insert({ channel: 'email', to_dev_id: devId, to_address: dev.email, template: 'change_documented', body: text, status: 'sent', provider_id: res.id });
-  await pushToDev(devId, dev.email, {
-    title: list.length === 1 ? 'Cambio documentado' : `${list.length} cambios documentados`,
-    body: list.length === 1 ? `${list[0]!.identifier} — ${list[0]!.name}` : 'roz registró tu trabajo',
-    // Un solo cambio → deep-link directo a esa tarea; varios → la vista de tareas.
-    url: (list.length === 1 ? taskUrl(list[0]!.id) : null) ?? `${config.dashboard.url}/app/tasks`,
-    tag: `documented:${devId}`,
-  }, 'change_documented');
-}
-
-/** Plantilla: se detectó un repo nuevo (vinculado a un proyecto, o pendiente de vincular). */
-function renderRepoDetectedEmail(opts: {
-  greeting: string;
-  repo: string;
-  repoUrl: string | null;
-  projectName: string | null;
-  linked: boolean;
-}): { html: string; text: string } {
-  const { greeting, repo, repoUrl, projectName, linked } = opts;
-  const button = repoUrl
-    ? `<a href="${repoUrl}" style="display:inline-block;background:#5e6ad2;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:600;font-size:14px">Ver en GitHub →</a>`
-    : '';
-  const badge = linked
-    ? `<p style="margin:0 0 4px;color:#16a34a;font-size:13px;font-weight:600">✓ Repo vinculado</p>`
-    : `<p style="margin:0 0 4px;color:#b45309;font-size:13px;font-weight:600">● Repo sin proyecto</p>`;
-  const heading = linked ? 'Se detectó y vinculó un repo nuevo' : 'Se detectó un repo nuevo';
-  const lead = linked
-    ? `${greeting} roz detectó el repo <strong>${repo}</strong> y lo vinculó al proyecto <strong>${projectName}</strong>.`
-    : `${greeting} roz detectó el repo <strong>${repo}</strong> y no encontró un proyecto al cual pertenezca. Vincúlenlo manualmente al proyecto correspondiente.`;
-
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-    <table role="presentation" width="500" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e8eb">
-      <tr><td style="background:#0d0d12;padding:20px 28px"><span style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:3px">ROZ</span></td></tr>
-      <tr><td style="padding:28px">
-        ${badge}
-        <p style="margin:0 0 14px;color:#111827;font-size:17px;font-weight:600">${heading}</p>
-        <p style="margin:0 0 18px;color:#6b7280;font-size:14px;line-height:1.5">${lead}</p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border:1px solid #eef0f2;border-radius:10px;margin-bottom:22px">
-          <tr><td style="padding:16px 18px">
-            <div style="color:#5e6ad2;font-size:13px;font-weight:700;margin-bottom:4px">${repo}</div>
-            <div style="color:#111827;font-size:14px;line-height:1.4">${linked ? `Proyecto: ${projectName}` : 'Sin proyecto asignado'}</div>
-          </td></tr>
-        </table>
-        ${button}
-      </td></tr>
-      <tr><td style="padding:16px 28px;border-top:1px solid #eef0f2"><span style="color:#9ca3af;font-size:12px">Enviado por ROZ · tracking de repositorios</span></td></tr>
-    </table>
-  </td></tr></table>
-</body></html>`;
-
-  const text =
-    `${heading}\n` +
-    (linked
-      ? `${greeting} roz detectó el repo ${repo} y lo vinculó al proyecto ${projectName}.`
-      : `${greeting} roz detectó el repo ${repo} y no encontró un proyecto al cual pertenezca. Vincúlenlo manualmente.`) +
-    (repoUrl ? `\n\nVer en GitHub: ${repoUrl}` : '') +
-    `\n\n— ROZ`;
-
-  return { html, text };
+  await pushToDev(
+    devId,
+    dev.email,
+    toPush(notice, {
+      // Un solo cambio → deep-link directo a esa tarea; varios → la vista de tareas.
+      url: (list.length === 1 ? taskUrl(list[0]!.id) : null) ?? listUrl,
+      tag: `documented:${devId}`,
+    }),
+    'change_documented',
+  );
 }
 
 interface RepoNotifyPayload {
@@ -421,9 +285,9 @@ interface RepoNotifyPayload {
 }
 
 /**
- * Avisa por correo a TODOS los devs activos con email que se detectó un repo nuevo (vinculado o
- * pendiente de vincular). Idempotente por (repo, dev) vía claimOnce: si el envío a algún dev falla,
- * se relanza para que el drain reintente y los ya notificados se saltan.
+ * Avisa a TODOS los devs activos con email que se detectó un repo nuevo (vinculado o pendiente de
+ * vincular). Idempotente por (repo, dev) vía claimOnce: si el envío a algún dev falla, se relanza
+ * para que el drain reintente y los ya notificados se saltan.
  */
 export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<void> {
   const repo = payload.repo;
@@ -432,11 +296,7 @@ export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<vo
   const supabase = db();
 
   const { data } = await supabase.from('dev').select('id, name, email').eq('active', true).not('email', 'is', null);
-  const devs = (data ?? []) as { id: string; name: string | null; email: string | null }[];
-
-  const subject = payload.linked
-    ? `ROZ · Repo vinculado — ${repo}`
-    : `ROZ · Repo nuevo detectado — ${repo}`;
+  const devs = (data ?? []) as DevRow[];
 
   for (const dev of devs) {
     if (!dev.email) continue;
@@ -445,14 +305,15 @@ export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<vo
     const firstTime = await claimOnce(key, 'notify-repo');
     if (!firstTime) continue; // ya notificado en un intento previo
 
-    const greeting = dev.name ? `Hola ${firstName(dev.name)},` : 'Hola,';
-    const { html, text } = renderRepoDetectedEmail({
-      greeting,
+    const notice = repoDetectedNotice({
+      seed: `repo:${repo}:${dev.id}`,
+      recipient: dev.name,
       repo,
       repoUrl: payload.repoUrl ?? null,
       projectName: payload.projectName ?? null,
       linked: !!payload.linked,
     });
+    const { subject, html, text } = renderEmail(notice, config.dashboard.url);
 
     try {
       const res = await sendEmail({ to: dev.email, subject, html, text });
@@ -465,12 +326,7 @@ export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<vo
         status: 'sent',
         provider_id: res.id,
       });
-      await pushToDev(dev.id, dev.email, {
-        title: payload.linked ? `Repo vinculado — ${repo}` : `Repo nuevo — ${repo}`,
-        body: payload.linked ? `Vinculado al proyecto ${payload.projectName ?? ''}`.trim() : 'Sin proyecto — vincúlenlo manualmente',
-        url: `${config.dashboard.url}/app/projects`,
-        tag: `repo:${repo}`,
-      }, 'repo_detected');
+      await pushToDev(dev.id, dev.email, toPush(notice, { url: `${config.dashboard.url}/app/projects`, tag: `repo:${repo}` }), 'repo_detected');
     } catch (err) {
       await supabase.from('notification').insert({
         channel: 'email',
@@ -485,4 +341,169 @@ export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<vo
       throw err; // que el drain reintente (los devs ya enviados se saltan por su claim)
     }
   }
+}
+
+// ------------------------------------------------------------------ avisos solo-push
+// Best-effort: nunca lanzan (no deben tumbar la reconciliación que los dispara) y son idempotentes
+// por llave. pushToDev ya respeta los interruptores (global y por dev): apagado = se omite.
+
+type LoginDev = DevRow & { github_login: string };
+
+async function devsByLogin(logins: (string | null | undefined)[]): Promise<LoginDev[]> {
+  const out: LoginDev[] = [];
+  for (const login of [...new Set(logins.filter((l): l is string => !!l))]) {
+    // Los logins de GitHub son case-insensitive (ilike sin comodines = igualdad sin distinguir mayúsculas).
+    const { data } = await db().from('dev').select('id, name, email, github_login').ilike('github_login', login).maybeSingle();
+    if (data) out.push(data as unknown as LoginDev);
+  }
+  return out;
+}
+
+const prUrl = (repo: string, number: number) => `https://github.com/${repo}/pull/${number}`;
+
+/** Tu PR se integró y la integró OTRA persona (si la integraste tú, ya lo sabes). */
+export async function notifyPrMerged(input: {
+  pr: Omit<PrRef, 'url'>;
+  authorLogins: (string | null | undefined)[];
+  mergedByLogin: string | null;
+  reviewerLogins?: (string | null | undefined)[];
+}): Promise<void> {
+  try {
+    const { pr } = input;
+    const authors = await devsByLogin(input.authorLogins);
+    if (!authors.length) return;
+    const [merger] = await devsByLogin([input.mergedByLogin]);
+    const reviewers = await devsByLogin(input.reviewerLogins ?? []);
+    for (const dev of authors) {
+      if (!merger || merger.id === dev.id) continue;
+      if (!(await claimOnce(`notify-pr-merged:${pr.repo}:${pr.number}:${dev.id}`, 'notify-pr'))) continue;
+      const notice = prMergedNotice({
+        seed: `pr-merged:${pr.repo}:${pr.number}:${dev.id}`,
+        recipient: dev.name,
+        merger: merger.name ?? input.mergedByLogin,
+        pr: { ...pr, url: prUrl(pr.repo, pr.number) },
+        reviewers: reviewers.filter((r) => r.id !== dev.id).map((r) => r.name ?? r.github_login),
+      });
+      await pushToDev(dev.id, dev.email, toPush(notice, { url: prUrl(pr.repo, pr.number), tag: `pr:${pr.repo}#${pr.number}` }), 'pr_merged');
+    }
+  } catch { /* best-effort */ }
+}
+
+const REVIEW_STATES: readonly string[] = ['approved', 'changes_requested', 'commented'];
+
+/** Alguien revisó tu PR. Un aviso por (PR, revisor, veredicto): re-aprobar tras cambios vuelve a avisar. */
+export async function notifyPrReviewed(input: {
+  pr: Omit<PrRef, 'url'>;
+  authorLogins: (string | null | undefined)[];
+  reviews: { login: string | null; state: string }[];
+}): Promise<void> {
+  try {
+    const { pr } = input;
+    const authors = await devsByLogin(input.authorLogins);
+    if (!authors.length) return;
+    for (const review of input.reviews) {
+      const state = review.state.toLowerCase();
+      if (!review.login || !REVIEW_STATES.includes(state)) continue;
+      const [reviewer] = await devsByLogin([review.login]);
+      for (const dev of authors) {
+        if (reviewer?.id === dev.id || review.login.toLowerCase() === dev.github_login.toLowerCase()) continue; // comentar tu propia PR no es noticia
+        if (!(await claimOnce(`notify-pr-review:${pr.repo}:${pr.number}:${review.login.toLowerCase()}:${state}:${dev.id}`, 'notify-pr'))) continue;
+        const notice = prReviewedNotice({
+          seed: `pr-review:${pr.repo}:${pr.number}:${review.login}:${state}`,
+          recipient: dev.name,
+          reviewer: reviewer?.name ?? review.login,
+          state: state as ReviewState,
+          pr: { ...pr, url: prUrl(pr.repo, pr.number) },
+        });
+        await pushToDev(
+          dev.id,
+          dev.email,
+          toPush(notice, { url: prUrl(pr.repo, pr.number), tag: `pr:${pr.repo}#${pr.number}` }),
+          'pr_reviewed',
+          { urgency: state === 'commented' ? 'normal' : 'high' },
+        );
+      }
+    }
+  } catch { /* best-effort */ }
+}
+
+/** La junta que subiste ya está leída: N candidatas te esperan en la bandeja. */
+export async function notifyMeetingReady(input: {
+  meetingId: string;
+  title: string;
+  createdByDevId: string | null;
+  projectId?: string | null;
+  candidates: number;
+  decisions?: number;
+  duplicates?: number;
+}): Promise<void> {
+  try {
+    if (!input.createdByDevId) return;
+    if (!(await claimOnce(`notify-meeting:${input.meetingId}`, 'notify-meeting'))) return;
+    const [dev, project] = await Promise.all([devById(input.createdByDevId), projectName(input.projectId)]);
+    if (!dev) return;
+    const url = `${config.dashboard.url}/app/meetings?meeting=${input.meetingId}`;
+    const notice = meetingReadyNotice({
+      seed: `meeting:${input.meetingId}`,
+      recipient: dev.name,
+      title: input.title,
+      candidates: input.candidates,
+      decisions: input.decisions,
+      duplicates: input.duplicates,
+      project,
+      url,
+    });
+    await pushToDev(dev.id, dev.email, toPush(notice, { url, tag: `meeting:${input.meetingId}`, data: { kind: 'meeting_ready', meetingId: input.meetingId } }), 'meeting_ready');
+  } catch { /* best-effort */ }
+}
+
+export interface DueReminderResult { devs: number; tasks: number }
+
+/**
+ * Recordatorio diario de fechas (cron /v1/internal/task-reminders): a cada dev, UN push con lo que
+ * le vence hoy y lo ya vencido (hasta 14 días atrás: más viejo que eso ya no es un recordatorio,
+ * es ruido). Idempotente por (dev, día).
+ */
+export async function notifyDueTasks(now: Date = new Date()): Promise<DueReminderResult> {
+  const supabase = db();
+  const day = now.toISOString().slice(0, 10);
+  const floor = new Date(now.getTime() - 14 * 86_400_000).toISOString().slice(0, 10);
+  const { data, error } = await supabase
+    .from('work_item')
+    .select('id, identifier, name, due_date, project_id, assignee_dev_id')
+    .in('status', OPEN_STATUSES)
+    .not('assignee_dev_id', 'is', null)
+    .not('due_date', 'is', null)
+    .gte('due_date', floor)
+    .lte('due_date', `${day}T23:59:59Z`)
+    .order('due_date', { ascending: true })
+    .limit(500);
+  if (error) throw error;
+  type Row = { id: string; identifier: string; name: string; due_date: string; project_id: string | null; assignee_dev_id: string };
+  const rows = (data ?? []) as unknown as Row[];
+  if (!rows.length) return { devs: 0, tasks: 0 };
+
+  const projectIds = [...new Set(rows.map((r) => r.project_id).filter(Boolean))] as string[];
+  const { data: projects } = projectIds.length ? await supabase.from('project').select('id, name').in('id', projectIds) : { data: [] };
+  const projName = new Map(((projects ?? []) as { id: string; name: string }[]).map((p) => [p.id, p.name]));
+
+  const byDev = new Map<string, Row[]>();
+  for (const r of rows) byDev.set(r.assignee_dev_id, [...(byDev.get(r.assignee_dev_id) ?? []), r]);
+
+  let devs = 0;
+  let tasks = 0;
+  for (const [devId, list] of byDev) {
+    try {
+      if (!(await claimOnce(`notify-due:${devId}:${day}`, 'notify-due'))) continue;
+      const dev = await devById(devId);
+      if (!dev) continue;
+      const items: DueItem[] = list.map((r) => ({ identifier: r.identifier, name: r.name, dueDate: r.due_date, project: r.project_id ? projName.get(r.project_id) ?? null : null, url: taskUrl(r.id) }));
+      const listUrl = `${config.dashboard.url}/app/tasks`;
+      const notice = dueNotice({ seed: `due:${devId}:${day}`, recipient: dev.name, items, now, listUrl });
+      await pushToDev(devId, dev.email, toPush(notice, { url: (items.length === 1 ? items[0]!.url : null) ?? listUrl, tag: `due:${devId}` }), 'task_due', { urgency: 'high' });
+      devs++;
+      tasks += list.length;
+    } catch { /* best-effort por dev */ }
+  }
+  return { devs, tasks };
 }

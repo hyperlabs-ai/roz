@@ -13,9 +13,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { ErrorBoundary, ErrorScreen } from '@/components/ErrorScreen';
 import App from '@/App';
 import { installSounds } from '@/lib/sound';
-// Geist (tipografía de marca, variable) — sans para UI, mono para números/código.
-import '@fontsource-variable/geist';
-import '@fontsource-variable/geist-mono';
+// Tipografía (Inter Tight + JetBrains Mono): se carga desde Google Fonts en index.html.
 import './styles.css';
 
 // Registra el service worker de la PWA (shell offline + web push). Solo en build de producción:

@@ -12,8 +12,6 @@ import DeveloperProfile from '@/pages/DeveloperProfile';
 import Projects from '@/pages/Projects';
 import ProjectDetail from '@/pages/ProjectDetail';
 import Infra from '@/pages/Infra';
-import Activity from '@/pages/Activity';
-import Ideas from '@/pages/Ideas';
 import Tasks from '@/pages/Tasks';
 import Capacity from '@/pages/Capacity';
 import Tickets from '@/pages/Tickets';
@@ -21,6 +19,27 @@ import Ticket from '@/pages/Ticket';
 import Skills from '@/pages/Skills';
 import Settings from '@/pages/Settings';
 import Chat from '@/pages/Chat';
+import Pulse from '@/pages/Pulse';
+import Meetings from '@/pages/Meetings';
+import Plans from '@/pages/Plans';
+import { useRozV2 } from '@/components/pulse/roz-v2';
+
+/**
+ * Pantalla principal de /app. Con Linear como fuente de verdad (roz v2) es el Pulso; con el flag
+ * apagado sigue siendo el Resumen de siempre. Mientras el estado no llega se espera con un spinner
+ * corto en vez de pintar el Resumen y saltar al Pulso.
+ */
+function Home() {
+  const v2 = useRozV2();
+  if (!v2.ready) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="size-6 animate-spin rounded-full border-2 border-muted border-t-primary" />
+      </div>
+    );
+  }
+  return v2.linearSourceOfTruth ? <Pulse /> : <Overview />;
+}
 
 function Spinner() {
   return (
@@ -38,8 +57,8 @@ function Spinner() {
  */
 function SessionStrip({ text, onRetry }: { text: string; onRetry?: () => void }) {
   return (
-    <div className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-2 border-b border-warning/30 bg-warning/10 px-4 py-1.5 text-xs text-warning backdrop-blur">
-      <span className="size-1.5 animate-pulse rounded-full bg-warning" />
+    <div className="fixed inset-x-0 top-0 z-50 flex items-center justify-center gap-2 border-b border-yellow/40 bg-yellow-soft px-4 py-1.5 label-caps text-yellow-ink backdrop-blur">
+      <span className="size-1.5 animate-pulse rounded-full bg-yellow" />
       <span className="truncate">{text}</span>
       {onRetry && (
         <button onClick={onRetry} className="press font-medium underline underline-offset-2">
@@ -141,15 +160,19 @@ export default function App() {
             path, así que permanece montado al navegar entre secciones. */}
         <Route path="/app" element={<RequireAuth />}>
           <Route element={<AppShell />}>
-            <Route index element={<Overview />} />
+            <Route index element={<Home />} />
+            {/* roz v2: las dos vistas quedan siempre a mano, sea cual sea la principal. */}
+            <Route path="pulse" element={<Pulse />} />
+            <Route path="overview" element={<Overview />} />
+            <Route path="meetings" element={<Meetings />} />
+            <Route path="plans" element={<Plans />} />
             <Route path="developers" element={<Developers />} />
             <Route path="developers/:id" element={<DeveloperProfile />} />
             <Route path="projects" element={<Projects />} />
             <Route path="projects/:id" element={<ProjectDetail />} />
             <Route path="infra" element={<Infra />} />
-            {/* A propósito FUERA del nav lateral: se llega desde el pulso del header. */}
-            <Route path="activity" element={<Activity />} />
-            <Route path="ideas" element={<Ideas />} />
+            {/* Actividad se unificó con el Pulso: el historial de eventos vive ahí. */}
+            <Route path="activity" element={<Navigate to="/app/pulse#historial" replace />} />
             <Route path="tasks" element={<Tasks />} />
             <Route path="chat" element={<Chat />} />
             <Route path="chat/m/:messageId" element={<Chat />} />

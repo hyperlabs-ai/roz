@@ -39,7 +39,7 @@ export function PeriodPicker({ value, onChange }: { value: PeriodState; onChange
       <PopoverTrigger asChild>
         <Button variant="outline" className="h-9 gap-2">
           <CalendarDays className="text-muted-foreground" />
-          <span className="font-medium">{rangeLabel(value)}</span>
+          <span>{rangeLabel(value)}</span>
           {value.compare !== 'none' && (
             <span className="hidden items-center gap-1 text-xs text-muted-foreground sm:inline-flex">
               <GitCompare className="size-3" /> {compareLabel(value.compare).replace('vs. ', '')}
@@ -52,14 +52,14 @@ export function PeriodPicker({ value, onChange }: { value: PeriodState; onChange
         <div className="flex flex-col sm:flex-row">
           {/* Presets + comparación */}
           <div className="flex w-full flex-col gap-0.5 p-2 sm:w-48">
-            <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Período</div>
+            <div className="label-caps px-2 py-1.5">Período</div>
             {PRESETS.map((p) => (
               <button
                 key={p.id}
                 onClick={() => pickPreset(p.id)}
                 className={cn(
-                  'flex items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent',
-                  value.preset === p.id && 'bg-accent font-medium',
+                  'flex items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-panel',
+                  value.preset === p.id && 'bg-orange-soft font-medium text-orange-ink',
                 )}
               >
                 {p.label}
@@ -67,14 +67,14 @@ export function PeriodPicker({ value, onChange }: { value: PeriodState; onChange
               </button>
             ))}
             <Separator className="my-1.5" />
-            <div className="px-2 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Comparar</div>
+            <div className="label-caps px-2 py-1.5">Comparar</div>
             {COMPARES.map((c) => (
               <button
                 key={c.id}
                 onClick={() => setCompare(c.id)}
                 className={cn(
-                  'flex items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-accent',
-                  value.compare === c.id && 'bg-accent font-medium',
+                  'flex items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-panel',
+                  value.compare === c.id && 'bg-orange-soft font-medium text-orange-ink',
                 )}
               >
                 {c.label}

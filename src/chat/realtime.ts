@@ -8,6 +8,7 @@
 // Se publica por la API REST de Realtime con el service_role, en UNA sola petición para todos los
 // destinatarios. Best-effort: si Realtime no responde, el cliente se pone al día por polling.
 import { config } from '../config.js';
+import type { DiscordRealtimeEvent } from '../types/discord.js';
 
 export type ChatRealtimeEvent =
   | 'message.created'
@@ -21,7 +22,13 @@ export function devTopic(devId: string): string {
   return `chat:dev:${devId}`;
 }
 
-export async function broadcastToDevs(devIds: string[], event: ChatRealtimeEvent, payload: Record<string, unknown>): Promise<void> {
+// Con ROZ_DISCORD_CHAT el mismo buzón lleva los eventos `discord.*` (src/types/discord.ts): una sola
+// suscripción por pestaña, sea cual sea el chat activo.
+export async function broadcastToDevs(
+  devIds: string[],
+  event: ChatRealtimeEvent | DiscordRealtimeEvent,
+  payload: Record<string, unknown>,
+): Promise<void> {
   const ids = [...new Set(devIds.filter(Boolean))];
   const { url, serviceRoleKey } = config.supabase;
   if (!ids.length || !url || !serviceRoleKey) return;

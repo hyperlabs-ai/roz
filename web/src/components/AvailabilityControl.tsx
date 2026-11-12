@@ -3,17 +3,13 @@ import { toast } from '@/lib/toast';
 import { useAuth } from '@/auth/AuthContext';
 import { apiSend } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { Slider } from '@/components/ui/slider';
 
 // Color según ocupación: rojo (saturado) → ámbar → verde (libre).
 function tone(v: number): string {
   if (v >= 0.66) return 'text-success';
   if (v >= 0.33) return 'text-warning';
   return 'text-destructive';
-}
-function barTone(v: number): string {
-  if (v >= 0.66) return 'accent-success';
-  if (v >= 0.33) return 'accent-warning';
-  return 'accent-destructive';
 }
 
 /**
@@ -57,7 +53,7 @@ export function AvailabilityControl({ devId, value, onSaved }: { devId: string; 
   if (!isAdmin) {
     return (
       <div className="text-right">
-        <div className="text-xs text-muted-foreground">Disponibilidad</div>
+        <div className="label-caps">Disponibilidad</div>
         <div className={cn('text-lg font-semibold', tone(value))}>{Math.round(value * 100)}%</div>
       </div>
     );
@@ -66,22 +62,19 @@ export function AvailabilityControl({ devId, value, onSaved }: { devId: string; 
   return (
     <div className="w-full sm:w-44">
       <div className="mb-1 flex items-baseline justify-between">
-        <span className="text-xs text-muted-foreground">Disponibilidad</span>
-        <span className={cn('text-sm font-bold tabular-nums', tone(val / 100))}>{val}%</span>
+        <span className="label-caps">Disponibilidad</span>
+        <span className={cn('text-sm font-semibold tabular-nums', tone(val / 100))}>{val}%</span>
       </div>
-      <input
-        type="range"
-        min={0}
-        max={100}
-        step={5}
+      <Slider
         value={val}
+        step={5}
         disabled={busy}
-        onChange={(e) => setVal(Number(e.target.value))}
-        onPointerUp={() => commit(val)}
-        onKeyUp={(e) => (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && commit(val)}
-        className={cn('h-1.5 w-full cursor-pointer appearance-none rounded-full bg-muted', barTone(val / 100))}
+        aria-label="Disponibilidad"
+        tone={tone(val / 100)}
+        onValueChange={setVal}
+        onValueCommit={(v) => { void commit(v); }}
       />
-      <div className="mt-0.5 flex justify-between text-[10px] text-muted-foreground">
+      <div className="mt-0.5 flex justify-between label-caps text-faint">
         <span>Saturado</span>
         <span>Libre</span>
       </div>

@@ -39,7 +39,8 @@ export const MessageBody = memo(function MessageBody({
               const id = href.slice('#mention-'.length);
               const isMe = id === 'canal' || (!!me && id === me.toLowerCase());
               return (
-                <span className={cn('rounded px-0.5 font-medium', isMe ? 'bg-warning/15 text-warning' : 'bg-primary/10 text-primary')}>
+                // A mí (o @canal): amarillo, lo humano. A otra persona: naranja suave de marca.
+                <span className={cn('rounded-sm px-1 font-medium', isMe ? 'bg-yellow-soft text-yellow-ink' : 'bg-orange-soft text-orange-ink')}>
                   {children}
                 </span>
               );
@@ -50,7 +51,7 @@ export const MessageBody = memo(function MessageBody({
                 <button
                   type="button"
                   onClick={() => openTask(id)}
-                  className="rounded bg-primary/10 px-1 font-mono text-[0.85em] font-medium text-primary hover:bg-primary/20"
+                  className="rounded-sm border bg-panel px-1 py-px font-mono text-[0.82em] font-medium text-foreground transition-colors hover:border-orange hover:bg-orange-soft hover:text-orange-ink"
                 >
                   {children}
                 </button>

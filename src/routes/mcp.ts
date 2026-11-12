@@ -6,8 +6,29 @@ import { config } from '../config.js';
 import type { RozContext } from '../types/hono.js';
 import { secureEqual, bearerToken } from '../utils/secure-compare.js';
 import { tools, toolsByName, toInputSchema } from '../mcp/server.js';
+import { authenticateRunner } from '../plans/runners.js';
+import { looksLikeRunnerToken } from '../plans/tokens.js';
 
 export const mcpRoutes = new Hono<RozContext>();
+
+/**
+ * Herramientas que ve un runner (roz-runner corre `claude -p` con su token rozr_…). Solo lectura de
+ * contexto + reportar avance: el agente no crea tareas, no da de alta devs ni confirma propuestas.
+ * Con ROZ_MCP_TOKEN (el cliente conversacional) se ven todas, como siempre.
+ */
+const RUNNER_TOOLS = new Set(['get_plan', 'get_decisions', 'report_progress', 'get_project_context', 'list_projects']);
+
+/** Quién llama: el cliente conversacional (todas las herramientas) o un runner (subconjunto). */
+async function mcpCaller(token: string): Promise<'full' | 'runner' | null> {
+  if (config.mcp.token && secureEqual(token, config.mcp.token)) return 'full';
+  if (!looksLikeRunnerToken(token)) return null;
+  try {
+    await authenticateRunner(token);
+    return 'runner';
+  } catch {
+    return null;
+  }
+}
 
 const PROTOCOL_VERSION = '2025-06-18';
 
@@ -20,10 +41,12 @@ function rpcError(id: unknown, code: number, message: string) {
 
 mcpRoutes.post('/', async (c) => {
   // Auth (comparación en tiempo constante; fail-closed si el token no está configurado).
-  const token = bearerToken(c.req.header('authorization'));
-  if (!config.mcp.token || !secureEqual(token, config.mcp.token)) {
+  // Además de ROZ_MCP_TOKEN se aceptan tokens de runner vigentes (roz v2), con menos herramientas.
+  const caller = await mcpCaller(bearerToken(c.req.header('authorization')));
+  if (!caller) {
     return c.json(rpcError(null, -32001, 'Unauthorized'), 401);
   }
+  const visible = caller === 'full' ? tools : tools.filter((t) => RUNNER_TOOLS.has(t.name));
 
   const body = (await c.req.json().catch(() => null)) as
     | { jsonrpc?: string; id?: unknown; method?: string; params?: any }
@@ -50,7 +73,7 @@ mcpRoutes.post('/', async (c) => {
     case 'tools/list':
       return c.json(
         rpcResult(id, {
-          tools: tools.map((t) => ({
+          tools: visible.map((t) => ({
             name: t.name,
             description: t.description,
             inputSchema: toInputSchema(t),
@@ -59,7 +82,8 @@ mcpRoutes.post('/', async (c) => {
       );
 
     case 'tools/call': {
-      const tool = toolsByName.get(params?.name);
+      const found = toolsByName.get(params?.name);
+      const tool = found && (caller === 'full' || RUNNER_TOOLS.has(found.name)) ? found : undefined;
       if (!tool) return c.json(rpcError(id, -32602, `Unknown tool: ${params?.name}`), 400);
       const parsed = tool.schema.safeParse(params?.arguments ?? {});
       if (!parsed.success) {

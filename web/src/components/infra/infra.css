@@ -1,0 +1,14 @@
+/* Panel lateral de detalle de Infraestructura: entra desde la derecha. Local a components/infra. */
+@keyframes infra-sheet-in {
+  from { opacity: 0; transform: translateX(28px) }
+  to { opacity: 1; transform: none }
+}
+@keyframes infra-sheet-out {
+  from { opacity: 1; transform: none }
+  to { opacity: 0; transform: translateX(28px) }
+}
+.infra-sheet[data-state='open'] { animation: infra-sheet-in var(--duration-fast, 200ms) var(--ease-smooth-out, ease-out) both }
+.infra-sheet[data-state='closed'] { animation: infra-sheet-out var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out) both }
+@media (prefers-reduced-motion: reduce) {
+  .infra-sheet[data-state] { animation: none }
+}

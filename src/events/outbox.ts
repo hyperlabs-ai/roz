@@ -11,8 +11,11 @@ import { handleBranchCreated, handlePrOpened, handlePrReviewed } from '../reconc
 import { handleRepoDetected, handleRepoRenamed } from '../reconcile/repos.js';
 import type { RepoMeta } from '../adapters/github.js';
 import { documentCompletedWork } from '../brain/document.js';
+import type { PlanClaimablePayload, PlanEnqueuePayload, RozV2OutboxEventType } from '../types/roz-v2.js';
+import { inBackground } from '../utils/background.js';
 
 export type OutboxEventType =
+  | RozV2OutboxEventType
   | 'work_item.created'
   | 'work_item.assigned'
   | 'work_item.done'
@@ -29,6 +32,28 @@ export type OutboxEventType =
   | 'repo.notify'
   | 'notification.requested'
   | 'work_item.auto_assign';
+
+/** Los tipos de evento de roz v2 (espejo de RozV2OutboxEventType, para filtrar en tiempo de ejecución). */
+export const ROZ_V2_EVENT_TYPES: readonly RozV2OutboxEventType[] = [
+  'linear.webhook',
+  'linear.reconcile',
+  'plan.enqueue',
+  'plan.claimable',
+  'plan.reassign_linear',
+  'meeting.extract',
+  'granola.import',
+];
+
+/**
+ * Modo de prueba local contra la base compartida. El server local (src/index.ts) y producción usan
+ * la MISMA tabla outbox_event; mientras producción corra un código que no conoce los tipos v2, su
+ * drain los marca `done` sin procesarlos (el `default` del dispatch). Para que una prueba local no
+ * pierda esa carrera, en local los eventos v2 se procesan en cuanto se emiten, y src/index.ts drena
+ * solo esos tipos cada pocos segundos como red. Nunca aplica en Vercel.
+ */
+export function localV2Drain(): boolean {
+  return !process.env.VERCEL && process.env.ROZ_ENV !== 'production' && process.env.ROZ_DEV_DRAIN_V2 !== 'false';
+}
 
 /** Intentos antes del dead-letter. Exportado: el dashboard lo muestra como "intento 3/5". */
 export const MAX_ATTEMPTS = 5;
@@ -83,7 +108,11 @@ export async function emit(
     if ((error as { code?: string }).code === '23505') return null;
     throw error;
   }
-  return data.id as string;
+  const id = data.id as string;
+  if (localV2Drain() && !opts.delaySeconds && (ROZ_V2_EVENT_TYPES as readonly string[]).includes(type)) {
+    inBackground(() => consume(id));
+  }
+  return id;
 }
 
 export interface DrainResult {
@@ -96,7 +125,7 @@ export interface DrainResult {
  * procesa. Pensado para correr periódicamente (Vercel Cron). Idempotente y reentrante:
  * el claim optimista evita que dos ticks solapados procesen el mismo evento.
  */
-export async function drainOutbox(batchSize = 20): Promise<DrainResult> {
+export async function drainOutbox(batchSize = 20, opts: { types?: readonly string[] } = {}): Promise<DrainResult> {
   const supabase = db();
 
   // Reaper: rescata eventos atascados en `processing` (proceso muerto a media ejecución) y los
@@ -109,13 +138,13 @@ export async function drainOutbox(batchSize = 20): Promise<DrainResult> {
     .eq('status', 'processing')
     .lt('updated_at', stuckBefore);
 
-  const { data: events, error } = await supabase
+  let query = supabase
     .from('outbox_event')
     .select('*')
     .in('status', ['pending', 'failed'])
-    .lte('next_attempt_at', new Date().toISOString())
-    .order('created_at', { ascending: true })
-    .limit(batchSize);
+    .lte('next_attempt_at', new Date().toISOString());
+  if (opts.types?.length) query = query.in('type', [...opts.types]);
+  const { data: events, error } = await query.order('created_at', { ascending: true }).limit(batchSize);
   if (error) throw error;
 
   let processed = 0;
@@ -317,6 +346,52 @@ async function dispatch(
     case 'work_item.auto_assign': {
       const { autoAssignFromEvent } = await import('../assign/index.js');
       await autoAssignFromEvent(payload, ctx);
+      return;
+    }
+
+    // ---- roz v2 ----
+    // Todos con import dinámico: los módulos de Linear, planes y juntas emiten aquí (emit), así que
+    // un import estático formaría un ciclo al cargar. Cada handler respeta ROZ_LINEAR_SOT por su lado.
+    // Webhook de Linear: relee el issue completo y escribe el espejo de work_item.
+    case 'linear.webhook': {
+      const { linearWebhookFromEvent } = await import('../linear/webhook.js');
+      await linearWebhookFromEvent(payload);
+      return;
+    }
+    // Reconciliación GraphQL (cron cada 30 min): recoge lo que el webhook no entregó.
+    case 'linear.reconcile': {
+      const { reconcileFromEvent } = await import('../linear/reconcile.js');
+      await reconcileFromEvent(payload);
+      return;
+    }
+    // Un issue asignado genera (o mueve) el plan del agente en la cola de su dueño.
+    case 'plan.enqueue': {
+      const { enqueuePlan } = await import('../plans/service.js');
+      await enqueuePlan(payload as unknown as PlanEnqueuePayload);
+      return;
+    }
+    // Plan marcado reclamable por el watchdog: push al equipo del proyecto.
+    case 'plan.claimable': {
+      const { notifyPlanClaimable } = await import('../plans/service.js');
+      await notifyPlanClaimable(payload as unknown as PlanClaimablePayload);
+      return;
+    }
+    // Alguien reclamó un plan: el asignado cambia también en Linear.
+    case 'plan.reassign_linear': {
+      const { reassignFromEvent } = await import('../linear/issues.js');
+      await reassignFromEvent(payload);
+      return;
+    }
+    // Junta nueva (manual o Granola): extracción con Claude → candidatas en la bandeja. Necesita el
+    // intento: en el último, la junta queda en 'error' en vez de quedarse en 'extrayendo'.
+    case 'meeting.extract': {
+      const { handleMeetingExtract } = await import('../meetings/index.js');
+      await handleMeetingExtract(payload, ctx);
+      return;
+    }
+    case 'granola.import': {
+      const { handleGranolaImport } = await import('../meetings/index.js');
+      await handleGranolaImport(payload);
       return;
     }
     default:

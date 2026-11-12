@@ -95,7 +95,7 @@ function DocumentViewer({
             {a.url && (
               <a
                 href={downloadUrl(a.url, a.name)}
-                className="grid size-8 place-items-center rounded-md border hover:bg-accent"
+                className="grid size-8 place-items-center rounded-md bg-panel transition-colors hover:bg-toggle-off/70"
                 aria-label="Descargar"
                 title="Descargar"
               >
@@ -144,9 +144,9 @@ export function DocumentAttachment({ a, kind }: { a: ChatAttachment; kind: 'mark
   const title = kind === 'html' ? htmlTitle(text) : null;
 
   return (
-    <div className="w-full max-w-md overflow-hidden rounded-lg border bg-card shadow-sm">
+    <div className="w-full max-w-md overflow-hidden rounded-lg border bg-card">
       <div className="flex items-center gap-3 px-3 py-2">
-        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-panel text-muted-foreground">
           <Icon className="size-5" />
         </span>
         <span className="min-w-0 flex-1">
@@ -159,13 +159,13 @@ export function DocumentAttachment({ a, kind }: { a: ChatAttachment; kind: 'mark
           <button
             type="button"
             onClick={() => setOpen(true)}
-            className="flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent"
+            className="flex shrink-0 items-center gap-1 rounded-btn bg-panel px-2 py-1 label-caps transition-colors hover:bg-toggle-off/70"
           >
             <Maximize2 className="size-3.5" /> Ver
           </button>
         ) : (
           a.url && (
-            <a href={downloadUrl(a.url, a.name)} className="flex shrink-0 items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium hover:bg-accent">
+            <a href={downloadUrl(a.url, a.name)} className="flex shrink-0 items-center gap-1 rounded-btn bg-panel px-2 py-1 label-caps transition-colors hover:bg-toggle-off/70">
               <Download className="size-3.5" /> Descargar
             </a>
           )

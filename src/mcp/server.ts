@@ -17,6 +17,7 @@ import {
 } from '../router/assign.js';
 import { intakeForm } from '../intake/form.js';
 import { getProjectContext } from '../brain/retrieval.js';
+import { getPlanForAgent, getDecisionsForAgent, reportProgressFromAgent } from '../plans/mcp.js';
 
 export interface McpTool {
   name: string;
@@ -154,6 +155,50 @@ export const tools: McpTool[] = [
       query: z.string().describe('Tema/pregunta para enfocar el retrieval'),
     }),
     handler: (args) => getProjectContext(args.projectKey, args.query),
+  },
+
+  // ---------- Planes del agente (roz v2; requieren ROZ_LINEAR_SOT) ----------
+  {
+    name: 'get_plan',
+    description:
+      'Devuelve el plan del agente y su issue de Linear: estado, fase (planear/implementar), riesgo ' +
+      'y por qué, descripción del issue, rama, PLAN.md actual y los cambios que pidió una persona. ' +
+      'Pásale planId (lo trae tu prompt) o el identificador del issue ("HYP-123").',
+    schema: z.object({
+      planId: z.string().optional().describe('id del plan (viene en el prompt del runner)'),
+      identifier: z.string().optional().describe('identificador de Linear, p.ej. "HYP-123"'),
+    }),
+    handler: (args) => getPlanForAgent({ planId: args.planId, identifier: args.identifier }),
+  },
+  {
+    name: 'get_decisions',
+    description:
+      'Decisiones del proyecto que salieron de juntas (guardadas en el brain), de la más nueva a la ' +
+      'más vieja. Úsalo antes de planear para no contradecir algo ya acordado. El proyecto sale del ' +
+      'plan (planId) o pásalo directo (projectId); query filtra por texto.',
+    schema: z.object({
+      planId: z.string().optional().describe('id del plan: se usa su proyecto'),
+      projectId: z.string().optional().describe('id del proyecto (si no hay plan)'),
+      query: z.string().optional().describe('texto a buscar en las decisiones'),
+      limit: z.number().int().min(1).max(50).optional().describe('máximo de decisiones (def 20)'),
+    }),
+    handler: (args) =>
+      getDecisionsForAgent({ planId: args.planId, projectId: args.projectId, query: args.query, limit: args.limit }),
+  },
+  {
+    name: 'report_progress',
+    description:
+      'Reporta el avance del plan que estás trabajando (cuenta como latido). Usa el planId y el ' +
+      'leaseId de tu prompt; si responde que el lease se perdió, DETENTE: el plan ya no es tuyo.',
+    schema: z.object({
+      planId: z.string().describe('id del plan'),
+      leaseId: z.string().describe('lease del runner (viene en el prompt)'),
+      step: z.string().max(200).optional().describe('paso actual, corto ("leyendo el código", "paso 3 de 5")'),
+      message: z.string().max(2000).optional().describe('qué hiciste o qué sigue, en una frase'),
+      pct: z.number().min(0).max(100).optional().describe('avance estimado 0-100'),
+    }),
+    handler: (args) =>
+      reportProgressFromAgent({ planId: args.planId, leaseId: args.leaseId, step: args.step, message: args.message, pct: args.pct }),
   },
 ];
 

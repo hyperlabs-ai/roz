@@ -2,59 +2,92 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Design tokens (shadcn-style) — claro y oscuro. roz: azul primario, neutros fríos. */
+/* Design tokens — identidad roz v2 (estilo Stape): hueso cálido, tinta casi negra, naranja de
+   marca y bloques de color (salmón, morado, amarillo, verde). Claro y oscuro. Todo color de la app
+   sale de aquí: los componentes nunca llevan hex sueltos. Formato HSL sin `hsl()` para que
+   Tailwind pueda inyectar alfa (`bg-orange/20`). Guía de uso: web/src/DESIGN.md. */
 @layer base {
-  /* LIGHT — clean minimal (Linear/Vercel): neutros fríos, hairlines definidas, sombras muy
-     sutiles, un solo acento azul. La paleta de charts 1-5 es una familia categórica VALIDADA
-     (dataviz: banda de luminancia + croma + separación CVD + contraste), azul-led y armónica en
-     AMBOS modos — resuelve el "light horrible" de raíz (antes eran colores crudos sin armonizar). */
+  /* LIGHT — hueso #f6f5f1, panel #eeede8, tarjeta blanca, tinta #1b1b1a, hairline #e1dfd8. */
   :root {
     color-scheme: light;
-    --background: 210 20% 98%;
-    --foreground: 222 47% 11%;
+    --background: 48 22% 95%;          /* #f6f5f1 hueso */
+    --foreground: 60 2% 10%;           /* #1b1b1a tinta */
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 60 2% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 213 68% 50%;            /* azul de marca desaturado (antes 100% = eléctrico) */
+    --popover-foreground: 60 2% 10%;
+    --primary: 15 100% 57%;            /* #ff5b23 naranja roz */
     --primary-foreground: 0 0% 100%;
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 44%;
-    --accent: 220 14% 96%;
-    --accent-foreground: 222 47% 11%;
-    --destructive: 0 72% 51%;
+    --secondary: 50 15% 92%;           /* = panel */
+    --secondary-foreground: 60 2% 10%;
+    --muted: 50 15% 92%;               /* #eeede8 */
+    --muted-foreground: 50 3% 36%;     /* #5f5e59 tinta 2 */
+    --faint: 47 4% 54%;                /* #8d8b84 tinta 3: etiquetas mono, ids, ejes */
+    --accent: 50 15% 92%;
+    --accent-foreground: 60 2% 10%;
+    --destructive: 358 75% 59%;        /* #e5484d */
     --destructive-foreground: 0 0% 100%;
-    --success: 142 68% 36%;
+    --success: 157 54% 40%;            /* #2f9e74 */
     --success-foreground: 0 0% 100%;
-    --warning: 32 90% 44%;
+    --warning: 33 92% 42%;             /* ámbar legible como texto sobre hueso */
     --warning-foreground: 0 0% 100%;
-    --border: 220 13% 89%;             /* hairline algo más definida para jerarquía en light */
-    --input: 220 13% 89%;
-    --ring: 213 68% 50%;
-    /* familia categórica validada (light, surface #fff) */
-    --chart-1: 213 68% 50%;            /* azul  */
-    --chart-2: 17 82% 56%;             /* naranja */
-    --chart-3: 159 73% 40%;            /* aqua */
-    --chart-4: 41 100% 46%;            /* amarillo */
-    --chart-5: 337 70% 70%;            /* magenta */
-    /* Dorado de "logro" (hyper points) — tokenizado y theme-aware (antes amber crudo). El podio usa
-       la paleta de charts directamente (primary/chart-3/chart-2). */
-    --hyper: 38 92% 40%;
-    /* Sidebar del chat: azul marino roz (el #0a0e1a del manifest) en el papel que el morado tiene
-       en Slack. Oscuro también en modo claro, a propósito: es lo que separa "lista de
-       conversaciones" de "conversación" de un vistazo. El activo usa --primary. */
-    --chat-sidebar: 224 45% 12%;
-    --chat-sidebar-foreground: 213 30% 93%;
-    --chat-sidebar-muted: 218 20% 66%;
-    --chat-sidebar-hover: 222 34% 19%;
-    --chat-sidebar-border: 222 32% 18%;
-    --radius: 0.625rem;
-    /* sombras frías y muy sutiles (clean minimal) */
-    --shadow-sm: 0 1px 2px 0 hsl(220 43% 11% / 0.04), 0 1px 3px 0 hsl(220 43% 11% / 0.06);
-    --shadow-md: 0 2px 4px -1px hsl(220 43% 11% / 0.06), 0 6px 16px -4px hsl(220 43% 11% / 0.08);
-    --shadow-lg: 0 10px 30px -6px hsl(220 43% 11% / 0.12);
+    --border: 47 13% 86%;              /* #e1dfd8 hairline cálida */
+    --input: 47 13% 86%;
+    --ring: 247 52% 52%;               /* foco morado profundo, como el mock */
+    --panel: 50 15% 92%;               /* #eeede8 paneles grises numerados */
+    --sidebar: 40 27% 98%;             /* #fbfaf8 aside de la consola / pie de modal */
+    --toggle-off: 47 10% 82%;          /* #d6d4cd pista apagada, casillas vacías */
+    --scrim: 60 2% 10%;                /* fondo de modal (tinta translúcida) */
+
+    /* Marca */
+    --orange: 15 100% 57%;             /* #ff5b23 */
+    --orange-soft: 18 100% 92%;        /* #ffe4d8 activo de navegación, selección */
+    --orange-ink: 16 85% 38%;          /* #b23a0e texto sobre orange-soft */
+    --salmon: 20 100% 73%;             /* #ffa274 */
+    --purple: 247 57% 68%;             /* #8a7fdc agentes */
+    --purple-deep: 247 52% 52%;        /* #5546c4 LLM, texto sobre lavanda */
+    --lavender: 248 69% 94%;           /* #e7e4fa */
+    --yellow: 42 100% 65%;             /* #ffc84a juntas, humano */
+    --yellow-soft: 44 100% 90%;        /* #fff1cc */
+    --yellow-ink: 39 100% 27%;         /* #8a5a00 */
+    --green: 157 54% 40%;              /* #2f9e74 CTA, éxito */
+    --green-soft: 153 46% 91%;         /* #dcf2e8 */
+    --red: 358 75% 59%;                /* #e5484d */
+    --red-soft: 0 86% 94%;             /* #fde4e4 */
+    --blue: 217 91% 60%;               /* #3b82f6 info */
+    --blue-soft: 216 89% 94%;          /* #e1ecfd */
+    --blue-ink: 218 75% 46%;           /* #1d5fcf */
+    --ink: 60 2% 10%;                  /* botón "dark" (tinta) */
+    --ink-foreground: 50 19% 94%;
+
+    /* Familia categórica: naranja, morado, verde, amarillo, cielo. Separadas por tono Y luminancia
+       para que se distingan también con daltonismo; el amarillo va sobre todo como relleno. */
+    --chart-1: 15 100% 57%;
+    --chart-2: 247 52% 52%;
+    --chart-3: 157 54% 40%;
+    --chart-4: 42 100% 58%;
+    --chart-5: 199 89% 48%;
+    /* Dorado de "logro" (hyper points). */
+    --hyper: 36 95% 42%;
+    /* Sidebar del chat (canales de Discord y conversaciones): IGUAL que el menú lateral izquierdo
+       (decisión del usuario, después de probar gris cálido, blanco y negro): mismo fondo, mismo hover
+       y mismo borde que AppShell, en claro y en oscuro. Por eso apunta a sus tokens, no a valores. */
+    --chat-sidebar: var(--sidebar);
+    --chat-sidebar-foreground: var(--foreground);
+    --chat-sidebar-muted: var(--muted-foreground);
+    --chat-sidebar-hover: var(--panel);
+    --chat-sidebar-border: var(--border);
+    /* Bloque de terminal (comandos del runner): oscuro en ambos modos, a propósito. */
+    --terminal: 60 2% 12%;
+    --terminal-foreground: 50 19% 94%;
+    --terminal-muted: 47 6% 68%;
+    --radius: 0.625rem;                /* 10px: tarjetas */
+    --font-sans: 'Inter Tight', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+    /* sombras cálidas y bajas (el mock separa por hairline, no por elevación) */
+    --shadow-sm: 0 1px 2px 0 hsl(40 10% 20% / 0.05);
+    --shadow-md: 0 1px 2px hsl(40 10% 20% / 0.04), 0 8px 24px -10px hsl(40 10% 20% / 0.14);
+    --shadow-lg: 0 30px 80px -20px hsl(40 10% 10% / 0.35);
 
     /* ── Escala de movimiento (transitions.dev) ────────────────────────────────────────────
        Vive aquí y no en un archivo aparte: roz tiene un único CSS y partirlo crearía dos
@@ -127,49 +160,73 @@
     --reel-ease: cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  /* DARK — first-class, no una inversión automática. Superficies casi neutras (menos azul que
-     antes) para un look más limpio; misma familia de charts stepped para el fondo oscuro y
-     validada contra la superficie dark. Elevación por borde + sombra apenas perceptible. */
+  /* DARK — misma identidad, no una inversión: negro cálido (#161615 fondo, #1f1f1d tarjeta,
+     #2a2a28 panel), textos hueso, naranja un punto más claro. Los "soft" pasan a tintes oscuros
+     y sus "ink" a tonos claros para que los chips conserven contraste. */
   .dark {
     color-scheme: dark;
-    --background: 225 24% 6%;
-    --foreground: 213 28% 95%;
-    --card: 224 22% 9%;
-    --card-foreground: 213 28% 95%;
-    --popover: 224 24% 9%;
-    --popover-foreground: 213 28% 95%;
-    --primary: 213 77% 56%;
-    --primary-foreground: 224 46% 8%;
-    --secondary: 222 20% 15%;
-    --secondary-foreground: 213 28% 95%;
-    --muted: 223 20% 13%;
-    --muted-foreground: 218 14% 63%;
-    --accent: 222 20% 16%;
-    --accent-foreground: 213 28% 95%;
-    --destructive: 358 80% 62%;
+    --background: 60 2% 8%;            /* #161615 */
+    --foreground: 50 19% 94%;          /* #f2f1ec */
+    --card: 60 3% 12%;                 /* #1f1f1d */
+    --card-foreground: 50 19% 94%;
+    --popover: 60 3% 12%;
+    --popover-foreground: 50 19% 94%;
+    --primary: 16 100% 60%;            /* #ff6a35 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 60 2% 16%;            /* = panel */
+    --secondary-foreground: 50 19% 94%;
+    --muted: 60 2% 16%;                /* #2a2a28 */
+    --muted-foreground: 47 6% 68%;     /* #b9b7b0 */
+    --faint: 45 4% 52%;
+    --accent: 60 2% 18%;
+    --accent-foreground: 50 19% 94%;
+    --destructive: 358 80% 64%;
     --destructive-foreground: 0 0% 100%;
-    --success: 152 52% 50%;
-    --success-foreground: 224 46% 8%;
-    --warning: 38 62% 58%;
-    --warning-foreground: 224 46% 8%;
-    --border: 221 18% 17%;
-    --input: 221 18% 19%;
-    --ring: 213 77% 56%;
-    /* familia categórica validada (dark, surface del card) */
-    --chart-1: 213 77% 56%;
-    --chart-2: 17 70% 50%;
-    --chart-3: 159 73% 36%;
-    --chart-4: 40 100% 39%;
-    --chart-5: 338 61% 58%;
-    --hyper: 213 77% 56%;   /* en dark los hyper points van AZUL (en light son dorados) */
-    --chat-sidebar: 226 32% 5%;
-    --chat-sidebar-foreground: 213 28% 92%;
-    --chat-sidebar-muted: 218 14% 58%;
-    --chat-sidebar-hover: 224 24% 11%;
-    --chat-sidebar-border: 224 22% 12%;
+    --success: 157 48% 52%;
+    --success-foreground: 60 2% 8%;
+    --warning: 40 90% 60%;
+    --warning-foreground: 60 2% 8%;
+    --border: 60 3% 20%;               /* ~#353532 */
+    --input: 60 3% 22%;
+    --ring: 247 80% 76%;
+    --panel: 60 2% 16%;
+    --sidebar: 60 2% 10%;
+    --toggle-off: 60 2% 26%;
+    --scrim: 0 0% 0%;
+
+    --orange: 16 100% 60%;
+    --orange-soft: 16 55% 17%;
+    --orange-ink: 18 100% 72%;
+    --salmon: 20 90% 68%;
+    --purple: 247 70% 74%;
+    --purple-deep: 247 80% 78%;        /* en oscuro "deep" es el morado legible sobre lavanda */
+    --lavender: 248 28% 21%;
+    --yellow: 42 100% 62%;
+    --yellow-soft: 42 45% 16%;
+    --yellow-ink: 42 95% 70%;
+    --green: 157 48% 46%;
+    --green-soft: 157 35% 15%;
+    --red: 358 80% 64%;
+    --red-soft: 358 40% 18%;
+    --blue: 217 91% 66%;
+    --blue-soft: 217 40% 18%;
+    --blue-ink: 217 90% 76%;
+    --ink: 50 19% 94%;                 /* botón "dark" se vuelve hueso sobre negro */
+    --ink-foreground: 60 2% 8%;
+
+    --chart-1: 16 100% 60%;
+    --chart-2: 247 75% 72%;
+    --chart-3: 157 48% 48%;
+    --chart-4: 42 100% 60%;
+    --chart-5: 199 85% 58%;
+    --hyper: 213 77% 60%;   /* en dark los hyper points van AZUL (en light son dorados): decisión del usuario */
+    /* --chat-sidebar-* no se redefine aquí: apunta a --sidebar/--panel/--border, que ya cambian. */
+    --terminal: 60 2% 6%;
+    --terminal-foreground: 50 19% 92%;
+    --terminal-muted: 47 5% 60%;
     --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
-    --shadow-md: 0 4px 14px -3px hsl(0 0% 0% / 0.45);
-    --shadow-lg: 0 14px 36px -8px hsl(0 0% 0% / 0.55);
+    --shadow-md: 0 1px 2px hsl(0 0% 0% / 0.3), 0 8px 24px -10px hsl(0 0% 0% / 0.5);
+    --shadow-lg: 0 30px 80px -20px hsl(0 0% 0% / 0.7);
   }
 }
 
@@ -192,6 +249,18 @@
   html {
     overscroll-behavior-y: none;
   }
+  /* Títulos del mock: Inter Tight 600 con tracking negativo fuerte. */
+  h1, h2, h3, h4 {
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+  }
+  :focus-visible {
+    outline-color: hsl(var(--ring));
+  }
+  ::selection {
+    background: hsl(var(--orange) / 0.25);
+  }
   html,
   body,
   #root {
@@ -206,49 +275,125 @@
   }
 }
 
-/* Scrollbars discretas */
-@layer utilities {
-  .scrollbar-thin {
-    scrollbar-width: thin; /* Firefox */
-    scrollbar-color: hsl(var(--border)) transparent;
+/* Scrollbars (ver DESIGN.md → "Scroll"). GLOBAL: toda zona con scroll de la app lleva la misma
+   barra delgada, sin pista ni flechas, con el pulgar en tokens del tema. Chromium/Safari usan los
+   pseudo-elementos (el pulgar se dibuja con un borde transparente para que quede fino y pegado al
+   borde derecho, sin hueco); Firefox, que no los soporta, usa las propiedades estándar. */
+@layer base {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
   }
-  .scrollbar-thin::-webkit-scrollbar {
-    height: 8px;
-    width: 8px;
-  }
-  .scrollbar-thin::-webkit-scrollbar-thumb {
-    @apply rounded-full bg-border;
-  }
-  .scrollbar-thin::-webkit-scrollbar-track {
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
     background: transparent;
   }
-
-  /* Scrollbar estilizado theme-aware (tokens del tema, no colores fijos). Se usa en el
-     backlog y en el modal de tareas; el thumb se oscurece al hover del contenedor. */
-  .scroll-thin {
-    scrollbar-width: thin; /* Firefox */
-    scrollbar-color: hsl(var(--border)) transparent;
+  ::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
   }
-  .scroll-thin:hover {
-    scrollbar-color: hsl(var(--muted-foreground) / 0.4) transparent;
-  }
-  .scroll-thin::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-  }
-  .scroll-thin::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .scroll-thin::-webkit-scrollbar-thumb {
+  ::-webkit-scrollbar-thumb {
     border-radius: 9999px;
-    background-color: hsl(var(--border));
-    transition: background-color 0.15s ease;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    background-color: hsl(var(--toggle-off));
   }
-  .scroll-thin:hover::-webkit-scrollbar-thumb {
-    background-color: hsl(var(--muted-foreground) / 0.4);
+  ::-webkit-scrollbar-thumb:hover {
+    border-width: 2px;
+    background-color: hsl(var(--faint));
   }
-  .scroll-thin::-webkit-scrollbar-thumb:hover {
-    background-color: hsl(var(--muted-foreground) / 0.6);
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: hsl(var(--toggle-off)) transparent;
+    }
+  }
+}
+
+@layer utilities {
+  /* `.scrollbar-thin` / `.scroll-thin` son alias históricos sin estilo propio: la barra ya es delgada
+     en toda la app. NO llevan `overscroll-behavior: contain`: un contenedor que no desborda se
+     quedaba con la rueda y la página dejaba de desplazarse con el cursor encima. */
+  /* Lista con scroll interno DENTRO de una tarjeta con padding: la barra se pega al borde
+     derecho de la tarjeta en vez de flotar a media tarjeta. `--edge` = padding horizontal de la
+     tarjeta (por defecto 1rem = p-4). Uso: `<div class="scroll-list max-h-80">`. */
+  .scroll-list {
+    overflow-y: auto;
+    margin-right: calc(var(--edge, 1rem) * -1);
+    padding-right: calc(var(--edge, 1rem) - 4px);
+  }
+  /* Oculta la barra por completo (carruseles, filas de chips). */
+  .scroll-none {
+    scrollbar-width: none;
+  }
+  .scroll-none::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Piezas tipográficas de la identidad (ver DESIGN.md). Como clases y no solo como componentes
+   para poder usarlas en un <th>, un <label> o dentro de un SVG sin envolver. */
+@layer components {
+  /* Etiqueta de interfaz: Inter Tight 600 MAYÚSCULAS, tracking abierto, 11px, tinta 3. Es LA
+     tipografía de eyebrows, labels de KPI, roles, encabezados de tabla, chips, separadores de fecha
+     y contadores. La mono (`font-mono`) queda SOLO para código, IDs de issue, hashes, rutas y
+     terminal. Color y tamaño se pueden pisar con utilidades (`text-orange-ink`, `text-[10px]`). */
+  .label-caps {
+    @apply font-sans text-[11px] font-semibold uppercase leading-[1.25] tracking-[0.06em] text-faint;
+  }
+  /* Eyebrow: cuadrito de color (radio 2px) + etiqueta. El color del cuadrito se cambia con `--sq`
+     (un token: `[--sq:var(--purple-deep)]`). */
+  .eyebrow {
+    @apply inline-flex items-center gap-2 font-sans text-[11px] font-semibold uppercase leading-none tracking-[0.06em] text-muted-foreground;
+  }
+  .eyebrow::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 2px;
+    background: hsl(var(--sq, var(--orange)));
+  }
+  /* Rejilla balanceada (`BalancedGrid`, components/grid.tsx): el componente calcula por breakpoint
+     las pistas (`--bg-tN`) y el span de cada celda (`--bg-sN`) para que ninguna fila quede con
+     huecos. N = 0 base · 1 sm · 2 md · 3 lg · 4 xl. */
+  .bgrid {
+    display: grid;
+    grid-template-columns: repeat(var(--bg-t0, 1), minmax(0, 1fr));
+  }
+  .bgrid-item {
+    display: grid;
+    min-width: 0;
+    grid-column: span var(--bg-s0, 1) / span var(--bg-s0, 1);
+  }
+  .bgrid-item > * {
+    min-width: 0;
+  }
+  @media (min-width: 640px) {
+    .bgrid { grid-template-columns: repeat(var(--bg-t1, 1), minmax(0, 1fr)); }
+    .bgrid-item { grid-column: span var(--bg-s1, 1) / span var(--bg-s1, 1); }
+  }
+  @media (min-width: 768px) {
+    .bgrid { grid-template-columns: repeat(var(--bg-t2, 1), minmax(0, 1fr)); }
+    .bgrid-item { grid-column: span var(--bg-s2, 1) / span var(--bg-s2, 1); }
+  }
+  @media (min-width: 1024px) {
+    .bgrid { grid-template-columns: repeat(var(--bg-t3, 1), minmax(0, 1fr)); }
+    .bgrid-item { grid-column: span var(--bg-s3, 1) / span var(--bg-s3, 1); }
+  }
+  @media (min-width: 1280px) {
+    .bgrid { grid-template-columns: repeat(var(--bg-t4, 1), minmax(0, 1fr)); }
+    .bgrid-item { grid-column: span var(--bg-s4, 1) / span var(--bg-s4, 1); }
+  }
+  /* Título de pantalla apretado. */
+  .title-tight {
+    @apply font-semibold tracking-[-0.035em];
+  }
+  /* Ejes de recharts: sans con cifras tabulares (antes mono). */
+  .recharts-cartesian-axis-tick text,
+  .recharts-text.recharts-label {
+    font-variant-numeric: tabular-nums;
   }
 }
 
@@ -414,6 +559,7 @@
 .t-modal[data-state='closed'] { animation: roz-modal-out var(--duration-quick) var(--ease-smooth-out) both }
 .t-overlay[data-state='open'] { animation: roz-fade-in var(--duration-fast) var(--ease-smooth-out) both }
 .t-overlay[data-state='closed'] { animation: roz-fade-out var(--duration-quick) var(--ease-smooth-out) both }
+
 
 /* ---- 05-menu-dropdown: menús, popovers y selects ---- */
 /* "Origin-aware": crece desde el disparador, no desde su propio centro. Cada primitivo de Radix

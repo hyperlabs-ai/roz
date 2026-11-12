@@ -7,9 +7,9 @@ import { cn } from '@/lib/utils';
 
 function DayDivider({ iso }: { iso: string }) {
   return (
-    <div className="sticky top-0 z-[5] flex items-center gap-3 px-4 py-2 md:px-5">
+    <div className="sticky top-0 z-[5] flex items-center gap-3 px-4 py-2.5 md:px-5">
       <div className="h-px flex-1 bg-border" />
-      <span className="rounded-full border bg-background px-3 py-0.5 text-xs font-medium text-muted-foreground shadow-sm">
+      <span className="rounded-full border bg-card px-3 py-1 label-caps text-muted-foreground shadow-sm">
         {dayLabel(iso)}
       </span>
       <div className="h-px flex-1 bg-border" />
@@ -20,8 +20,32 @@ function DayDivider({ iso }: { iso: string }) {
 function NewDivider() {
   return (
     <div className="flex items-center gap-3 px-4 py-1 md:px-5" aria-label="Mensajes nuevos">
-      <div className="h-px flex-1 bg-destructive/60" />
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-destructive">Nuevos</span>
+      <div className="h-px flex-1 bg-red/60" />
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-soft px-2 py-0.5 label-caps text-red">
+        <i aria-hidden className="size-1.5 rounded-full bg-current" />
+        Nuevos
+      </span>
+    </div>
+  );
+}
+
+/** Placeholder de carga con la forma de los mensajes (avatar redondo + nombre + líneas). */
+function MessagesSkeleton() {
+  return (
+    <div className="flex flex-1 flex-col justify-end gap-5 px-4 py-6 md:px-5" aria-label="Cargando mensajes">
+      {[0.62, 0.4, 0.78, 0.5].map((w, i) => (
+        <div key={i} className="flex gap-3">
+          <div className="shimmer size-9 shrink-0 rounded-full bg-panel" />
+          <div className="grid flex-1 gap-2 pt-0.5">
+            <div className="flex items-center gap-2">
+              <div className="shimmer h-3 w-24 rounded-sm bg-panel" />
+              <div className="h-2.5 w-10 rounded-sm bg-panel/70" />
+            </div>
+            <div className="shimmer h-3 rounded-sm bg-panel" style={{ width: `${w * 100}%` }} />
+            {i % 2 === 0 && <div className="shimmer h-3 rounded-sm bg-panel" style={{ width: `${w * 60}%` }} />}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -133,9 +157,7 @@ export function MessageList({
       <div ref={scroller} onScroll={onScroll} className="scroll-thin h-full overflow-y-auto overscroll-contain">
         <div className="flex min-h-full flex-col justify-end pb-2">
           {loading ? (
-            <div className="flex flex-1 items-center justify-center py-10 text-muted-foreground">
-              <Loader2 className="size-5 animate-spin" />
-            </div>
+            <MessagesSkeleton />
           ) : (
             <>
               {hasMore ? (
@@ -143,7 +165,11 @@ export function MessageList({
                   {loadingOlder ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
-                    <button type="button" onClick={onLoadOlder} className="text-xs hover:text-foreground hover:underline">
+                    <button
+                      type="button"
+                      onClick={onLoadOlder}
+                      className="rounded-btn bg-panel px-3 py-1.5 label-caps text-muted-foreground transition-colors hover:bg-toggle-off/70 hover:text-foreground"
+                    >
                       Cargar mensajes anteriores
                     </button>
                   )}
@@ -180,7 +206,7 @@ export function MessageList({
           setShowJump(false);
         }}
         className={cn(
-          'absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg transition-all duration-200 ease-spring',
+          'absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-btn bg-ink px-3 py-2 label-caps text-ink-foreground shadow-lg transition-all duration-200 ease-spring',
           showJump ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-2 opacity-0',
         )}
       >

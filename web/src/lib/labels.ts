@@ -59,10 +59,10 @@ export function canonState(state: string): string {
   return LEGACY_STATE[state] ?? 'planificada';
 }
 
-/** Variante de Badge para un estado (verde = cerrado, azul = en curso, gris = pendiente). */
-export function stateBadgeVariant(state: string): 'success' | 'default' | 'secondary' {
+/** Variante de Badge para un estado (verde = cerrado, azul = en curso, gris = pendiente). Chips del mock. */
+export function stateBadgeVariant(state: string): 'success' | 'info' | 'secondary' {
   if (['completada', 'completed', 'done'].includes(state)) return 'success';
-  if (['en_progreso', 'started', 'in_progress'].includes(state)) return 'default';
+  if (['en_progreso', 'started', 'in_progress'].includes(state)) return 'info';
   return 'secondary';
 }
 
@@ -177,11 +177,11 @@ export const QUEUE_EVENT: Record<string, QueueEventLabel> = {
 
 /** Clases COMPLETAS y estáticas: Tailwind no detecta las construidas en runtime. */
 export const QUEUE_FAMILY: Record<QueueFamily, string> = {
-  commit: 'bg-chart-1/12 text-chart-1',
-  pr: 'bg-chart-3/12 text-chart-3',
-  task: 'bg-chart-4/12 text-chart-4',
-  doc: 'bg-chart-2/12 text-chart-2',
-  repo: 'bg-muted text-muted-foreground',
+  commit: 'bg-orange-soft text-orange-ink',
+  pr: 'bg-green-soft text-green',
+  task: 'bg-yellow-soft text-yellow-ink',
+  doc: 'bg-lavender text-purple-deep',
+  repo: 'bg-panel text-muted-foreground',
 };
 
 /**
@@ -201,11 +201,11 @@ export const QUEUE_FAMILY_FAILED: Record<QueueFamily, string> = {
 
 /** Salud de la cola. Mismo shape que el STATUS de Infra, para que las dos vistas se lean igual. */
 export const QUEUE_HEALTH: Record<string, { label: string; dot: string; pill: string }> = {
-  idle: { label: 'Al día', dot: 'bg-success', pill: 'bg-success/12 text-success' },
-  working: { label: 'Procesando', dot: 'bg-primary', pill: 'bg-primary/12 text-primary' },
-  delayed: { label: 'Retrasada', dot: 'bg-warning', pill: 'bg-warning/12 text-warning' },
-  failing: { label: 'Con fallas', dot: 'bg-destructive', pill: 'bg-destructive/12 text-destructive' },
-  unknown: { label: 'Sin contacto', dot: 'bg-muted-foreground/40', pill: 'bg-muted text-muted-foreground' },
+  idle: { label: 'Al día', dot: 'bg-green', pill: 'bg-green-soft text-green' },
+  working: { label: 'Procesando', dot: 'bg-orange', pill: 'bg-orange-soft text-orange-ink' },
+  delayed: { label: 'Retrasada', dot: 'bg-yellow', pill: 'bg-yellow-soft text-yellow-ink' },
+  failing: { label: 'Con fallas', dot: 'bg-red', pill: 'bg-red-soft text-red' },
+  unknown: { label: 'Sin contacto', dot: 'bg-toggle-off', pill: 'bg-panel text-muted-foreground' },
 };
 
 /** Origen del ticket (cómo nació el trabajo). */
@@ -224,9 +224,9 @@ export const SOURCE_COLOR: Record<string, string> = {
  * "ocupado" sería un juicio sobre una actividad que puede ser perfectamente interrumpible.
  */
 export const DEV_PRESENCE: Record<string, { label: string; dot: string; pill: string }> = {
-  busy: { label: 'En un evento', dot: 'bg-warning', pill: 'bg-warning/12 text-warning' },
-  free: { label: 'Sin actividad', dot: 'bg-success', pill: 'bg-success/12 text-success' },
-  unknown: { label: 'Sin calendario', dot: 'bg-muted-foreground/40', pill: 'bg-muted text-muted-foreground' },
+  busy: { label: 'En un evento', dot: 'bg-yellow', pill: 'bg-yellow-soft text-yellow-ink' },
+  free: { label: 'Sin actividad', dot: 'bg-green', pill: 'bg-green-soft text-green' },
+  unknown: { label: 'Sin calendario', dot: 'bg-toggle-off', pill: 'bg-panel text-muted-foreground' },
 };
 
 // ---- Capacidad del equipo ----
@@ -271,9 +271,9 @@ export const ASSIGNMENT_KIND_LABEL: Record<string, string> = {
  * no cabe en la semana de esa persona.
  */
 export const LOAD_STATE: Record<string, { label: string; dot: string; pill: string; tone: 'primary' | 'success' | 'warning' | 'destructive' }> = {
-  libre: { label: 'Disponible', dot: 'bg-success', pill: 'bg-success/12 text-success', tone: 'success' },
-  disponible: { label: 'Con holgura', dot: 'bg-chart-1', pill: 'bg-chart-1/12 text-chart-1', tone: 'primary' },
-  optima: { label: 'Carga óptima', dot: 'bg-primary', pill: 'bg-primary/12 text-primary', tone: 'primary' },
-  completa: { label: 'Carga completa', dot: 'bg-warning', pill: 'bg-warning/12 text-warning', tone: 'warning' },
-  saturada: { label: 'Saturada', dot: 'bg-destructive', pill: 'bg-destructive/12 text-destructive', tone: 'destructive' },
+  libre: { label: 'Disponible', dot: 'bg-green', pill: 'bg-green-soft text-green', tone: 'success' },
+  disponible: { label: 'Con holgura', dot: 'bg-blue', pill: 'bg-blue-soft text-blue-ink', tone: 'primary' },
+  optima: { label: 'Carga óptima', dot: 'bg-orange', pill: 'bg-orange-soft text-orange-ink', tone: 'primary' },
+  completa: { label: 'Carga completa', dot: 'bg-yellow', pill: 'bg-yellow-soft text-yellow-ink', tone: 'warning' },
+  saturada: { label: 'Saturada', dot: 'bg-red', pill: 'bg-red-soft text-red', tone: 'destructive' },
 };

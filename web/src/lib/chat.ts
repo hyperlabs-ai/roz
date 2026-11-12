@@ -103,6 +103,8 @@ export interface ChatDev {
   id: string;
   name: string;
   avatarUrl: string | null;
+  /** El backend lo manda (semilla del avatar generado). */
+  email?: string | null;
   active: boolean;
 }
 

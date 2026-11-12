@@ -30,7 +30,23 @@ export default {
         },
         // Dorado de logro (hyper points), theme-aware.
         hyper: 'hsl(var(--hyper))',
-        // Sidebar del chat (azul marino roz en ambos modos).
+        // ── Identidad roz v2 (ver src/DESIGN.md). Se fusionan con la escala de Tailwind (orange-500
+        // sigue existiendo), pero en componentes se usan SOLO estas: `bg-orange`, `bg-orange-soft`…
+        faint: 'hsl(var(--faint))',
+        panel: 'hsl(var(--panel))',
+        sidebar: 'hsl(var(--sidebar))',
+        'toggle-off': 'hsl(var(--toggle-off))',
+        scrim: 'hsl(var(--scrim))',
+        ink: { DEFAULT: 'hsl(var(--ink))', foreground: 'hsl(var(--ink-foreground))' },
+        orange: { DEFAULT: 'hsl(var(--orange))', soft: 'hsl(var(--orange-soft))', ink: 'hsl(var(--orange-ink))' },
+        salmon: 'hsl(var(--salmon))',
+        purple: { DEFAULT: 'hsl(var(--purple))', deep: 'hsl(var(--purple-deep))' },
+        lavender: 'hsl(var(--lavender))',
+        yellow: { DEFAULT: 'hsl(var(--yellow))', soft: 'hsl(var(--yellow-soft))', ink: 'hsl(var(--yellow-ink))' },
+        green: { DEFAULT: 'hsl(var(--green))', soft: 'hsl(var(--green-soft))' },
+        red: { DEFAULT: 'hsl(var(--red))', soft: 'hsl(var(--red-soft))' },
+        blue: { DEFAULT: 'hsl(var(--blue))', soft: 'hsl(var(--blue-soft))', ink: 'hsl(var(--blue-ink))' },
+        // Sidebar del chat (gris cálido en claro, tinta en oscuro).
         'chat-sidebar': {
           DEFAULT: 'hsl(var(--chat-sidebar))',
           foreground: 'hsl(var(--chat-sidebar-foreground))',
@@ -38,12 +54,28 @@ export default {
           hover: 'hsl(var(--chat-sidebar-hover))',
           border: 'hsl(var(--chat-sidebar-border))',
         },
+        // Bloque de terminal (oscuro en ambos modos).
+        terminal: {
+          DEFAULT: 'hsl(var(--terminal))',
+          foreground: 'hsl(var(--terminal-foreground))',
+          muted: 'hsl(var(--terminal-muted))',
+        },
       },
-      borderRadius: { lg: 'var(--radius)', md: 'calc(var(--radius) - 2px)', sm: 'calc(var(--radius) - 4px)' },
+      // lg = tarjeta (10px), xl/2xl = panel gris (14px), btn = botón Stape (4px).
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 4px)',
+        sm: 'calc(var(--radius) - 6px)',
+        xl: '14px',
+        '2xl': '16px',
+        btn: '4px',
+      },
       fontFamily: {
-        // Geist = tipografía de marca (variable). Mono para números/código (detalle fino).
-        sans: ['"Geist Variable"', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
-        mono: ['"Geist Mono Variable"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        // Inter Tight = todo el texto, etiquetas incluidas (`.label-caps`); JetBrains Mono SOLO para código, IDs, hashes y rutas.
+        // Se cargan desde Google Fonts en index.html.
+        sans: ['"Inter Tight"', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        display: ['"Inter Tight"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', '"Cascadia Code"', 'Consolas', 'monospace'],
       },
       boxShadow: {
         // Sombras por token (frías y sutiles en light, casi nulas en dark → elevación por borde).

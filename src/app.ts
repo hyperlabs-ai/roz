@@ -11,6 +11,10 @@ import { intakeRoutes } from './routes/intake.js';
 import { internalRoutes } from './routes/internal.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { calendarOauthRoutes } from './routes/calendar-oauth.js';
+import { linearWebhookRoutes } from './routes/linear.js';
+import { runnerRoutes } from './routes/runner.js';
+import { discordOauthRoutes } from './routes/discord-oauth.js';
+import { discordBridgeRoutes } from './routes/discord.js';
 
 const app = new Hono<RozContext>();
 
@@ -25,15 +29,25 @@ app.use('*', loggerMiddleware);
 app.route('/mcp', mcpRoutes);
 // Afuera -> roz.
 app.route('/webhooks', webhookRoutes);
+// Webhook de Linear (roz v2): POST /webhooks/linear. Con ROZ_LINEAR_SOT apagado responde 200 sin emitir.
+app.route('/webhooks', linearWebhookRoutes);
 // Ingesta automática desde apps de clientes (sin humano en el loop).
 app.route('/v1/intake', intakeRoutes);
+// API de roz-runner (roz v2): autentica su propio Bearer rozr_…, sin sesión del dashboard.
+app.route('/v1/runner', runnerRoutes);
 // Dashboard de visibilidad de ingeniería (auth de OpsHyper). Lo consume el SPA en web/.
 app.route('/api/dashboard', dashboardRoutes);
 // Callback de OAuth de Google (calendario). Va aparte de /api/dashboard porque ese router exige
 // Bearer en TODO, y esto llega como navegación del browser: se autentica con el `state` de un solo uso.
 app.route('/api/calendar', calendarOauthRoutes);
+// Callback de OAuth2 de Discord (ligar la cuenta del dev). Mismo motivo que el de calendario:
+// llega como navegación del browser y se autentica con el `state` de un solo uso.
+app.route('/api/discord', discordOauthRoutes);
 // Drenado de la cola (outbox) y barridas — disparado por Vercel Cron.
 app.route('/v1/internal', internalRoutes);
+// Avisos del puente de Discord (POST /v1/internal/discord/events). Trae su propia auth
+// (Bearer ROZ_BRIDGE_SECRET, fail-closed) y responde 404 con ROZ_DISCORD_CHAT apagado.
+app.route('/v1/internal', discordBridgeRoutes);
 
 // --- SPA del dashboard ---
 // La función sirve el build de web/dist (incluido en el bundle vía vercel.json includeFiles).

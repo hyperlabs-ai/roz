@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ClipboardList, Search } from 'lucide-react';
+import { Check, Search } from 'lucide-react';
 import { useChat } from '@/chat/ChatContext';
 import { AvatarStack } from '@/components/bits';
 import { StatusIcon } from '@/components/tasks/inline-cells';
@@ -94,9 +94,9 @@ export function StatusDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[85vh] flex-col gap-3 sm:max-w-xl">
-        <DialogHeader>
+        <DialogHeader eyebrow="Chat · daily">
           <DialogTitle className="flex items-center gap-2">
-            <ClipboardList className="size-5 text-primary" /> Compartir status
+            Compartir status
           </DialogTitle>
           <DialogDescription>Elige las tareas que quieres mostrar en el chat. Se verán con su estado actual.</DialogDescription>
         </DialogHeader>
@@ -140,7 +140,7 @@ export function StatusDialog({
                   onClick={() => toggle(t)}
                   className={cn(
                     'flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:opacity-40',
-                    on && 'bg-primary/5',
+                    on && 'bg-orange-soft',
                   )}
                 >
                   <span

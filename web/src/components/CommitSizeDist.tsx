@@ -11,7 +11,7 @@ import type { SizeBucket } from '@/lib/api';
  * empaqueta el trabajo en commits no cambia el puntaje.
  */
 
-// Rampa ORDINAL de un solo hue (azul de marca) micro→grande: magnitud creciente = intensidad
+// Rampa ORDINAL de un solo hue (naranja roz) micro→grande: magnitud creciente = intensidad
 // creciente, coherente con el tema en light y dark (antes eran sky/violet/amber sueltos).
 // `color` (y no solo la clase `bar`) porque las primitivas de gráfica reciben un color, no una
 // clase de Tailwind: el mismo valor sirve para el segmento apilado y para la barra proporcional.
@@ -22,19 +22,57 @@ const META: Record<SizeBucket['key'], { label: string; range: string; color: str
   grande: { label: 'Grande', range: '>2k', color: 'hsl(var(--chart-1))', dot: 'bg-chart-1' },
 };
 
-/** Barra compacta (para la fila del listado): segmentos = % de líneas por franja de tamaño. */
-export function SizeDistBar({ dist }: { dist: SizeBucket[] }) {
+/** Segmentos de la barra apilada (líneas por franja), con la rampa de este módulo. */
+export function sizeDistSegments(dist: SizeBucket[]) {
+  return dist.map((b) => ({ label: META[b.key].label, value: b.lines, color: META[b.key].color }));
+}
+
+/**
+ * Leyenda de la barra: franja + % de líneas, en una línea. Sin ella la barra era cuatro tonos de
+ * naranja sin clave y había que pasar el cursor para saber qué era cada uno.
+ */
+export function SizeDistLegend({ dist, className }: { dist: SizeBucket[]; className?: string }) {
   const totalLines = dist.reduce((s, b) => s + b.lines, 0);
   if (!totalLines) return null;
   return (
+    <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-none tabular-nums', className)}>
+      {dist.map((b) => {
+        const pct = Math.round((b.lines / totalLines) * 100);
+        return (
+          <span key={b.key} className={cn('inline-flex items-center gap-1', !b.lines && 'opacity-45')}>
+            <span className={cn('size-1.5 shrink-0 rounded-[2px]', META[b.key].dot)} />
+            <span className="text-muted-foreground">{META[b.key].label}</span>
+            <span className="font-medium text-foreground">{pct}%</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Barra compacta (para la fila del listado): segmentos = % de líneas por franja de tamaño.
+ *
+ * `placeholder` la dibuja vacía cuando no hay commits en vez de no dibujar nada: en un listado, que
+ * la barra desaparezca en unas filas y en otras no las desalinea entre sí.
+ */
+export function SizeDistBar({ dist, placeholder = false, className }: { dist: SizeBucket[]; placeholder?: boolean; className?: string }) {
+  const totalLines = dist.reduce((s, b) => s + b.lines, 0);
+  if (!totalLines) {
+    if (!placeholder) return null;
+    return (
+      <div className={cn('mt-2', className)}>
+        <StackedBar height={6} data={[]} />
+        <div className="mt-2 text-[11px] leading-none text-faint">Sin commits en el período</div>
+      </div>
+    );
+  }
+  return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="mt-2">
-          <StackedBar
-            height={6}
-            data={dist.map((b) => ({ label: META[b.key].label, value: b.lines, color: META[b.key].color }))}
-          />
-          <div className="mt-1 text-[10px] text-muted-foreground">líneas por tamaño de commit</div>
+        <div className={cn('mt-2', className)}>
+          <StackedBar height={6} data={sizeDistSegments(dist)} />
+          <SizeDistLegend dist={dist} className="mt-2" />
         </div>
       </TooltipTrigger>
       <TooltipContent className="max-w-[19rem] rounded-lg border bg-popover p-3 text-left font-normal text-popover-foreground shadow-lg">
@@ -76,11 +114,11 @@ export function SizeDistPanel({ dist }: { dist: SizeBucket[] }) {
   return (
     <div className="grid gap-6 sm:grid-cols-2">
       <div>
-        <div className="mb-2 text-xs font-medium text-muted-foreground">Commits por tamaño</div>
+        <div className="label-caps mb-2 block">Commits por tamaño</div>
         <Columns data={axis((b) => b.commits)} sort={false} hideZeros={false} height={170} valueFormat={(n) => String(n)} />
       </div>
       <div>
-        <div className="mb-2 text-xs font-medium text-muted-foreground">Líneas por tamaño</div>
+        <div className="label-caps mb-2 block">Líneas por tamaño</div>
         <Columns data={axis((b) => b.lines)} sort={false} hideZeros={false} height={170} />
       </div>
     </div>

@@ -5,6 +5,7 @@ import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip';
 import { PresenceSchedule } from '@/components/PresenceSchedule';
 import { cn } from '@/lib/utils';
 import type { DevPresence } from '@/lib/api';
+import { IntegrationIcon, type Presence } from '@/components/brand';
 
 /**
  * Hora local en 24h ("01:00", "14:30").
@@ -21,33 +22,21 @@ export function clockTime(iso: string | null): string {
 }
 
 /**
- * Marca de Google Calendar. Va en el panel para dejar claro de DÓNDE sale el dato: sin ella, un
- * título como "Toy Dormido" podría parecer algo que roz infiere en vez de leer de tu agenda.
- *
- * SVG inline (no un archivo ni un CDN): son cuatro rectángulos y un número, y así hereda el tamaño
- * del contenedor y no agrega una petición de red.
+ * Marca de Google Calendar (ícono oficial de `public/integrations/`). Dice de DÓNDE sale el dato:
+ * sin ella, un título como "Toy Dormido" podría parecer algo que roz infiere en vez de leer de tu
+ * agenda.
  */
 function GoogleCalendarMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} role="img" aria-label="Google Calendar">
-      <rect x="4" y="4" width="16" height="16" rx="1.5" fill="#fff" />
-      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H20v1.9H4z" fill="#4285F4" />
-      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H5.9v16H5.5A1.5 1.5 0 0 1 4 18.5z" fill="#34A853" />
-      <path d="M4 18.1h16v.4A1.5 1.5 0 0 1 18.5 20H5.5A1.5 1.5 0 0 1 4 18.5z" fill="#FBBC04" />
-      <path d="M18.1 4h.4A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-.4z" fill="#EA4335" />
-      <text
-        x="12"
-        y="15.6"
-        textAnchor="middle"
-        fill="#4285F4"
-        fontSize="8.5"
-        fontWeight="700"
-        fontFamily="Geist Variable, system-ui, sans-serif"
-      >
-        31
-      </text>
-    </svg>
-  );
+  return <IntegrationIcon name="googlecalendar" size="sm" title="Google Calendar" className={className} />;
+}
+
+/**
+ * Presencia del calendario → presencia del avatar del mock (`GithubAvatar`): en un evento = "en
+ * junta" (amarillo), sin actividad = en línea (verde), sin calendario = fuera (gris).
+ */
+export function avatarPresence(status: DevPresence['status'] | undefined | null): Presence | undefined {
+  if (!status) return undefined;
+  return status === 'busy' ? 'meet' : status === 'free' ? 'on' : 'off';
 }
 
 interface Content {
@@ -144,14 +133,14 @@ export function PresencePanel({
               de esos, el texto empujaría la fila y desbordaría la tarjeta en vez de recortarse.
               El texto completo queda en el `title` nativo y en el tooltip con la agenda. */}
           <span className={cn('flex min-w-0 cursor-default items-center gap-2', className)}>
-            <GoogleCalendarMark className="size-3.5 shrink-0" />
+            <GoogleCalendarMark className="size-3.5" />
             <span
-              className={cn('size-1.5 shrink-0 rounded-full', busy ? 'bg-warning' : 'bg-success')}
+              className={cn('size-1.5 shrink-0 rounded-full', busy ? 'bg-yellow' : 'bg-green')}
               aria-hidden
             />
             <span className="min-w-0 truncate text-xs font-medium" title={head}>{head}</span>
             {when && (
-              <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">{when}</span>
+              <span className="shrink-0 text-[11px] tabular-nums text-faint">{when}</span>
             )}
           </span>
         </TooltipTrigger>
@@ -176,7 +165,7 @@ export function PresencePanel({
             // `h-full` + `flex-col`: la tarjeta se estira a la altura de la fila (el llamador le da
             // `self-stretch`) y reparte su contenido, así que ya no queda flotando más corta que el
             // bloque de métricas de al lado.
-            'flex h-full min-w-0 cursor-default flex-col gap-1.5 rounded-lg border bg-muted/40 p-3',
+            'flex h-full min-w-0 cursor-default flex-col gap-1.5 rounded-lg border bg-sidebar p-3',
             className,
           )}
         >
@@ -196,25 +185,25 @@ export function PresencePanel({
                 onClick={(e) => e.stopPropagation()}
                 className="shrink-0 rounded transition-opacity hover:opacity-70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <GoogleCalendarMark className="size-5" />
+                <GoogleCalendarMark />
               </Link>
             ) : (
-              <GoogleCalendarMark className="size-5 shrink-0" />
+              <GoogleCalendarMark />
             )}
             {/* El nombre de la marca junto al logo. El ícono solo no comunicaba de dónde sale el
                 dato —un cuadrito de colores no dice "Calendar"—; con el texto se entiende de un
                 golpe, y de paso este rótulo da contexto al título de abajo, que si no queda como
                 texto suelto ("Toy Dormido"). */}
-            <span className="truncate text-[10px] font-medium tracking-wide text-muted-foreground">
+            <span className="label-caps truncate">
               Google Calendar
             </span>
             {/* La única señal de color del panel, y del tamaño de una señal. */}
             <span
-              className={cn('size-1.5 shrink-0 rounded-full', busy ? 'bg-warning' : 'bg-success')}
+              className={cn('size-1.5 shrink-0 rounded-full', busy ? 'bg-yellow' : 'bg-green')}
               title={busy ? 'En un evento' : 'Sin actividad en el calendario'}
             />
             {when && (
-              <span className="ml-auto shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+              <span className="ml-auto shrink-0 text-[11px] tabular-nums text-faint">
                 {when}
               </span>
             )}

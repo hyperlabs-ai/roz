@@ -1,6 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
 import { isValidElement, type ReactNode } from 'react';
-import { TrendingDown, TrendingUp, Minus } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Sparkline } from '@/components/charts';
 import { cn } from '@/lib/utils';
@@ -11,15 +10,16 @@ export function DeltaBadge({ metric, invert = false }: { metric: Metric; invert?
   if (metric.direction === 'none' || metric.changePct === null) return null;
   const good = invert ? metric.direction === 'down' : metric.direction === 'up';
   const flat = metric.direction === 'flat';
-  const Icon = flat ? Minus : metric.direction === 'up' ? TrendingUp : TrendingDown;
+  // Delta del mock (`.kpi .d`): texto en color con flecha sólida, sin píldora.
+  const arrow = flat ? '–' : metric.direction === 'up' ? '▲' : '▼';
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-semibold',
-        flat ? 'bg-muted text-muted-foreground' : good ? 'bg-success/12 text-success' : 'bg-destructive/12 text-destructive',
+        'inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium tabular-nums',
+        flat ? 'text-muted-foreground' : good ? 'text-green' : 'text-red',
       )}
     >
-      <Icon className="size-3" />
+      <span aria-hidden className="text-[9px]">{arrow}</span>
       {Math.abs(metric.changePct)}%
     </span>
   );
@@ -31,8 +31,8 @@ type Size = 'sm' | 'md' | 'lg';
 
 const VALUE_SIZE: Record<Size, string> = {
   sm: 'text-lg leading-none',
-  md: 'text-xl leading-none',
-  lg: 'text-2xl sm:text-3xl',
+  md: 'text-[22px] leading-none',
+  lg: 'text-[26px] leading-[1.1] sm:text-[28px]',
 };
 
 /**
@@ -114,7 +114,7 @@ export function MetricCard({
         })();
 
   const valueClass = cn(
-    'font-bold tabular-nums tracking-tight',
+    'font-semibold tabular-nums tracking-[-0.04em]',
     VALUE_SIZE[size],
     accent && 'text-hyper',
     tone === 'warning' && 'text-warning',
@@ -133,16 +133,16 @@ export function MetricCard({
       <>
         {iconNode && <div className="flex items-center justify-center gap-1 text-muted-foreground">{iconNode}</div>}
         <div className={cn('mt-0.5', valueClass)}>{text}</div>
-        <div className="mt-1 truncate text-[10px] text-muted-foreground">{label}</div>
+        <div className="label-caps mt-1 block truncate">{label}</div>
       </>
     ) : layout === 'row' ? (
       <div className="flex items-center gap-2.5 sm:gap-3">
         {iconNode && (
           <div
-            className="flex size-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground"
+            className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground"
             style={
               colorVar === '--primary'
-                ? { backgroundColor: 'hsl(var(--muted))' }
+                ? { backgroundColor: 'hsl(var(--panel))' }
                 : { backgroundColor: `hsl(var(${colorVar}) / 0.12)`, color: `hsl(var(${colorVar}))` }
             }
           >
@@ -160,24 +160,27 @@ export function MetricCard({
       </div>
     ) : (
       <>
-        <div className="flex items-center gap-2 sm:gap-2.5">
+        {/* KPI del mock (`.kpi`): etiqueta `label-caps` arriba, cifra grande tabular, delta en color. El
+            icono pasa a ser un acento chico a la derecha de la etiqueta, no una caja tintada. */}
+        <div className="flex items-center justify-between gap-2">
+          <span className="label-caps min-w-0 truncate">{label}</span>
           {iconNode && (
-            <div
-              className="flex size-8 shrink-0 items-center justify-center rounded-lg transition-transform duration-fast ease-spring group-hover:scale-110 sm:size-9"
-              style={{ backgroundColor: `hsl(var(${colorVar}) / 0.12)`, color: `hsl(var(${colorVar}))` }}
+            <span
+              className="flex shrink-0 items-center [&_svg]:size-3.5"
+              style={{ color: colorVar === '--primary' ? 'hsl(var(--faint))' : `hsl(var(${colorVar}))` }}
             >
               {iconNode}
-            </div>
+            </span>
           )}
-          <span className="min-w-0 truncate text-xs font-medium text-muted-foreground sm:text-sm">{label}</span>
         </div>
-        <div className="mt-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 sm:mt-3">
+        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <span className={valueClass}>{text}</span>
-          {metric && <DeltaBadge metric={metric} invert={invert} />}
+          {sub && <span className="truncate text-xs text-muted-foreground">{sub}</span>}
         </div>
-        {hasCompare && (
-          <div className="mt-1 truncate text-[11px] text-muted-foreground">
-            vs. {format(metric!.compare!)} período anterior
+        {(metric || hasCompare) && (
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            {metric && <DeltaBadge metric={metric} invert={invert} />}
+            {hasCompare && <span className="truncate">vs. {format(metric!.compare!)} período anterior</span>}
           </div>
         )}
         {trend && trend.length > 1 && (
@@ -196,9 +199,9 @@ export function MetricCard({
     return (
       <div
         className={cn(
-          'rounded-lg border p-2',
+          'rounded-md border p-2.5',
           layout === 'center' && 'text-center',
-          accent ? 'border-hyper/25 bg-hyper/[0.06]' : 'bg-muted/40',
+          accent ? 'border-hyper/25 bg-hyper/[0.06]' : 'bg-sidebar',
           className,
         )}
       >
@@ -206,5 +209,5 @@ export function MetricCard({
       </div>
     );
   }
-  return <Card className={cn('group p-4 sm:p-5', layout === 'center' && 'text-center', className)}>{body}</Card>;
+  return <Card className={cn('group px-4 py-3.5', layout === 'center' && 'text-center', className)}>{body}</Card>;
 }

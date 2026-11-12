@@ -295,7 +295,7 @@ export function TaskBoard({
           className="pointer-events-none fixed left-0 top-0 z-[70] will-change-transform"
           style={{ width: slot.w }}
         >
-          <div className="rotate-[4deg] scale-[1.03] opacity-95 shadow-2xl">
+          <div className="rotate-[3deg] scale-[1.03] rounded-lg opacity-95 shadow-xl">
             <Card t={dragged} ghost />
           </div>
         </div>,
@@ -336,14 +336,14 @@ function BoardColumn({
         onClick={() => onCollapse(false)}
         title={`Desplegar ${label}`}
         className={cn(
-          'flex w-11 shrink-0 flex-col items-center gap-2 rounded-xl border bg-muted/40 py-3 transition-colors hover:bg-muted',
-          target && 'border-primary bg-primary/10',
+          'flex w-11 shrink-0 flex-col items-center gap-2 rounded-lg bg-panel py-3 transition-colors hover:bg-toggle-off/60',
+          target && 'bg-orange-soft ring-2 ring-inset ring-orange',
         )}
       >
         <StatusIcon state={state} className="size-4" />
-        <span className="text-[11px] font-semibold tabular-nums text-muted-foreground">{tasks.length}</span>
+        <span className="text-[11px] tabular-nums text-faint">{tasks.length}</span>
         {/* Vertical, como las listas plegadas de Trello: el nombre se sigue leyendo sin ocupar ancho. */}
-        <span className="mt-1 whitespace-nowrap text-[12px] font-medium text-muted-foreground [writing-mode:vertical-rl]">
+        <span className="mt-1 whitespace-nowrap label-caps text-muted-foreground [writing-mode:vertical-rl]">
           {label}
         </span>
       </button>
@@ -377,16 +377,26 @@ function BoardColumn({
     <section
       data-col={state}
       className={cn(
-        'flex max-h-full shrink-0 flex-col rounded-xl border bg-muted/40 transition-colors duration-150',
+        'flex max-h-full shrink-0 flex-col rounded-lg bg-panel transition-[background-color,box-shadow] duration-150',
         // El marco de la columna destino: el aviso de "aquí es donde va a caer".
-        target && 'border-primary bg-primary/[0.06] shadow-[0_0_0_1px_hsl(var(--primary))]',
+        target && 'bg-orange-soft/70 shadow-[inset_0_0_0_2px_hsl(var(--orange))]',
       )}
       style={{ width: COL_W }}
     >
-      <header className="flex items-center gap-1.5 px-3 pb-1.5 pt-2.5">
+      <header className="flex items-center gap-1.5 px-2.5 pb-1.5 pt-2.5">
         <StatusIcon state={state} className="size-4" />
-        <h3 className="min-w-0 flex-1 truncate text-[13px] font-semibold">{label}</h3>
-        <span className="rounded px-1 text-[12px] tabular-nums text-muted-foreground">{tasks.length}</span>
+        <h3 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-foreground">{label}</h3>
+        <span className="px-1 text-[11.5px] tabular-nums text-faint">{tasks.length}</span>
+        {/* El "+" de la cabecera, como en Linear: la tarea nace ya en este estado. */}
+        <button
+          type="button"
+          onClick={() => onCreate(state)}
+          className="grid size-6 shrink-0 place-items-center rounded-sm text-faint transition-colors hover:bg-card hover:text-foreground"
+          aria-label={`Nueva tarea en ${label}`}
+          title={`Nueva tarea en ${label}`}
+        >
+          <Plus className="size-4" />
+        </button>
         <ColumnMenu
           state={state}
           count={tasks.length}
@@ -396,10 +406,10 @@ function BoardColumn({
         />
       </header>
 
-      <div data-scroller className="scroll-thin min-h-[52px] flex-1 space-y-2 overflow-y-auto px-2 py-1">
+      <div data-scroller className="scroll-thin min-h-[52px] flex-1 space-y-1.5 overflow-y-auto px-2 py-1">
         {cards}
         {!cards.length && (
-          <p className="px-1 py-6 text-center text-[12px] text-muted-foreground/70">
+          <p className="rounded-md border border-dashed border-toggle-off px-1 py-6 text-center text-[12px] text-muted-foreground">
             {target ? 'Suelta aquí' : 'Sin tareas'}
           </p>
         )}
@@ -408,10 +418,10 @@ function BoardColumn({
       <button
         type="button"
         onClick={() => onCreate(state)}
-        className="m-2 mt-1 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[13px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="m-2 mt-1 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-medium text-faint transition-colors hover:bg-card hover:text-foreground"
       >
         <Plus className="size-3.5" />
-        Añade una tarjeta
+        Nueva tarea
       </button>
     </section>
   );
@@ -419,7 +429,7 @@ function BoardColumn({
 
 /** El hueco que se abre donde va a caer la tarjeta. Mismo alto que la que llevas en la mano. */
 function Gap({ h }: { h: number }) {
-  return <div style={{ height: h }} className="rounded-lg bg-foreground/[0.07] ring-1 ring-inset ring-border" />;
+  return <div style={{ height: h }} className="rounded-lg border-2 border-dashed border-orange/50 bg-orange-soft/60" />;
 }
 
 function ColumnMenu({ state, count, onCreate, onCollapse, onMoveAll }: {
@@ -434,7 +444,7 @@ function ColumnMenu({ state, count, onCreate, onCollapse, onMoveAll }: {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent"
+          className="grid size-6 shrink-0 place-items-center rounded-sm text-faint transition-colors hover:bg-card hover:text-foreground data-[state=open]:bg-card"
           aria-label={`Acciones de ${STATE_LABEL[state] ?? state}`}
         >
           <MoreHorizontal className="size-4" />
@@ -490,10 +500,10 @@ const Card = memo(function Card({ t, ghost, landed, onGrab, onOpen, onToggleDone
       // pulsación larga, que es justo cuando el dedo NO se ha movido.
       style={{ touchAction: 'pan-y' }}
       className={cn(
-        'group/card relative rounded-lg border bg-card p-2.5 text-left shadow-sm',
+        'group/card relative rounded-lg border bg-card p-2.5 text-left shadow-[0_1px_1px_hsl(var(--foreground)/0.04)]',
         'transition-[background-color,box-shadow,border-color] duration-150',
-        !ghost && 'cursor-grab select-none hover:border-foreground/15 hover:bg-accent hover:shadow-md active:cursor-grabbing',
-        landed && 'ring-2 ring-primary/70',
+        !ghost && 'cursor-grab select-none hover:border-faint/60 hover:shadow-[0_4px_12px_-6px_hsl(var(--foreground)/0.18)] active:cursor-grabbing',
+        landed && 'ring-2 ring-orange',
       )}
     >
       <CardLabels labels={t.labels} />
@@ -545,7 +555,7 @@ function CardMenu({ t, onOpen, onDuplicate, onDelete }: {
           type="button"
           onClick={(e) => e.stopPropagation()}
           onPointerDown={(e) => e.stopPropagation()}
-          className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-md bg-card/80 text-muted-foreground opacity-0 backdrop-blur transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/card:opacity-100 data-[state=open]:opacity-100"
+          className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-sm bg-card/90 text-muted-foreground opacity-0 backdrop-blur transition-opacity hover:bg-panel hover:text-foreground focus-visible:opacity-100 group-hover/card:opacity-100 data-[state=open]:opacity-100"
           aria-label={`Acciones de ${t.identifier}`}
         >
           <SquarePen className="size-3.5" />

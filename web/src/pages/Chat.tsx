@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from '@/lib/toast';
-import { Loader2, MessagesSquare } from 'lucide-react';
+import { CloudOff, Lock, MessagesSquare } from 'lucide-react';
 import { Layout } from '@/components/Layout';
+import { ChannelSkeleton, ChatSkeleton, ChatState } from '@/components/discord/ChatState';
+import { Button } from '@/components/ui/button';
 import { useChat } from '@/chat/ChatContext';
 import { useMessageActions } from '@/chat/useMessages';
 import { ChatSidebar } from '@/components/chat/ChatSidebar';
@@ -12,6 +14,8 @@ import { BrowseChannelsDialog, ChannelDialog, NewDmDialog } from '@/components/c
 import { TaskBridgeContext, type TaskBridge } from '@/components/chat/TaskChip';
 import { TaskDialog } from '@/components/TaskDialog';
 import { apiGet, type Ticket, type TicketFilterOptions } from '@/lib/api';
+import { DISCORD_STATUS_KEY, discordStatusOrOff } from '@/discord/status';
+import { DiscordChat } from '@/components/discord/DiscordChat';
 import { useApi } from '@/lib/useApi';
 import { chatApi, conversationTitle, decodeMentions, type ChatMessage, type ChatTaskRef } from '@/lib/chat';
 import { cn } from '@/lib/utils';
@@ -75,6 +79,12 @@ function firstLinePlain(text: string, max = 120): string {
   return plain.length > max ? `${plain.slice(0, max - 1).trimEnd()}…` : plain;
 }
 
+/*
+ * El chat es full-bleed como Discord: en desktop NO lleva la topbar de sección (la oculta `AppShell`
+ * en las rutas full-bleed). Las dos barras del chat (servidor/lista y canal/conversación) hacen de
+ * encabezado, a la misma altura. En móvil la topbar se queda: ahí lleva el menú hamburguesa.
+ */
+
 type TaskDialogState = { mode: 'create'; message: ChatMessage } | { mode: 'edit'; task: Ticket } | null;
 
 /**
@@ -83,8 +93,10 @@ type TaskDialogState = { mode: 'create'; message: ChatMessage } | { mode: 'edit'
  *
  * Rutas: /app/chat (lista), /app/chat/:conversationId (?thread=<raíz> abre el hilo) y
  * /app/chat/m/:messageId (enlace a un mensaje: desde una tarea o un push).
+ *
+ * Es el chat con ROZ_DISCORD_CHAT apagado: idéntico a como era antes del chat de Discord.
  */
-export default function Chat() {
+function InternalChat() {
   const { conversationId, messageId } = useParams();
   const [params, setParams] = useSearchParams();
   const threadId = params.get('thread');
@@ -235,7 +247,7 @@ export default function Chat() {
       <TaskBridgeContext.Provider value={bridge}>
         <div className="relative flex h-full min-h-0 overflow-hidden">
           {showList && (
-            <aside className={cn('h-full min-h-0 shrink-0', wide ? 'w-56 lg:w-64 xl:w-72' : 'w-full')}>
+            <aside className={cn('h-full min-h-0 shrink-0 border-r border-chat-sidebar-border', wide ? 'w-56 lg:w-64 xl:w-72' : 'w-full')}>
               <ChatSidebar onCreateChannel={() => setCreateOpen(true)} onBrowse={() => setBrowseOpen(true)} onNewDm={() => setDmOpen(true)} />
             </aside>
           )}
@@ -250,32 +262,53 @@ export default function Chat() {
                   onBack={wide ? undefined : () => navigate('/app/chat')}
                 />
               ) : missing === conversationId ? (
-                <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-                  <MessagesSquare className="size-8 text-muted-foreground" />
-                  <p className="font-medium">Esta conversación no existe o no tienes acceso.</p>
-                  <button type="button" className="text-sm text-primary hover:underline" onClick={() => navigate('/app/chat')}>
-                    Volver al chat
-                  </button>
-                </div>
+                <ChatState
+                  eyebrow="Sin acceso"
+                  color="red"
+                  icon={<Lock />}
+                  title="Esta conversación no existe o no tienes acceso."
+                  lede="Pudo haberse eliminado, o es un canal privado al que no te han invitado."
+                  action={
+                    <Button variant="secondary" size="sm" onClick={() => navigate('/app/chat')}>
+                      Volver al chat
+                    </Button>
+                  }
+                />
               ) : (
-                <div className="flex h-full items-center justify-center text-muted-foreground">
-                  <Loader2 className="size-5 animate-spin" />
-                </div>
+                <ChannelSkeleton label="Abriendo la conversación" />
               )}
             </section>
           )}
 
           {wide && !conversationId && !messageId && (
-            <section className="flex h-full flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
-              <MessagesSquare className="size-10" />
-              <p className="text-sm">{chat.ready ? 'Elige una conversación o crea un canal.' : 'Cargando el chat…'}</p>
+            <section className="h-full min-w-0 flex-1">
+              {chat.ready ? (
+                <ChatState
+                  icon={<MessagesSquare />}
+                  eyebrow="Chat del equipo"
+                  title="Elige una conversación o crea un canal."
+                  lede="Canales por proyecto, mensajes directos e hilos. Cualquier mensaje se convierte en tarea con su ficha."
+                  action={
+                    <>
+                      <Button variant="brand" size="sm" onClick={() => setCreateOpen(true)}>
+                        Crear canal
+                      </Button>
+                      <Button variant="secondary" size="sm" onClick={() => setBrowseOpen(true)}>
+                        Explorar canales
+                      </Button>
+                    </>
+                  }
+                />
+              ) : (
+                <ChannelSkeleton label="Cargando el chat" />
+              )}
             </section>
           )}
 
           {showThread && (
             <aside
               className={cn(
-                'h-full min-h-0 border-l',
+                'h-full min-h-0 border-l bg-card',
                 // Desde xl caben conversación y hilo lado a lado; antes, el hilo toma el lugar de la
                 // conversación (y en móvil, la pantalla entera).
                 wide ? 'min-w-0 flex-1 xl:w-[26rem] xl:flex-none' : 'absolute inset-0 z-20 w-full',
@@ -308,6 +341,41 @@ export default function Chat() {
           />
         )}
       </TaskBridgeContext.Provider>
+    </Layout>
+  );
+}
+
+/**
+ * Página del chat. Una sola llamada decide qué chat se monta: `GET /discord/status` responde también
+ * con el flag apagado (`enabled: false`), y entonces queda el chat interno tal cual (contrato §E).
+ * Con el flag encendido, si el puente o Discord fallan en caliente, se queda el chat de Discord en
+ * "sin conexión": nunca cae en silencio al chat interno.
+ */
+export default function Chat() {
+  const status = useApi(() => discordStatusOrOff(), [], { key: DISCORD_STATUS_KEY, ttl: 60_000 });
+
+  if (status.data?.enabled === false) return <InternalChat />;
+
+  if (status.data) return <DiscordChat status={status.data} reloadStatus={status.reload} />;
+
+  return (
+    <Layout title="Chat">
+      {status.error ? (
+        <ChatState
+          eyebrow="Sin conexión"
+          color="red"
+          icon={<CloudOff />}
+          title="No se pudo abrir el chat."
+          lede={status.error}
+          action={
+            <Button variant="secondary" size="sm" onClick={status.reload}>
+              Reintentar
+            </Button>
+          }
+        />
+      ) : (
+        <ChatSkeleton />
+      )}
     </Layout>
   );
 }

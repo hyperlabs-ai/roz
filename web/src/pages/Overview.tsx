@@ -1,8 +1,11 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { GitCommitHorizontal, CircleCheck, Users, Timer, Code2, TriangleAlert, ShieldCheck, Briefcase, Building2, Server, ChevronRight, Triangle, TrainFront, Database, Activity, Rocket } from 'lucide-react';
+import { GitCommitHorizontal, CircleCheck, Users, Timer, Code2, TriangleAlert, ShieldCheck, Briefcase, Building2, ChevronRight, Activity, Rocket } from 'lucide-react';
+import { Eyebrow, IntegrationIcon, CapsLabel } from '@/components/brand';
+import { Badge } from '@/components/ui/badge';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
+import { BalancedGrid } from '@/components/grid';
 import { MetricCard } from '@/components/MetricCard';
 import { AreaTrend, Columns, Donut, StackedBar } from '@/components/charts';
 import { UserAvatar, EmptyState, ErrorCard, RefreshButton } from '@/components/bits';
@@ -30,7 +33,6 @@ export default function Overview() {
   return (
     <Layout
       title="Resumen"
-      subtitle="El pulso del equipo en un vistazo"
       actions={
         <>
           <RefreshButton busy={refetching} onClick={reload} />
@@ -41,19 +43,17 @@ export default function Overview() {
       {error && <ErrorCard message={error} className="mb-4" />}
 
       {loading || !data ? (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-28" />)}
-        </div>
+        <OverviewSkeleton />
       ) : (
         <>
           {/* KPIs */}
-          <div className="stagger-children grid grid-cols-2 gap-4 lg:grid-cols-5">
+          <BalancedGrid max={{ base: 2, md: 3, lg: 5 }} className="stagger-children">
             <MetricCard label="Commits" value={data.kpis.commits.value} metric={data.kpis.commits} icon={GitCommitHorizontal} colorVar="--chart-1" trend={data.trend} trendKey="commits" />
-            <MetricCard label="Líneas cambiadas" value={data.kpis.linesChanged.value} metric={data.kpis.linesChanged} icon={Code2} format={compact} colorVar="--chart-4" className="order-first col-span-2 lg:order-none lg:col-span-1" />
+            <MetricCard label="Líneas cambiadas" value={data.kpis.linesChanged.value} metric={data.kpis.linesChanged} icon={Code2} format={compact} colorVar="--chart-4" />
             <MetricCard label="Tickets resueltos" value={data.kpis.ticketsResolved.value} metric={data.kpis.ticketsResolved} icon={CircleCheck} colorVar="--chart-3" trend={data.trend} trendKey="ticketsResolved" />
             <MetricCard label="Contribuidores" value={data.kpis.activeContributors.value} metric={data.kpis.activeContributors} icon={Users} colorVar="--chart-2" />
             <MetricCard label="Cycle time" value={data.kpis.avgCycleTimeHours.value} metric={data.kpis.avgCycleTimeHours} icon={Timer} invert format={hours} colorVar="--chart-5" />
-          </div>
+          </BalancedGrid>
 
           {/* Estado de infraestructura (primer vistazo) */}
           <InfraHealth onOpen={() => nav('/app/infra')} />
@@ -66,11 +66,10 @@ export default function Overview() {
               que la GRÁFICA se quede el alto de más: de ahí el `fill` de `AreaTrend` y `Columns`,
               con `flex flex-col` en la Card y `flex-1` en el CardContent para que haya una cadena
               de alturas definida. */}
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <Card className="flex flex-col lg:col-span-2">
+          <div className="mt-3.5 grid gap-3.5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle>Actividad del período</CardTitle>
-                <CardDescription>Commits y tickets resueltos por día</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-1 flex-col">
                 <AreaTrend
@@ -87,7 +86,6 @@ export default function Overview() {
             <Card>
               <CardHeader>
                 <CardTitle>Cliente vs. Interno</CardTitle>
-                <CardDescription>Dónde se invierte el esfuerzo (commits)</CardDescription>
               </CardHeader>
               <CardContent>
                 <Donut
@@ -106,11 +104,10 @@ export default function Overview() {
           </div>
 
           {/* Contribución por proyecto + por developer */}
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="mt-3.5 grid gap-3.5 lg:grid-cols-2">
             <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle>Contribución por proyecto</CardTitle>
-                <CardDescription>Dónde se invierte el esfuerzo</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-1 flex-col">
                 <Columns
@@ -124,7 +121,6 @@ export default function Overview() {
             <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle>Contribución por developer</CardTitle>
-                <CardDescription>Commits + tickets resueltos en el período</CardDescription>
               </CardHeader>
               {/* Una tabla no se llena (sus filas miden lo que miden), pero sí se centra: así el
                   alto que sobra al igualar la fila no queda todo al pie. */}
@@ -132,8 +128,8 @@ export default function Overview() {
                 {data.byDeveloper.length ? (
                   <div className="-mx-2">
                     {/* Cabecera de columnas: deja claro qué es cada número */}
-                    <div className="flex items-center gap-3 px-2 pb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
-                      <span className="w-4 shrink-0" />
+                    <div className="label-caps flex items-center gap-3 px-2 pb-1.5">
+                      <span className="w-5 shrink-0" />
                       <span className="min-w-0 flex-1">Developer</span>
                       <span className="w-12 text-right">commits</span>
                       <span className="w-12 text-right">tickets</span>
@@ -144,15 +140,15 @@ export default function Overview() {
                       {data.byDeveloper.slice(0, 8).map((d, i) => (
                         <div
                           key={d.devId}
-                          className="group row-nudge flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-accent/50"
+                          className="group row-nudge flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 hover:bg-sidebar"
                           onClick={() => nav(`/app/developers/${d.devId}`)}
                         >
-                          <span className="w-4 shrink-0 text-center font-mono text-xs tabular-nums text-muted-foreground">{i + 1}</span>
-                          <UserAvatar url={d.avatarUrl} name={d.name} className="size-7 shrink-0" />
+                          <span className="w-5 shrink-0 text-center text-[11px] tabular-nums text-faint">{String(i + 1).padStart(2, '0')}</span>
+                          <UserAvatar url={d.avatarUrl} id={d.devId} name={d.name} className="size-7 shrink-0" />
                           <span className="min-w-0 flex-1 truncate text-sm font-medium">{d.name}</span>
-                          <span className="w-12 text-right font-mono text-sm tabular-nums">{d.commits}</span>
-                          <span className="w-12 text-right font-mono text-sm tabular-nums">{d.ticketsResolved}</span>
-                          <span className="w-12 text-right font-mono text-sm tabular-nums text-muted-foreground">{compact(d.lines)}</span>
+                          <span className="w-12 text-right text-sm tabular-nums">{d.commits}</span>
+                          <span className="w-12 text-right text-sm tabular-nums">{d.ticketsResolved}</span>
+                          <span className="w-12 text-right text-sm tabular-nums text-muted-foreground">{compact(d.lines)}</span>
                           <ChevronRight className="size-4 shrink-0 text-muted-foreground opacity-0 transition-all group-hover:translate-x-0.5 group-hover:opacity-100" />
                         </div>
                       ))}
@@ -164,11 +160,11 @@ export default function Overview() {
           </div>
 
           {/* Tickets completados: por developer (ponderado) + por prioridad */}
-          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+          <div className="mt-3.5 grid gap-3.5 lg:grid-cols-2">
             <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle>Tickets completados</CardTitle>
-                <CardDescription>Completados en el período por developer, ponderados por prioridad</CardDescription>
+                <CardDescription>Por developer, ponderados por prioridad</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-1 flex-col">
                 <Workload rows={data.workload} onPick={(id) => nav(`/app/developers/${id}`)} />
@@ -178,7 +174,6 @@ export default function Overview() {
             <Card className="flex flex-col">
               <CardHeader>
                 <CardTitle>Completados por prioridad</CardTitle>
-                <CardDescription>Tickets resueltos en el período según su prioridad</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-1 flex-col">
                 <Columns
@@ -195,10 +190,9 @@ export default function Overview() {
           </div>
 
           {/* Cobertura de skills (rediseñada) */}
-          <Card className="mt-4">
+          <Card className="mt-3.5">
             <CardHeader>
               <CardTitle>Cobertura de skills</CardTitle>
-              <CardDescription>Cuántas personas dominan cada capacidad — bus-factor</CardDescription>
             </CardHeader>
             <CardContent>
               <SkillCoverage coverage={data.skillsCoverage} />
@@ -210,29 +204,50 @@ export default function Overview() {
   );
 }
 
+/** Carga con la silueta del Resumen: KPIs, infraestructura y las filas de gráficas. */
+function OverviewSkeleton() {
+  return (
+    <div className="grid gap-3.5">
+      <BalancedGrid max={{ base: 2, md: 3, lg: 5 }}>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Card key={i} className="grid h-full gap-2.5 px-4 py-3.5">
+            <Skeleton className="h-2.5 w-20" />
+            <Skeleton className="h-7 w-16" />
+            <Skeleton className="h-8 w-full" />
+          </Card>
+        ))}
+      </BalancedGrid>
+      <Skeleton className="h-56 rounded-lg" />
+      <div className="grid gap-3.5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <Skeleton className="h-72 rounded-lg" />
+        <Skeleton className="h-72 rounded-lg" />
+      </div>
+      <div className="grid gap-3.5 lg:grid-cols-2">
+        <Skeleton className="h-72 rounded-lg" />
+        <Skeleton className="h-72 rounded-lg" />
+      </div>
+    </div>
+  );
+}
+
 const INFRA_STATUS: Record<ServiceStatus, { label: string; dot: string }> = {
-  healthy: { label: 'operativos', dot: 'bg-success' },
-  degraded: { label: 'degradados', dot: 'bg-warning' },
-  down: { label: 'caídos', dot: 'bg-destructive' },
-  paused: { label: 'pausados', dot: 'bg-muted-foreground' },
-  unknown: { label: 'sin datos', dot: 'bg-muted-foreground/40' },
+  healthy: { label: 'operativos', dot: 'bg-green' },
+  degraded: { label: 'degradados', dot: 'bg-yellow' },
+  down: { label: 'caídos', dot: 'bg-red' },
+  paused: { label: 'pausados', dot: 'bg-faint' },
+  unknown: { label: 'sin datos', dot: 'bg-toggle-off' },
 };
 const INFRA_ORDER: ServiceStatus[] = ['down', 'degraded', 'paused', 'healthy', 'unknown'];
 // Color de cada barra del timeline de disponibilidad (status page).
 const UPTIME_BAR: Record<string, string> = {
   // En light el verde va algo más suave (una pared de verde saturado se ve intensa); en dark, pleno.
-  healthy: 'bg-success/80 dark:bg-success',
-  degraded: 'bg-warning',
-  down: 'bg-destructive',
-  paused: 'bg-muted-foreground/50',
-  unknown: 'bg-muted',
+  healthy: 'bg-green/80 dark:bg-green',
+  degraded: 'bg-yellow',
+  down: 'bg-red',
+  paused: 'bg-faint/60',
+  unknown: 'bg-panel',
 };
 const INFRA_PROVIDERS: ServiceProvider[] = ['vercel', 'railway', 'supabase'];
-const PROV: Record<ServiceProvider, { Icon: typeof Triangle; accent: string }> = {
-  vercel: { Icon: Triangle, accent: 'text-foreground' },
-  railway: { Icon: TrainFront, accent: 'text-chart-5' },
-  supabase: { Icon: Database, accent: 'text-chart-3' },
-};
 
 function latestDeploy(services: InfraService[]): InfraService | null {
   return services
@@ -240,24 +255,12 @@ function latestDeploy(services: InfraService[]): InfraService | null {
     .sort((a, b) => (b.deploy!.createdAt! > a.deploy!.createdAt! ? 1 : -1))[0] ?? null;
 }
 
-// Elige columnas (3 o 4) y cuántas tarjetas mostrar para que la grilla quede siempre "cuadrada"
-// (sin celdas vacías). Se recorta al mayor múltiplo de columnas que quepa, mostrando el máximo.
-const GRID_COLS: Record<number, string> = {
-  1: '',
-  2: 'sm:grid-cols-2',
-  3: 'sm:grid-cols-2 lg:grid-cols-3',
-  4: 'sm:grid-cols-2 lg:grid-cols-4',
-};
-function squareLayout(total: number): { cols: number; count: number } {
-  if (total <= 2) return { cols: Math.max(total, 1), count: total };
-  const opt4 = total - (total % 4); // mayor múltiplo de 4 ≤ total
-  const opt3 = total - (total % 3); // mayor múltiplo de 3 ≤ total
-  return opt4 >= opt3 ? { cols: 4, count: opt4 } : { cols: 3, count: opt3 };
-}
+/** Proyectos que caben en el Resumen; el resto, en Infraestructura ("Ver N más"). */
+const INFRA_MAX_PROJECTS = 8;
 
-// Estado de infraestructura para el Resumen: salud agregada + una tarjeta por proyecto.
-// La grilla se mantiene "cuadrada" (3–4 por línea, sin celdas vacías): si el total de proyectos
-// no llena filas completas, se muestran solo los primeros que sí las completan. Lee /infra.
+// Estado de infraestructura para el Resumen: salud agregada + una tarjeta por proyecto en rejilla
+// balanceada (sin huecos y sin esconder proyectos para cuadrarla). Primero los que tienen alertas.
+// Lee /infra.
 function InfraHealth({ onOpen }: { onOpen: () => void }) {
   const isMobile = useIsMobile();
   // MISMA clave que la página de Infraestructura: navegar Resumen → Infra (o al revés) reusa la
@@ -277,9 +280,9 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
   const totalReq = services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
   const lastDeploy = latestDeploy(services);
 
-  // Recorta a una cantidad que llene filas completas de 3 o 4 columnas.
-  const { cols, count } = squareLayout(allProjects.length);
-  const projects = allProjects.slice(0, count);
+  // Los que tienen algo mal primero (el peor estado manda), y como mucho INFRA_MAX_PROJECTS.
+  const rank = (p: (typeof allProjects)[number]) => INFRA_ORDER.indexOf(worstOf(p.services.map((s) => s.status)));
+  const projects = [...allProjects].sort((a, b) => rank(a) - rank(b)).slice(0, INFRA_MAX_PROJECTS);
   const hidden = allProjects.length - projects.length;
 
   // En móvil el timeline lleva un 30% menos de barras: con el ancho de un teléfono, tantas líneas
@@ -293,21 +296,21 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
     : (uptime?.days ?? 0);
 
   return (
-    <Card className="mt-4">
+    <Card className="mt-3.5">
       <CardHeader className="flex-row items-start justify-between space-y-0">
-        <div>
-          <CardTitle className="flex items-center gap-2"><Server className="size-4" /> Estado de infraestructura</CardTitle>
-          <CardDescription>Salud de deploys y servicios por proyecto</CardDescription>
+        <div className="grid gap-1.5">
+          <Eyebrow color="green">Infraestructura</Eyebrow>
+          <CardTitle>Estado de infraestructura</CardTitle>
         </div>
-        <button onClick={onOpen} className="inline-flex shrink-0 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
-          Ver todo <ChevronRight className="size-4" />
+        <button onClick={onOpen} className="inline-flex shrink-0 items-center gap-1 label-caps text-muted-foreground transition-colors hover:text-foreground">
+          Ver todo <ChevronRight className="size-3.5" />
         </button>
       </CardHeader>
       <CardContent>
         {loading ? (
           <>
             {/* Resumen global */}
-            <div className="mb-4 flex flex-col gap-4 rounded-xl border bg-muted/30 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-4 flex flex-col gap-4 rounded-lg bg-panel p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 flex-1 space-y-2">
                 <Skeleton className="h-5 w-44" />
                 <Skeleton className="h-2 w-full rounded-full" />
@@ -320,9 +323,9 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
               </div>
             </div>
             {/* Tarjetas por proyecto */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <BalancedGrid max={{ base: 1, sm: 2, lg: 4 }}>
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="flex flex-col gap-2.5 rounded-xl border p-3.5">
+                <div key={i} className="flex h-full flex-col gap-2.5 rounded-lg border bg-card p-3.5">
                   <div className="flex items-center gap-2">
                     <Skeleton className="size-2.5 shrink-0 rounded-full" />
                     <Skeleton className="h-4 flex-1" />
@@ -331,26 +334,26 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                   <div className="border-t pt-2.5"><Skeleton className="h-3 w-32" /></div>
                 </div>
               ))}
-            </div>
+            </BalancedGrid>
           </>
         ) : (
           <>
             {/* Resumen global: barra de salud (izq., crece) + métricas clave (der.) */}
-            <div className="mb-4 flex flex-col gap-4 rounded-xl border bg-muted/30 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mb-4 flex flex-col gap-4 rounded-lg bg-panel p-4 sm:flex-row sm:items-center sm:justify-between">
               {/* Salud agregada */}
               <div className="min-w-0 flex-1">
                 {/* Cabecera: nº de servicios (izq.) + estado actual agregado (der.), estilo status page. */}
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div className="flex items-baseline gap-1.5">
-                    <span className="text-xl font-bold tabular-nums">{services.length}</span>
+                    <span className="text-[22px] font-semibold leading-none tracking-[-0.04em] tabular-nums">{services.length}</span>
                     <span className="text-xs text-muted-foreground">servicios monitoreados</span>
                   </div>
                   {(() => {
                     const o = counts['down']
-                      ? { t: 'Incidencia', c: 'text-destructive', dot: 'bg-destructive' }
+                      ? { t: 'Incidencia', c: 'text-red', dot: 'bg-red' }
                       : counts['degraded']
-                        ? { t: 'Degradado', c: 'text-warning', dot: 'bg-warning' }
-                        : { t: 'Operativo', c: 'text-success', dot: 'bg-success' };
+                        ? { t: 'Degradado', c: 'text-yellow-ink', dot: 'bg-yellow' }
+                        : { t: 'Operativo', c: 'text-green', dot: 'bg-green' };
                     return (
                       <span className={cn('inline-flex shrink-0 items-center gap-1.5 text-sm font-medium', o.c)}>
                         <span className={cn('size-2 rounded-full', o.dot)} /> {o.t}
@@ -372,7 +375,7 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                           title={`${b.start.slice(0, 10)} ${b.start.slice(11, 16)} · ${INFRA_STATUS[b.status]?.label ?? b.status}${b.total ? ` (${b.up}/${b.total} ok)` : ' · sin datos'}`}
                           className={cn(
                             'min-w-px flex-1 rounded-full transition-[colors,transform] duration-fast ease-spring hover:scale-y-110 sm:min-w-[2px]',
-                            UPTIME_BAR[b.status] ?? 'bg-muted',
+                            UPTIME_BAR[b.status] ?? 'bg-panel',
                           )}
                         />
                       ))}
@@ -380,7 +383,7 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                     <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
                       <span className="shrink-0">hace {shownDays} {shownDays === 1 ? 'día' : 'días'}</span>
                       <span className="h-px flex-1 bg-border" />
-                      {uptime.uptimePct != null && <span className="shrink-0 font-mono tabular-nums">{uptime.uptimePct}% disponibilidad</span>}
+                      {uptime.uptimePct != null && <span className="shrink-0 tabular-nums">{uptime.uptimePct}% disponibilidad</span>}
                       <span className="h-px flex-1 bg-border" />
                       <span className="shrink-0">hoy</span>
                     </div>
@@ -417,7 +420,7 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                       <div className="flex items-center gap-1.5 text-muted-foreground">
                         <Activity className="size-3.5" /><span className="text-xs">peticiones/24h</span>
                       </div>
-                      <div className="mt-0.5 text-lg font-bold tabular-nums">{compact(totalReq)}</div>
+                      <div className="mt-0.5 text-lg font-semibold tracking-[-0.03em] tabular-nums">{compact(totalReq)}</div>
                     </div>
                   )}
                   {lastDeploy?.deploy?.createdAt && (
@@ -432,8 +435,8 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
               )}
             </div>
 
-            {/* Tarjeta por proyecto (grilla cuadrada, 3–4 por línea) */}
-            <div className={cn('stagger-children grid grid-cols-1 gap-3', GRID_COLS[cols])}>
+            {/* Tarjeta por proyecto (rejilla balanceada: la última fila se estira, nunca huecos) */}
+            <BalancedGrid max={{ base: 1, sm: 2, lg: 4 }} className="stagger-children">
               {projects.map((p) => {
                 const worst = worstOf(p.services.map((s) => s.status));
                 const issues = p.services.filter((s) => s.status === 'down' || s.status === 'degraded' || s.status === 'paused').length;
@@ -441,26 +444,24 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
                 const req = p.services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
                 const byProv = INFRA_PROVIDERS.map((pr) => ({ pr, n: p.services.filter((s) => s.provider === pr).length })).filter((x) => x.n);
                 return (
-                  <button key={p.projectId} onClick={onOpen} className="hover-lift press flex min-w-0 flex-col gap-2.5 rounded-xl border p-3.5 text-left transition-colors hover:border-primary/30 hover:bg-accent/50">
+                  <button key={p.projectId} onClick={onOpen} className="hover-lift press flex h-full w-full min-w-0 flex-col gap-2.5 rounded-lg border bg-card p-3.5 text-left transition-colors hover:border-orange/40">
                     <div className="flex items-center gap-2">
                       <span className={cn('size-2.5 shrink-0 rounded-full', INFRA_STATUS[worst].dot)} />
                       <span className="min-w-0 flex-1 truncate text-sm font-semibold">{p.name}</span>
                       {issues > 0
-                        ? <span className="shrink-0 rounded-md bg-warning/12 px-1.5 py-0.5 text-[11px] font-medium text-warning">{issues} alerta{issues !== 1 ? 's' : ''}</span>
-                        : <CircleCheck className="size-4 shrink-0 text-success" />}
+                        ? <Badge variant="warn" dot className="shrink-0 px-2 text-[11px]">{issues} alerta{issues !== 1 ? 's' : ''}</Badge>
+                        : <CircleCheck className="size-4 shrink-0 text-green" />}
                     </div>
 
                     {/* Desglose por proveedor (izq.) + peticiones (der.) */}
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                        {byProv.map(({ pr, n }) => {
-                          const { Icon, accent } = PROV[pr];
-                          return (
-                            <span key={pr} className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                              <Icon className={cn('size-3.5', accent)} /><span className="font-semibold tabular-nums text-foreground">{n}</span>
-                            </span>
-                          );
-                        })}
+                        {byProv.map(({ pr, n }) => (
+                          <span key={pr} className="inline-flex items-center gap-1.5 rounded-full bg-panel py-0.5 pl-1 pr-2 text-xs text-muted-foreground">
+                            <IntegrationIcon name={pr} size="xs" />
+                            <span className="font-semibold tabular-nums text-foreground">{n}</span>
+                          </span>
+                        ))}
                       </div>
                       {req > 0 && (
                         <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
@@ -471,18 +472,18 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
 
                     {/* Último deploy */}
                     {dep?.deploy?.commitMessage ? (
-                      <div className="flex items-center gap-1.5 border-t pt-2.5 text-[11px] text-muted-foreground">
+                      <div className="mt-auto flex items-center gap-1.5 border-t pt-2.5 text-[11px] text-muted-foreground">
                         <GitCommitHorizontal className="size-3.5 shrink-0" />
                         <span className="min-w-0 flex-1 truncate">{dep.deploy.commitMessage}</span>
                         {dep.deploy.createdAt && <span className="shrink-0">{relative(dep.deploy.createdAt)}</span>}
                       </div>
                     ) : (
-                      <div className="border-t pt-2.5 text-[11px] text-muted-foreground">{p.services.length} servicios monitoreados</div>
+                      <div className="mt-auto border-t pt-2.5 text-[11px] text-muted-foreground">{p.services.length} servicios monitoreados</div>
                     )}
                   </button>
                 );
               })}
-            </div>
+            </BalancedGrid>
 
             {hidden > 0 && (
               <button onClick={onOpen} className="mt-3 inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
@@ -498,8 +499,8 @@ function InfraHealth({ onOpen }: { onOpen: () => void }) {
 
 function SplitStat({ icon, label, tickets }: { icon: React.ReactNode; label: string; tickets: number }) {
   return (
-    <div className="rounded-lg bg-muted/50 py-1.5">
-      <div className="flex items-center justify-center gap-1 text-muted-foreground">{icon} {label}</div>
+    <div className="rounded-md bg-panel py-1.5">
+      <div className="flex items-center justify-center gap-1 text-faint [&_svg]:size-3">{icon} <CapsLabel>{label}</CapsLabel></div>
       <div className="font-semibold">{tickets} tickets</div>
     </div>
   );
@@ -523,6 +524,7 @@ function Workload({ rows, onPick }: { rows: OverviewData['workload']; onPick: (i
         label: r.name.split(' ')[0] ?? r.name,
         value: r.weighted,
         avatarUrl: r.avatarUrl,
+        avatarSeed: r.devId,
         sub: `${r.completedTickets} ticket${r.completedTickets === 1 ? '' : 's'}`,
       }))}
       onPick={(d) => {
@@ -543,33 +545,33 @@ function SkillCoverage({ coverage }: { coverage: OverviewData['skillsCoverage'] 
     <div>
       {/* Resumen */}
       <div className="mb-4 flex flex-wrap gap-3">
-        <div className="flex items-center gap-2 rounded-lg bg-warning/10 px-3 py-1.5 text-sm">
-          <TriangleAlert className="size-4 text-warning" />
-          <span className="font-semibold text-warning">{risk}</span>
-          <span className="text-muted-foreground">en riesgo (≤1 dev)</span>
-        </div>
-        <div className="flex items-center gap-2 rounded-lg bg-success/10 px-3 py-1.5 text-sm">
-          <ShieldCheck className="size-4 text-success" />
-          <span className="font-semibold text-success">{coverage.length - risk}</span>
-          <span className="text-muted-foreground">bien cubiertas</span>
-        </div>
+        <Badge variant="bad" className="gap-2 px-3 py-1 text-sm">
+          <TriangleAlert className="size-3.5" />
+          <span className="font-semibold tabular-nums">{risk}</span>
+          <span className="font-normal">en riesgo (≤1 dev)</span>
+        </Badge>
+        <Badge variant="ok" className="gap-2 px-3 py-1 text-sm">
+          <ShieldCheck className="size-3.5" />
+          <span className="font-semibold tabular-nums">{coverage.length - risk}</span>
+          <span className="font-normal">bien cubiertas</span>
+        </Badge>
       </div>
 
       {/* Capacidades como chips: sin barras. El punto marca la cobertura (rojo = en riesgo ≤1 dev,
           verde = bien cubierta) y el número la magnitud. */}
-      <div className="flex flex-wrap gap-2.5">
+      <div className="flex flex-wrap gap-2">
         {sorted.map((s) => (
           <span
             key={s.skillId}
             title={`${s.tag} · ${s.devCount} ${s.devCount === 1 ? 'dev' : 'devs'}`}
             className={cn(
-              'inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm transition-colors',
-              s.busFactorRisk ? 'border-destructive/30 bg-destructive/5' : 'border-border hover:bg-muted/50',
+              'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] transition-colors',
+              s.busFactorRisk ? 'bg-red-soft' : 'bg-panel hover:bg-sidebar',
             )}
           >
-            <span className={cn('size-2 shrink-0 rounded-full', s.busFactorRisk ? 'bg-destructive' : 'bg-success')} />
+            <span className={cn('size-[7px] shrink-0 rounded-full', s.busFactorRisk ? 'bg-red' : 'bg-green')} />
             <span className="font-medium text-foreground">{s.tag}</span>
-            <span className={cn('font-mono tabular-nums', s.busFactorRisk ? 'font-semibold text-destructive' : 'text-muted-foreground')}>
+            <span className={cn('text-xs tabular-nums', s.busFactorRisk ? 'font-semibold text-red' : 'text-faint')}>
               {s.devCount}
             </span>
           </span>

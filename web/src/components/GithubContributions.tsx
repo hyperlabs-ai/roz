@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { GitCommitHorizontal, Flame, Award, Zap, CalendarCheck } from 'lucide-react';
+import { Flame, Award, Zap, CalendarCheck } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { IntegrationIcon, CapsLabel } from '@/components/brand';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/bits';
 import { HeatCell, HeatLegend } from '@/components/charts';
@@ -12,18 +13,18 @@ import { cn } from '@/lib/utils';
 // Verde de contribución por nivel. LIGHT: los verdes reconocibles de GitHub. DARK: rampa derivada
 // del token --success (verde más mate/opaco, coherente con el tema), no los neón de GitHub.
 //
-// Es la única escala de la app que no sale de la paleta del tema, y es a propósito: se leen como
-// "contribuciones de GitHub" justamente porque son esos verdes. Lo que sí se comparte con el resto
-// de la dataviz es el NODO (`HeatCell`): mismo radio, mismo realce al hover y la misma leyenda.
+// Es la única escala de la app que no sale de la paleta del tema, y es a propósito (decisión del
+// usuario, se mantiene en el rediseño v2): se leen como "contribuciones de GitHub" justamente porque
+// son esos verdes. Lo que sí se comparte con el resto de la dataviz es el NODO (`HeatCell`).
 const LEVEL_RAMP = [
-  'bg-muted',
+  'bg-panel',
   'bg-[#9be9a8] dark:bg-success/25',
   'bg-[#40c463] dark:bg-success/45',
   'bg-[#30a14e] dark:bg-success/70',
   'bg-[#216e39] dark:bg-success',
 ] as const;
 
-const CELL = 'aspect-square w-full ring-1 ring-inset ring-foreground/5';
+const CELL = 'aspect-square w-full ring-1 ring-inset ring-foreground/[0.04]';
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const WEEKDAYS = ['', 'Lun', '', 'Mié', '', 'Vie', '']; // GitHub solo etiqueta días alternos
 
@@ -77,18 +78,18 @@ export function GithubContributions({ devId }: { devId: string }) {
 
   const wideLayout = loading || data?.linked;
   return (
-    <div className="mt-4 grid gap-4 lg:grid-cols-4">
+    <div className="mt-3.5 grid gap-3.5 lg:grid-cols-4">
       <Card className={cn('min-w-0', wideLayout ? 'lg:col-span-3' : 'lg:col-span-4')}>
         {/* En móvil el contador baja a su propia línea; lado a lado no cabe y se desborda. */}
         <CardHeader className="flex-col gap-1 space-y-0 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
           <CardTitle className="flex items-center gap-2">
-            <GitCommitHorizontal className="size-4" /> Contribuciones en GitHub
+            <IntegrationIcon name="github" size="sm" /> Contribuciones en GitHub
           </CardTitle>
           {loading ? (
             <Skeleton className="h-4 w-32" />
           ) : data?.linked ? (
-            <span className="whitespace-nowrap text-sm text-muted-foreground">
-              <span className="font-semibold text-foreground tabular-nums">{data.totalContributions.toLocaleString('es-MX')}</span> en el último año
+            <span className="whitespace-nowrap label-caps text-faint">
+              <span className="text-sm font-semibold normal-case tracking-normal text-foreground tabular-nums">{data.totalContributions.toLocaleString('es-MX')}</span> en el último año
             </span>
           ) : null}
         </CardHeader>
@@ -107,7 +108,7 @@ export function GithubContributions({ devId }: { devId: string }) {
                   <div className="h-4" />
                   <div className="flex flex-1 flex-col gap-[2px]">
                     {WEEKDAYS.map((d, i) => (
-                      <div key={i} className="flex flex-1 items-center text-[10px] leading-none text-muted-foreground">{d}</div>
+                      <div key={i} className="flex flex-1 items-center text-[10px] leading-none text-faint tabular-nums">{d}</div>
                     ))}
                   </div>
                 </div>
@@ -118,7 +119,7 @@ export function GithubContributions({ devId }: { devId: string }) {
                   <div className="hidden h-4 gap-[2px] sm:flex">
                     {monthLabels.map((label, i) => (
                       <div key={i} className="relative min-w-0 flex-1">
-                        {label && <span className="absolute left-0 top-0 whitespace-nowrap text-[10px] leading-none text-muted-foreground">{label}</span>}
+                        {label && <span className="absolute left-0 top-0 whitespace-nowrap text-[10px] leading-none text-faint tabular-nums">{label}</span>}
                       </div>
                     ))}
                   </div>
@@ -157,7 +158,7 @@ export function GithubContributions({ devId }: { devId: string }) {
       {/* Card cuadrado a la derecha con stats de GitHub */}
       {loading ? (
         <Card className="min-w-0">
-          <CardHeader><CardTitle>Resumen</CardTitle></CardHeader>
+          <CardHeader><CapsLabel>Resumen · 12 meses</CapsLabel></CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 lg:grid-cols-1">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="flex items-center gap-2.5">
@@ -172,7 +173,7 @@ export function GithubContributions({ devId }: { devId: string }) {
         </Card>
       ) : data?.linked && stats ? (
         <Card className="min-w-0">
-          <CardHeader><CardTitle>Resumen</CardTitle></CardHeader>
+          <CardHeader><CapsLabel>Resumen · 12 meses</CapsLabel></CardHeader>
           <CardContent className="grid grid-cols-2 gap-4 lg:grid-cols-1">
             <MetricCard layout="row" surface="plain" icon={Flame} label="Racha actual" value={`${stats.current} ${stats.current === 1 ? 'día' : 'días'}`} />
             <MetricCard layout="row" surface="plain" icon={Award} label="Racha más larga" value={`${stats.longest} ${stats.longest === 1 ? 'día' : 'días'}`} />
@@ -197,7 +198,7 @@ function ContributionsSkeleton() {
           <div className="flex flex-1 flex-col gap-[2px]">
             {WEEKDAYS.map((_, i) => (
               <div key={i} className="flex h-3 flex-1 items-center">
-                {i % 2 === 1 && <div className="h-2.5 w-6 rounded bg-muted" />}
+                {i % 2 === 1 && <div className="h-2.5 w-6 rounded bg-panel" />}
               </div>
             ))}
           </div>
@@ -209,7 +210,7 @@ function ContributionsSkeleton() {
             {Array.from({ length: 52 }).map((_, i) => (
               <div key={i} className="flex min-w-0 flex-1 flex-col gap-[2px]">
                 {Array.from({ length: 7 }).map((_, j) => (
-                  <div key={j} className="aspect-square w-full rounded-[2px] bg-muted" />
+                  <div key={j} className="aspect-square w-full rounded-[2px] bg-panel" />
                 ))}
               </div>
             ))}

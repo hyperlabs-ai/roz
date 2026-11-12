@@ -39,7 +39,7 @@ export function OverrideReasonDialog({
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onCancel()}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+        <DialogHeader eyebrow="Asignación automática">
           <DialogTitle>¿Por qué cambias al responsable?</DialogTitle>
           <DialogDescription>
             {chosenName ? <>roz había elegido a <span className="font-medium text-foreground">{chosenName}</span>. </> : null}
@@ -56,17 +56,17 @@ export function OverrideReasonDialog({
               aria-checked={category === c.value}
               onClick={() => setCategory(c.value)}
               className={cn(
-                'flex w-full items-start gap-2.5 rounded-md border px-3 py-2 text-left transition-colors hover:bg-accent',
-                category === c.value ? 'border-primary bg-primary/5' : 'border-transparent',
+                'flex w-full items-start gap-2.5 rounded-md border-[1.5px] px-3 py-2 text-left transition-colors hover:bg-sidebar',
+                category === c.value ? 'border-orange bg-orange-soft hover:bg-orange-soft' : 'border-border',
               )}
             >
               <span
                 className={cn(
                   'mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border',
-                  category === c.value ? 'border-primary' : 'border-input',
+                  category === c.value ? 'border-orange' : 'border-input',
                 )}
               >
-                {category === c.value && <span className="size-2 rounded-full bg-primary" />}
+                {category === c.value && <span className="size-2 rounded-full bg-orange" />}
               </span>
               <span className="min-w-0">
                 <span className="block text-sm font-medium">{c.label}</span>

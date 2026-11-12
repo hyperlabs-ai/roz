@@ -90,6 +90,48 @@ const raw = z
       .default('true')
       .transform((v) => v === 'true'),
 
+    // Linear (roz v2). Con ROZ_LINEAR_SOT=true Linear vuelve a ser la fuente de verdad de las tareas:
+    // roz deja de crear/editar tareas y `work_item` es un espejo de solo lectura (webhook +
+    // reconciliación). Apagado por defecto: sin el flag roz se comporta exactamente como antes,
+    // aunque las llaves estén puestas.
+    LINEAR_API_KEY: z.string().default(''),
+    LINEAR_WEBHOOK_SECRET: z.string().default(''),
+    // Equipo de Linear por defecto para issues de proyectos sin equipo propio (roz.project.linear_team_id).
+    LINEAR_TEAM_ID: z.string().default(''),
+    LINEAR_API_URL: z.string().default('https://api.linear.app/graphql'),
+    ROZ_LINEAR_SOT: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+
+    // Granola (juntas por API). Opcional: sin llave el poll se apaga y las juntas entran a mano.
+    GRANOLA_API_KEY: z.string().default(''),
+    GRANOLA_BASE_URL: z.string().default('https://public-api.granola.ai'),
+
+    // Discord como chat de roz (docs/discord-chat-contracts.md). Con ROZ_DISCORD_CHAT=true el chat de
+    // roz deja de ser la base interna (0030) y muestra los canales REALES del servidor de la empresa,
+    // espejados por el puente (discord-bridge/, Railway). Apagado por defecto: sin el flag el chat
+    // interno queda idéntico aunque las llaves estén puestas.
+    DISCORD_BOT_TOKEN: z.string().default(''),
+    DISCORD_GUILD_ID: z.string().default(''),
+    // App de OAuth2 (scope identify) con la que cada dev liga su cuenta desde Configuración.
+    DISCORD_CLIENT_ID: z.string().default(''),
+    DISCORD_CLIENT_SECRET: z.string().default(''),
+    // Explícita por la misma razón que GOOGLE_REDIRECT_URI: Discord exige que calce exacto.
+    DISCORD_OAUTH_REDIRECT_URI: z.string().default(''),
+    // Base de la API REST. Solo se cambia en pruebas; la versión va fija para que un cambio de
+    // Discord no nos cambie la forma de las respuestas sin aviso.
+    DISCORD_API_URL: z.string().default('https://discord.com/api/v10'),
+    // Tope por adjunto al publicar desde roz. Discord acepta 10 MiB en servidores sin boost; si el
+    // servidor tiene boost se puede subir (nivel 2: 50 MiB, nivel 3: 100 MiB).
+    DISCORD_MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
+    // Secreto compartido puente → roz (POST /v1/internal/discord/events, Bearer).
+    ROZ_BRIDGE_SECRET: z.string().default(''),
+    ROZ_DISCORD_CHAT: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+
     // Llave de cifrado (32 bytes en base64) para los tokens de terceros guardados por-dev. Generar
     // una vez con: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
     ROZ_ENCRYPTION_KEY: z.string().default(''),
@@ -129,6 +171,38 @@ const raw = z
         code: z.ZodIssueCode.custom,
         message: `${k} es obligatorio cuando la integración de Google Calendar está configurada`,
       });
+    }
+  })
+  // Linear como fuente de verdad, pero NO a medias: con el flag encendido roz ya no puede crear
+  // tareas propias, así que sin llave nadie podría crear trabajo, y sin secreto el webhook rechazaría
+  // todo y el espejo envejecería en silencio. Se valida en todos los entornos.
+  .superRefine((v, ctx) => {
+    if (!v.ROZ_LINEAR_SOT) return;
+    const missing = [
+      !v.LINEAR_API_KEY && 'LINEAR_API_KEY',
+      !v.LINEAR_WEBHOOK_SECRET && 'LINEAR_WEBHOOK_SECRET',
+    ].filter(Boolean);
+    for (const k of missing) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${k} es obligatorio cuando ROZ_LINEAR_SOT=true` });
+    }
+  })
+  // Chat de Discord, pero NO a medias: con el flag encendido el chat interno desaparece, así que sin
+  // bot no se puede escribir, sin OAuth nadie puede ligar su cuenta (y sin cuenta no se ve ningún
+  // canal), sin secreto del puente el tiempo real rechaza todo, y sin llave de cifrado los tokens de
+  // webhook quedarían en claro. Se valida en todos los entornos.
+  .superRefine((v, ctx) => {
+    if (!v.ROZ_DISCORD_CHAT) return;
+    const missing = [
+      !v.DISCORD_BOT_TOKEN && 'DISCORD_BOT_TOKEN',
+      !v.DISCORD_GUILD_ID && 'DISCORD_GUILD_ID',
+      !v.DISCORD_CLIENT_ID && 'DISCORD_CLIENT_ID',
+      !v.DISCORD_CLIENT_SECRET && 'DISCORD_CLIENT_SECRET',
+      !v.DISCORD_OAUTH_REDIRECT_URI && 'DISCORD_OAUTH_REDIRECT_URI',
+      !v.ROZ_BRIDGE_SECRET && 'ROZ_BRIDGE_SECRET',
+      !v.ROZ_ENCRYPTION_KEY && 'ROZ_ENCRYPTION_KEY',
+    ].filter(Boolean);
+    for (const k of missing) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${k} es obligatorio cuando ROZ_DISCORD_CHAT=true` });
     }
   })
   .parse(process.env);
@@ -178,6 +252,28 @@ export const config = {
     baseUrl: raw.TYPESAFE_BASE_URL.replace(/\/$/, ''),
   },
   autoAssign: { enabled: raw.ROZ_AUTO_ASSIGN },
+  linear: {
+    apiKey: raw.LINEAR_API_KEY,
+    webhookSecret: raw.LINEAR_WEBHOOK_SECRET,
+    teamId: raw.LINEAR_TEAM_ID,
+    apiUrl: raw.LINEAR_API_URL,
+    sourceOfTruth: raw.ROZ_LINEAR_SOT,
+  },
+  granola: {
+    apiKey: raw.GRANOLA_API_KEY,
+    baseUrl: raw.GRANOLA_BASE_URL.replace(/\/$/, ''),
+  },
+  discord: {
+    botToken: raw.DISCORD_BOT_TOKEN,
+    guildId: raw.DISCORD_GUILD_ID,
+    clientId: raw.DISCORD_CLIENT_ID,
+    clientSecret: raw.DISCORD_CLIENT_SECRET,
+    oauthRedirectUri: raw.DISCORD_OAUTH_REDIRECT_URI,
+    apiUrl: raw.DISCORD_API_URL.replace(/\/$/, ''),
+    maxUploadBytes: raw.DISCORD_MAX_UPLOAD_BYTES,
+    bridgeSecret: raw.ROZ_BRIDGE_SECRET,
+    chatEnabled: raw.ROZ_DISCORD_CHAT,
+  },
   encryptionKey: raw.ROZ_ENCRYPTION_KEY,
   mcp: { token: raw.ROZ_MCP_TOKEN },
   ingest: { token: raw.ROZ_INGEST_TOKEN },

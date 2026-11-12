@@ -45,7 +45,9 @@ export function QueueProvider({ children }: { children: ReactNode }) {
       const p = await apiGet<QueuePulse>('/queue/pulse');
       setPulse(p);
       setFails(0);
-      const busy = p.counts.pending + p.counts.processing + p.counts.dead + p.counts.failed > 0;
+      // Solo lo que está EN MOVIMIENTO acelera el sondeo. Un evento muerto o fallido no cambia solo: contarlo
+      // dejaba el sondeo fijo en 5 s (unas 720 peticiones por hora y pestaña) hasta que alguien vaciara la cola.
+      const busy = p.counts.pending + p.counts.processing > 0;
       setQuiet((q) => (busy ? 0 : q + 1));
     } catch {
       setFails((f) => f + 1);
@@ -55,7 +57,7 @@ export function QueueProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const stale = fails >= STALE_AFTER;
-  const busy = !!pulse && pulse.counts.pending + pulse.counts.processing + pulse.counts.dead + pulse.counts.failed > 0;
+  const busy = !!pulse && pulse.counts.pending + pulse.counts.processing > 0;
 
   const ms = useMemo(() => {
     if (!user) return null; // sin sesión no hay nada que sondear

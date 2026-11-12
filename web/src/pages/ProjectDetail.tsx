@@ -1,11 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, GitCommitHorizontal, CircleCheck, Users, Plus, Minus, ExternalLink, X, GitBranch, RefreshCw, Check, CircleAlert, Search, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import {
+  Archive, ArchiveRestore, ArrowLeft, ArrowRight, Bot, GitCommitHorizontal, CircleCheck, Users, Plus, Minus, ExternalLink,
+  X, GitBranch, RefreshCw, Check, CircleAlert, Search, MoreHorizontal, Pencil,
+} from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { PeriodPicker } from '@/components/PeriodPicker';
-import { AreaTrend, Columns } from '@/components/charts';
+import { Columns } from '@/components/charts';
+import { BalancedGrid } from '@/components/grid';
 import { MetricCard } from '@/components/MetricCard';
 import { UserAvatar, EmptyState, LineDelta, ErrorCard, Fresh, ProgressBar, RefreshButton, Revalidating } from '@/components/bits';
+import { GithubAvatar, IntegrationIcon, ProjectIcon, tokenColor } from '@/components/brand';
+import { ProjectDialog, ArchiveProjectDialog, DeleteProjectDialog } from '@/components/projects/ProjectDialogs';
+import { ProjectMenu } from '@/components/projects/ProjectMenu';
+import { isArchived, projectColor, type ProjectDraft } from '@/components/projects/project-ui';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,9 +21,6 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import {
-  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -26,12 +31,11 @@ import { useAction } from '@/lib/useAction';
 import { invalidate } from '@/lib/store';
 import { useSync } from '@/sync/SyncContext';
 import { isSyncDone, isSyncError } from '@/sync/status';
-import { apiGet, apiSend, type ProjectDetail as Detail, type RepoSyncStatus } from '@/lib/api';
-import { compact, relative } from '@/lib/format';
+import { apiGet, apiSend, PROJECT_TYPE_LABEL, type ProjectDetail as Detail, type RepoSyncStatus } from '@/lib/api';
+import { compact, relative, shortDate } from '@/lib/format';
 import { usePeriod } from '@/lib/usePeriod';
 import { cn } from '@/lib/utils';
-import { PRIO_DOT } from '@/lib/labels';
-import { ProjectProfileCard } from '@/components/projects/ProjectProfileCard';
+import { PRIO_DOT, stateRank } from '@/lib/labels';
 
 function syncPct(s?: RepoSyncStatus): number | null {
   return s?.totalPages ? Math.min(100, Math.round((s.pages / s.totalPages) * 100)) : null;
@@ -59,17 +63,15 @@ function RepoRow({ repo, status, live, isAdmin, active, busy, onResync, onRemove
   const justDone = !!status && isSyncDone(status) && live;
 
   return (
-    <div className="group relative flex items-center gap-2 rounded-lg border bg-card px-2.5 py-2 transition-colors hover:border-primary/30 hover:bg-accent/40">
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground transition-colors group-hover:bg-background">
-        <GitBranch className="size-3.5" />
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={repo}>{name}</span>
+    <div className="group relative flex items-center gap-2.5 rounded-md bg-card px-2.5 py-2 shadow-[0_1px_1px_hsl(var(--foreground)/0.04)] transition-colors hover:bg-sidebar">
+      <IntegrationIcon name="github" size="sm" framed />
+      <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]" title={repo}>{name}</span>
 
       {active ? (
         <div className="flex shrink-0 items-center gap-1.5" title={`${status?.commits ?? 0} commits · ${status?.pages ?? 0}${status?.totalPages ? `/${status.totalPages}` : ''} páginas`}>
           {/* `pct == null` cuando el backfill todavía no sabe cuántas páginas hay: indeterminado,
               que es justo lo que `ProgressBar` pinta con el barrido en vez de un 35% inventado. */}
-          <ProgressBar pct={pct} className="h-1.5 w-12" />
+          <ProgressBar pct={pct} color="orange" className="h-1.5 w-12" />
           <span className="w-7 text-right text-[11px] tabular-nums text-muted-foreground">
             {status?.status === 'queued' ? '···' : pct != null ? `${pct}%` : status?.commits ?? 0}
           </span>
@@ -77,13 +79,13 @@ function RepoRow({ repo, status, live, isAdmin, active, busy, onResync, onRemove
       ) : justDone ? (
         <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-success animate-fade-in"><Check className="size-3.5" /> Listo</span>
       ) : isError ? (
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-destructive/10 px-1.5 py-0.5 text-[11px] font-medium text-destructive" title={status?.error ?? 'Error al sincronizar'}>
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-soft px-2 py-0.5 text-[11px] font-medium text-red" title={status?.error ?? 'Error al sincronizar'}>
           <CircleAlert className="size-3" /> Error
         </span>
       ) : null}
 
       {isAdmin && (
-        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-accent/90 pl-1.5 opacity-0 shadow-sm backdrop-blur-sm transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
+        <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-sidebar/95 pl-1.5 opacity-0 backdrop-blur-sm transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
           {!active && (
             <button
               onClick={onResync}
@@ -182,7 +184,7 @@ function RepoCombobox({ available, linked, busy, error, onAdd }: {
                   type="button"
                   onMouseEnter={() => setHi(i)}
                   onClick={() => submit(r)}
-                  className={cn('flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors', i === hi ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/60')}
+                  className={cn('flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors', i === hi ? 'bg-orange-soft text-orange-ink' : 'hover:bg-panel')}
                 >
                   <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 flex-1 truncate font-mono text-[13px]">{r.replace('hyperlabs-ai/', '')}</span>
@@ -196,12 +198,154 @@ function RepoCombobox({ available, linked, busy, error, onAdd }: {
   );
 }
 
+// ---------------------------------------------------------------------------------------------
+// Piezas visuales de la pantalla "Proyecto" (solo presentación: todo sale del payload).
+// ---------------------------------------------------------------------------------------------
+
+type StatusKind = 'done' | 'active' | 'open' | 'cancel';
+
+/** Clasifica una ETIQUETA de estado (el backend agrupa por etiqueta en español). */
+function statusKind(label: string): StatusKind {
+  const l = label.toLowerCase();
+  if (/cancel/.test(l)) return 'cancel';
+  if (/(complet|hecho|done|cerrad)/.test(l)) return 'done';
+  if (/(curso|revis|progress|review)/.test(l)) return 'active';
+  return 'open';
+}
+
+const KIND_DOT: Record<StatusKind, string> = {
+  done: 'bg-orange',
+  active: 'bg-purple',
+  open: 'bg-toggle-off',
+  cancel: 'bg-red',
+};
+
+/**
+ * Anillo doble: exterior naranja = alcance hecho, interior morado = alcance en marcha (hecho + en
+ * curso + en revisión). Los cancelados no cuentan en el total.
+ */
+function ProgressRing({ done, started, size = 150 }: { done: number; started: number; size?: number }) {
+  const c1 = 2 * Math.PI * 60;
+  const c2 = 2 * Math.PI * 42;
+  const [shown, setShown] = useState({ done: 0, started: 0 });
+  useEffect(() => {
+    const r = requestAnimationFrame(() => setShown({ done, started }));
+    return () => cancelAnimationFrame(r);
+  }, [done, started]);
+  const arc = 'transition-[stroke-dasharray] duration-1000 ease-spring';
+  return (
+    <div className="relative grid shrink-0 place-items-center">
+      <svg width={size} height={size} viewBox="0 0 150 150" aria-label={`${Math.round(done * 100)}% del alcance hecho`}>
+        <circle cx="75" cy="75" r="60" fill="none" stroke={tokenColor('panel')} strokeWidth="14" />
+        <circle
+          cx="75" cy="75" r="60" fill="none" stroke={tokenColor('orange')} strokeWidth="14" strokeLinecap="round"
+          strokeDasharray={`${c1 * shown.done} ${c1}`} transform="rotate(-90 75 75)" className={arc}
+        />
+        <circle cx="75" cy="75" r="42" fill="none" stroke={tokenColor('panel')} strokeWidth="8" />
+        <circle
+          cx="75" cy="75" r="42" fill="none" stroke={tokenColor('purple')} strokeWidth="8" strokeLinecap="round"
+          strokeDasharray={`${c2 * shown.started} ${c2}`} transform="rotate(-90 75 75)" className={arc}
+        />
+      </svg>
+      <b className="absolute text-[24px] font-semibold tabular-nums tracking-[-0.04em]">{Math.round(done * 100)}%</b>
+    </div>
+  );
+}
+
+/**
+ * Burnup de líneas del período: acumulado de líneas agregadas (naranja, con área) frente al de
+ * eliminadas (morado). Marca "hoy" en el último punto.
+ */
+function LinesBurnup({ trend }: { trend: { date: string; additions: number; deletions: number }[] }) {
+  const W = 520, H = 200, L = 44, R = 500, T = 20, B = 170;
+  let a = 0, d = 0;
+  const pts = trend.map((p) => ({ date: p.date, add: (a += p.additions), del: (d += p.deletions) }));
+  const max = Math.max(1, ...pts.map((p) => Math.max(p.add, p.del)));
+  const n = Math.max(1, pts.length - 1);
+  const x = (i: number) => L + ((R - L) * i) / n;
+  const y = (v: number) => B - ((B - T) * v) / max;
+  const line = (k: 'add' | 'del') => pts.map((p, i) => `${x(i).toFixed(1)},${y(p[k]).toFixed(1)}`).join(' ');
+  const last = pts[pts.length - 1];
+  const lx = x(pts.length - 1);
+  const ly = last ? y(last.add) : B;
+  const ticks = [0, 0.33, 0.66, 1];
+  const labelIdx = pts.length > 2 ? [0, Math.floor((pts.length - 1) / 2), pts.length - 1] : pts.map((_, i) => i);
+  const pillText = last ? `hoy · ${compact(last.add)}` : '';
+  const pillW = Math.max(54, pillText.length * 6.4 + 14);
+  const pillX = Math.min(lx + 8, W - pillW - 2);
+  const pillLeft = pillX < lx; // si no cabe a la derecha, va a la izquierda del punto
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full" role="img" aria-label="Líneas agregadas y eliminadas acumuladas en el período">
+      <g stroke={tokenColor('border')}>
+        {ticks.map((t) => <line key={t} x1={L} x2={R} y1={y(max * t)} y2={y(max * t)} />)}
+      </g>
+      <g fontSize="10" fill={tokenColor('faint')} textAnchor="end" className="tabular-nums">
+        {ticks.map((t) => <text key={t} x={L - 8} y={y(max * t) + 4}>{compact(Math.round(max * t))}</text>)}
+      </g>
+      {pts.length > 1 && (
+        <>
+          <line x1={L} y1={B} x2={lx} y2={ly} stroke={tokenColor('toggle-off')} strokeWidth="1.2" strokeDasharray="3 4" />
+          <polygon points={`${line('add')} ${lx.toFixed(1)},${B} ${L},${B}`} fill={tokenColor('orange', 0.1)} />
+          <polyline points={line('del')} fill="none" stroke={tokenColor('purple')} strokeWidth="2" strokeLinejoin="round" />
+          <polyline points={line('add')} fill="none" stroke={tokenColor('orange')} strokeWidth="2.5" strokeLinejoin="round" />
+          <circle cx={lx} cy={ly} r="4.5" fill={tokenColor('orange')} />
+          <rect x={pillLeft ? lx - pillW - 8 : pillX} y={Math.max(T, ly - 22)} width={pillW} height="20" rx="4" fill={tokenColor('ink')} />
+          <text
+            x={(pillLeft ? lx - pillW - 8 : pillX) + pillW / 2} y={Math.max(T, ly - 22) + 14}
+            fontSize="10.5" fill={tokenColor('ink-foreground')} textAnchor="middle"
+          >
+            {pillText}
+          </text>
+        </>
+      )}
+      <g fontSize="10" fill={tokenColor('faint')} textAnchor="middle" className="tabular-nums">
+        {labelIdx.map((i) => (
+          <text key={i} x={x(i)} y={H - 10} textAnchor={i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle'}>
+            {shortDate(pts[i].date)}
+          </text>
+        ))}
+      </g>
+    </svg>
+  );
+}
+
+/** Leyenda del anillo: cada estado con su punto y conteo (reemplaza las columnas que solo decían "N tareas → Tablero"). */
+function StatusLegend({ byStatus }: { byStatus: Detail['ticketsByStatus'] }) {
+  const rows = [...byStatus].sort((a, b) => stateRank(a.label) - stateRank(b.label));
+  const total = rows.reduce((s, r) => s + r.count, 0) || 1;
+  return (
+    <ul className="grid min-w-0 flex-1 content-center gap-1">
+      {rows.map((s) => (
+        <li key={s.status} className="flex items-center gap-2 rounded-md px-1.5 py-1 text-[13px] hover:bg-sidebar">
+          <i aria-hidden className={cn('size-2 shrink-0 rounded-[2px]', KIND_DOT[statusKind(s.label)])} />
+          <span className="min-w-0 flex-1 truncate">{s.label}</span>
+          <span className="text-[11px] text-faint tabular-nums">{Math.round((s.count / total) * 100)}%</span>
+          <b className="w-8 text-right font-semibold tabular-nums">{s.count}</b>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function SectionLink({ to, children }: { to: string; children: ReactNode }) {
+  return (
+    <Link to={to} className="inline-flex items-center gap-1 label-caps hover:text-foreground">
+      {children} <ArrowRight className="size-3" />
+    </Link>
+  );
+}
+
 export default function ProjectDetail() {
   const { id } = useParams();
+  const nav = useNavigate();
   const { user } = useAuth();
   const isAdmin = !!user; // control total para cualquier usuario autenticado (sin roles)
   const [period, setPeriod] = usePeriod();
   const [confirmRepo, setConfirmRepo] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const action = useAction();
   const { syncs, trigger, track, isActive } = useSync();
   const { data, loading, refetching, error, reload } = useApi<Detail>(
@@ -215,9 +359,8 @@ export default function ProjectDetail() {
   const repos = useMirror<string>(data?.repos, { key: (r) => r });
 
   /**
-   * Autocomplete: repos de la org. En el backend son hasta 20 páginas SECUENCIALES a GitHub, y antes
-   * se pedían en CADA montaje de esta página aunque nadie fuera a vincular nada. Ahora va por la
-   * caché (10 min, compartida entre proyectos) y solo se pide cuando el panel de admin está visible.
+   * Autocomplete: repos de la org. En el backend son hasta 20 páginas SECUENCIALES a GitHub: va por
+   * la caché (10 min, compartida entre proyectos).
    */
   const repoList = useApi<{ repos: string[] }>(
     () => apiGet('/repos/available'),
@@ -226,30 +369,18 @@ export default function ProjectDetail() {
   );
   const available = isAdmin ? repoList.data?.repos ?? [] : [];
 
-  // Cliente/Interno con override local, para que el botón responda al clic (ver `changeKind`).
-  const [kindOverride, setKindOverride] = useState<'client' | 'internal' | null>(null);
-  const kind = kindOverride ?? data?.project.kind ?? 'internal';
-  useEffect(() => {
-    // El servidor ya confirma lo que pintamos: se suelta el override para no quedarnos pegados a él.
-    if (data && kindOverride && data.project.kind === kindOverride) setKindOverride(null);
-  }, [data, kindOverride]);
-
-  // Estado de sync en vivo desde el widget global (no repolleamos la página aquí); el inicial del
-  // payload sirve de fallback en el primer render.
+  // Estado de sync en vivo desde el widget global; el inicial del payload sirve de fallback.
   const liveByRepo = new Map(syncs.map((s) => [s.repo, s]));
   const liveSet = new Set(syncs.map((s) => s.repo));
   const statusFor = (r: string) => liveByRepo.get(r) ?? (data?.repoSync ?? []).find((x) => x.repo === r);
 
-  // Un ÚNICO reload cuando un repo de este proyecto termina de sincronizar: refresca totales/gráficas
-  // sin el parpadeo del polling anterior (que recargaba todo cada pocos segundos).
+  // Un ÚNICO reload cuando un repo de este proyecto termina de sincronizar.
   const doneSeen = useRef<Set<string>>(new Set());
   useEffect(() => {
     for (const s of syncs) {
       const key = `${s.repo}:${s.updatedAt}`;
       if (isSyncDone(s) && (data?.repos ?? []).includes(s.repo) && !doneSeen.current.has(key)) {
         doneSeen.current.add(key);
-        // El backfill acaba de escribir commits y líneas: se revalidan las vistas que los agregan.
-        // Silencioso (los datos actuales siguen en pantalla), no un reload con skeletons.
         reload();
         invalidate('/projects');
         invalidate('/overview');
@@ -269,13 +400,11 @@ export default function ProjectDetail() {
       repo.trim(),
       async () => {
         const r = await apiSend<{ repo?: string }>('POST', `/projects/${id}/repos`, { repo: repo.trim() });
-        // El POST YA encoló el backfill (`src/routes/dashboard.ts`); `track` solo empieza a mirarlo
-        // — con `trigger` se encolaría un SEGUNDO backfill del mismo repo. Sin esto, vincular no
-        // mostraba progreso alguno y parecía que no había pasado nada, mientras el historial se
-        // traía en segundo plano.
+        // El POST YA encoló el backfill; `track` solo empieza a mirarlo (con `trigger` se encolaría
+        // un segundo backfill del mismo repo).
         const normalized = r.repo ?? repo.trim();
         track(id!, normalized);
-        return normalized; // el backend lo normaliza (minúsculas, sin URL): se adopta esa forma
+        return normalized;
       },
       {
         success: {
@@ -292,230 +421,194 @@ export default function ProjectDetail() {
       error: 'No se pudo desvincular',
     }).then(() => invalidate('/projects'));
 
-  /** Cliente/Interno optimista: el botón cambia de texto en el frame del clic y vuelve solo si el
-   *  PATCH falla. Antes descartaba el proyecto que devuelve el endpoint y recargaba la página
-   *  entera, así que el botón seguía diciendo el valor viejo durante segundos. */
-  const changeKind = async (next: 'client' | 'internal') => {
-    const prev = kind;
-    if (next === prev) return;
-    setKindOverride(next);
-    const ok = await action.run('kind', async () => {
-      await apiSend('PATCH', `/projects/${id}`, { kind: next });
+  const project = data?.project as (Detail['project'] & { active?: boolean }) | undefined;
+  const archived = !!project && isArchived(project);
+
+  // ---- CRUD del proyecto ----
+  const saveProject = (d: ProjectDraft) =>
+    action.run('save', async () => {
+      if (!project) return;
+      const body: Record<string, unknown> = { name: d.name, kind: d.kind, color: d.color };
+      if (d.key) body.key = d.key;
+      if ((d.projectType ?? null) !== (project.projectType ?? null)) body.projectType = d.projectType;
+      if ((d.description ?? null) !== (project.description ?? null)) body.description = d.description;
+      await apiSend('PATCH', `/projects/${project.id}`, body);
       invalidate('/projects'); // la lista y este detalle se revalidan por prefijo, en silencio
-      return true;
-    }, {
-      success: next === 'client' ? 'Marcado como Cliente' : 'Marcado como Interno',
-      error: 'No se pudo cambiar',
-    });
-    if (!ok) setKindOverride(prev);
-  };
+    }, { success: { title: 'Proyecto actualizado', description: d.name }, error: 'No se pudo guardar' });
+
+  const toggleArchive = () =>
+    action.run('archive', async () => {
+      if (!project) return;
+      await apiSend('PATCH', `/projects/${project.id}`, { active: archived });
+      invalidate('/projects');
+      invalidate('/overview');
+    }, { success: archived ? 'Proyecto restaurado' : 'Proyecto archivado', error: 'No se pudo cambiar' });
+
+  const deleteProject = () =>
+    action.run('delete', async () => {
+      if (!project) return;
+      await apiSend('DELETE', `/projects/${project.id}`);
+      invalidate('/projects');
+      invalidate('/overview');
+      nav('/app/projects');
+    }, { success: { title: 'Proyecto eliminado', description: project?.name }, error: 'No se pudo eliminar' });
+
+  // Avance por estado (para el anillo): hecho / en marcha sobre el total no cancelado.
+  const scope = (() => {
+    let total = 0, done = 0, active = 0;
+    for (const s of data?.ticketsByStatus ?? []) {
+      const k = statusKind(s.label);
+      if (k === 'cancel') continue;
+      total += s.count;
+      if (k === 'done') done += s.count;
+      if (k === 'active') active += s.count;
+    }
+    return { total, done, active, pctDone: total ? done / total : 0, pctStarted: total ? (done + active) / total : 0 };
+  })();
+
+  const kindLabel = project?.kind === 'client' ? 'Cliente' : 'Interno';
+  const editable = project
+    ? { projectId: project.id, name: project.name, key: project.key, kind: project.kind, color: project.color, projectType: project.projectType, description: project.description, repos: repos.items }
+    : null;
 
   return (
     <Layout
-      title={data?.project.name ?? 'Proyecto'}
-      subtitle={data?.project.key}
+      title={project?.name ?? 'Proyecto'}
+      icon={project ? <ProjectIcon id={project.id} name={project.name} size="lg" className={cn('size-8 md:size-11', archived && 'grayscale')} /> : undefined}
+      eyebrow={project ? `Proyecto · ${kindLabel}${archived ? ' · Archivado' : ''}` : 'Proyecto'}
       actions={
         <>
+          {data && (
+            <Badge variant={scope.total && scope.pctDone >= 0.5 ? 'ok' : 'neutral'} dot className="hidden sm:inline-flex">
+              {scope.total ? `${scope.done}/${scope.total} hechas` : 'sin tareas'}
+            </Badge>
+          )}
           <RefreshButton busy={refetching} onClick={reload} />
           <PeriodPicker value={period} onChange={setPeriod} />
+          {isAdmin && project && (
+            <ProjectMenu
+              archived={archived}
+              onEdit={() => setEditOpen(true)}
+              onArchive={() => setArchiveOpen(true)}
+              onDelete={() => setDeleteOpen(true)}
+              trigger={<Button variant="outline" size="icon" aria-label="Acciones del proyecto"><MoreHorizontal /></Button>}
+            />
+          )}
         </>
       }
     >
-      <Button asChild variant="ghost" size="sm" className="mb-4 -ml-2 text-muted-foreground">
+      <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 text-muted-foreground">
         <Link to="/app/projects"><ArrowLeft /> Proyectos</Link>
       </Button>
 
       {error && <ErrorCard message={error} className="mb-4" />}
 
-      {loading || !data ? (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-20" />)}</div>
-          <Skeleton className="h-64" />
-        </div>
+      {loading || !data || !project ? (
+        <DetailSkeleton />
       ) : (
-        <Revalidating active={refetching}>
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            {/* `layout="row"` es la forma que tenía MiniStat; ahora la da MetricCard, así que estas
-                cinco cifras ganan el count-up que solo tenían las de Overview. El tinte del icono
-                sale del token, no de una clase en el SVG. */}
-            <MetricCard layout="row" icon={<GitCommitHorizontal className="size-[18px]" />} label="Commits" value={data.totals.commits} className="col-span-2 lg:col-span-1" />
-            <MetricCard layout="row" icon={<Plus className="size-[18px]" />} label="Líneas agregadas" value={data.totals.additions} format={compact} colorVar="--success" tone="success" />
-            <MetricCard layout="row" icon={<Minus className="size-[18px]" />} label="Líneas eliminadas" value={data.totals.deletions} format={compact} colorVar="--destructive" tone="destructive" />
-            <MetricCard layout="row" icon={<CircleCheck className="size-[18px]" />} label="Tickets resueltos" value={data.totals.ticketsResolved} />
-            <MetricCard layout="row" icon={<Users className="size-[18px]" />} label="Contribuidores" value={data.totals.contributors} />
+        <Revalidating active={refetching} className="grid gap-3.5">
+          {archived && (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-yellow/40 bg-yellow-soft px-4 py-2.5 text-[13px] text-yellow-ink">
+              <Archive className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1">Archivado: roz no le asigna trabajo nuevo. Su historial sigue aquí.</span>
+              {isAdmin && (
+                <Button size="sm" variant="secondary" onClick={() => setArchiveOpen(true)}><ArchiveRestore /> Restaurar</Button>
+              )}
+            </div>
+          )}
+
+          {/* Resumen: la descripción (el contexto que antes iba bajo el título) + propiedades */}
+          <Card className="flex flex-col gap-3 p-4 sm:p-5 lg:flex-row lg:items-center lg:gap-6">
+            <div className="grid min-w-0 flex-1 gap-2.5">
+              {project.description ? (
+                <p className="max-w-4xl text-[14px] leading-relaxed text-foreground line-clamp-3">{project.description}</p>
+              ) : (
+                <p className="text-[13.5px] text-faint">
+                  Sin descripción. {isAdmin ? 'Agrégala (o pídesela a roz): la usa para clasificar las tareas de este proyecto.' : ''}
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge variant={project.kind === 'client' ? 'warn' : 'neutral'} dot>{kindLabel}</Badge>
+                <Badge variant="neutral">{project.projectType ? PROJECT_TYPE_LABEL[project.projectType] ?? project.projectType : 'Sin tipo'}</Badge>
+                {project.profileSource === 'ia' && <Badge variant="llm"><Bot className="size-3" /> Perfil propuesto por roz</Badge>}
+                <span className="inline-flex h-[22px] items-center gap-1.5 rounded-full bg-panel px-2 text-[11.5px] text-muted-foreground">
+                  <span className="size-2.5 rounded-[3px]" style={{ background: projectColor(project) }} />
+                  <span className="font-mono text-[11px]">{project.key}</span>
+                </span>
+              </div>
+            </div>
+            {isAdmin && (
+              <div className="flex shrink-0 gap-2">
+                <Button variant="secondary" onClick={() => setEditOpen(true)}>
+                  {project.description ? <><Pencil /> Editar</> : <><Plus /> Agregar descripción</>}
+                </Button>
+              </div>
+            )}
+          </Card>
+
+          {/* KPIs */}
+          <BalancedGrid max={{ base: 2, md: 3, lg: 5 }} className="gap-3.5">
+            <MetricCard icon={GitCommitHorizontal} label="Commits" value={data.totals.commits} format={compact} />
+            <MetricCard icon={Plus} label="Líneas agregadas" value={data.totals.additions} format={compact} colorVar="--success" tone="success" />
+            <MetricCard icon={Minus} label="Líneas eliminadas" value={data.totals.deletions} format={compact} colorVar="--destructive" tone="destructive" />
+            <MetricCard icon={CircleCheck} label="Tareas cerradas" value={data.totals.ticketsResolved} colorVar="--chart-3" />
+            <MetricCard icon={Users} label="Contribuidores" value={data.totals.contributors} />
+          </BalancedGrid>
+
+          {/* Avance (anillo + desglose por estado) | burnup. Las dos tarjetas miden lo mismo. */}
+          <div className="grid gap-3.5 lg:grid-cols-[1fr_1.4fr]">
+            <Card className="flex min-w-0 flex-col">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle>Avance de tareas</CardTitle>
+                <SectionLink to="/app/tasks">Tablero</SectionLink>
+              </CardHeader>
+              <CardContent className="flex flex-1 flex-col justify-center gap-3">
+                {data.ticketsByStatus.length ? (
+                  <>
+                    <div className="flex flex-col items-center gap-5 sm:flex-row">
+                      <ProgressRing done={scope.pctDone} started={scope.pctStarted} size={140} />
+                      <StatusLegend byStatus={data.ticketsByStatus} />
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-muted-foreground">
+                      <span className="inline-flex items-center gap-1.5"><i className="size-2 rounded-[2px] bg-orange" /> hecho {scope.done}/{scope.total}</span>
+                      <span className="inline-flex items-center gap-1.5"><i className="size-2 rounded-[2px] bg-purple" /> en marcha {Math.round(scope.pctStarted * 100)}%</span>
+                    </div>
+                  </>
+                ) : (
+                  <EmptyState icon={<CircleCheck />}>Este proyecto todavía no tiene tareas</EmptyState>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="flex min-w-0 flex-col">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle>Burnup del período</CardTitle>
+                <div className="flex items-center gap-3 text-[11.5px] text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5"><i className="h-0.5 w-3 rounded bg-orange" /> agregadas</span>
+                  <span className="inline-flex items-center gap-1.5"><i className="h-0.5 w-3 rounded bg-purple" /> eliminadas</span>
+                </div>
+              </CardHeader>
+              <CardContent className="flex flex-1 flex-col justify-center">
+                {data.trend.length > 1 ? (
+                  <LinesBurnup trend={data.trend} />
+                ) : (
+                  <EmptyState icon={<GitCommitHorizontal />}>Sin actividad de código en este período</EmptyState>
+                )}
+              </CardContent>
+            </Card>
           </div>
 
-          <ProjectProfileCard
-            projectId={data.project.id}
-            projectType={data.project.projectType ?? null}
-            description={data.project.description ?? null}
-            profileSource={data.project.profileSource ?? null}
-            hasRepos={repos.items.length > 0}
-            isAdmin={isAdmin}
-            onSaved={reload}
-          />
+          {/* Historial (2fr) | contribuidores + repos (1fr). La columna DERECHA marca la altura y el
+              historial la llena con scroll propio (tabla en absolute). */}
+          <div className="grid gap-3.5 lg:grid-cols-[2fr_1fr]">
+            <Card className="min-w-0 lg:flex lg:flex-col">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+                <CardTitle>Historial de commits</CardTitle>
+                <span className="text-[11px] text-faint tabular-nums">{data.history.length}</span>
+              </CardHeader>
+              <CardContent className="p-0 sm:p-0 lg:relative lg:min-h-[24rem] lg:flex-1">
+                {!data.history.length && <EmptyState icon={<GitCommitHorizontal />}>Sin commits en este período</EmptyState>}
 
-          <Card className="mt-4">
-            <CardHeader className="flex-row items-center justify-between space-y-0">
-              <div className="flex items-center gap-2">
-                <CardTitle className="flex items-center gap-2"><GitBranch className="size-4" /> Repositorios</CardTitle>
-                <span className="text-sm text-muted-foreground">{repos.items.length}</span>
-              </div>
-              {isAdmin ? (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" disabled={action.busy('kind')}>
-                      {action.busy('kind') && <Loader2 className="animate-spin" />}
-                      {kind === 'client' ? 'Cliente' : 'Interno'}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => changeKind('client')}>Cliente</DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => changeKind('internal')}>Interno</DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              ) : (
-                <Badge variant={kind === 'client' ? 'default' : 'secondary'}>
-                  {kind === 'client' ? 'Cliente' : 'Interno'}
-                </Badge>
-              )}
-            </CardHeader>
-            <CardContent>
-              {repos.items.length ? (
-                <div className="grid gap-1.5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {repos.items.map((r) => (
-                    // `rounded-lg` para que el anillo de "recién vinculado" calce con la fila.
-                    <Fresh key={r} fresh={repos.isFresh(r)} className="rounded-lg">
-                      <RepoRow
-                        repo={r}
-                        status={statusFor(r)}
-                        live={liveSet.has(r)}
-                        isAdmin={isAdmin}
-                        active={isActive(r)}
-                        busy={repos.isBusy(r) || action.busy(`resync:${r}`)}
-                        onResync={() => resyncRepo(r)}
-                        onRemove={() => setConfirmRepo(r)}
-                      />
-                    </Fresh>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState icon={<GitBranch className="size-6" />}>Sin repos vinculados</EmptyState>
-              )}
-              {isAdmin && (
-                <div className="mt-4 border-t pt-4">
-                  <RepoCombobox
-                    available={available}
-                    linked={repos.items}
-                    busy={repos.busyCount > 0}
-                    error={repoList.error}
-                    onAdd={linkRepo}
-                  />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className="mt-4 min-w-0">
-            <CardHeader><CardTitle>Líneas cambiadas por día</CardTitle></CardHeader>
-            <CardContent>
-              <AreaTrend
-                data={data.trend}
-                series={[
-                  { key: 'additions', name: 'Agregadas', color: 'hsl(var(--success))' },
-                  { key: 'deletions', name: 'Eliminadas', color: 'hsl(var(--destructive))' },
-                ]}
-              />
-            </CardContent>
-          </Card>
-
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <div className="min-w-0 space-y-4">
-              <Card className="min-w-0">
-                <CardHeader><CardTitle>Contribuidores</CardTitle></CardHeader>
-                <CardContent className="space-y-2">
-                  {data.contributors.length ? (
-                    data.contributors.map((c, i) => (
-                      <div key={i} className="flex items-center gap-3">
-                        <UserAvatar url={c.avatarUrl} name={c.name} className="size-7 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>
-                        <span className="shrink-0 text-xs text-muted-foreground">{c.commits} commits · {compact(c.lines)} líneas</span>
-                      </div>
-                    ))
-                  ) : <EmptyState>Sin contribuidores</EmptyState>}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex-row items-center justify-between space-y-0">
-                  <CardTitle>Tickets completados</CardTitle>
-                  <span className="text-sm text-muted-foreground">{data.resolvedTickets.length}</span>
-                </CardHeader>
-                <CardContent className="max-h-[24rem] space-y-1 overflow-y-auto scroll-thin pr-1">
-                  {data.resolvedTickets.length ? (
-                    data.resolvedTickets.map((t) => (
-                      <a
-                        key={t.id}
-                        href={t.url && t.url !== '#' ? t.url : undefined}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex items-center gap-2.5 rounded-md px-1 py-1.5 hover:bg-accent"
-                      >
-                        <span className={cn('size-2 shrink-0 rounded-full', PRIO_DOT[t.priority ?? ''] ?? 'bg-muted')} title={t.priority ?? 'sin prioridad'} />
-                        {/* Sin ancho fijo y sin envolver: `w-14` no alcanzaba para
-                            `HYPERFLOW-454` y el identificador partía en dos renglones, que es lo
-                            que rompía la fila. El título de al lado ya absorbe el sobrante con su
-                            `flex-1 truncate`, y truncar el identificador no es opción: lo que se
-                            recortaría es el número, que es justo lo que identifica al ticket. */}
-                        <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-muted-foreground">{t.identifier}</span>
-                        <span className="min-w-0 flex-1 truncate text-sm">{t.name}</span>
-                        {t.assignee && <UserAvatar url={t.assignee.avatarUrl} name={t.assignee.name} className="size-5 shrink-0" />}
-                      </a>
-                    ))
-                  ) : <EmptyState>Sin tickets completados en este período</EmptyState>}
-                </CardContent>
-              </Card>
-
-              <Card className="flex min-w-0 flex-col">
-                <CardHeader><CardTitle>Actividad por repo</CardTitle></CardHeader>
-                <CardContent className="flex flex-1 flex-col">
-                  {data.byRepo.length ? (
-                    // El nombre corto del repo: `hyperlabs-ai/hyperflow-app` no cabe como
-                    // etiqueta de eje, y el prefijo es el mismo en todos, así que no distingue.
-                    <Columns
-                      fill
-                      topN={5}
-                      color="hsl(var(--chart-4))"
-                      data={data.byRepo.map((r) => ({ label: r.repo.split('/').pop() ?? r.repo, value: r.commits }))}
-                    />
-                  ) : <EmptyState>Sin repos</EmptyState>}
-                </CardContent>
-              </Card>
-
-              <Card className="flex min-w-0 flex-col">
-                <CardHeader><CardTitle>Tickets por estado</CardTitle></CardHeader>
-                <CardContent className="flex flex-1 flex-col">
-                  {data.ticketsByStatus.length ? (
-                    <Columns
-                      fill
-                      sort={false}
-                      color="hsl(var(--chart-5))"
-                      data={data.ticketsByStatus.map((s) => ({ label: s.label, value: s.count }))}
-                    />
-                  ) : <EmptyState>Sin tickets</EmptyState>}
-                </CardContent>
-              </Card>
-            </div>
-
-            <Card className="min-w-0 lg:col-span-2 lg:flex lg:flex-col">
-              <CardHeader><CardTitle>Historial de commits</CardTitle></CardHeader>
-              {/* relative + tabla en absolute (abajo): saca la tabla del flujo para que la altura de
-                  la fila la marque la columna IZQUIERDA; el Historial se estira a ella y scrollea. */}
-              <CardContent className="p-0 lg:relative lg:min-h-0 lg:flex-1">
-                {!data.history.length && <EmptyState>Sin commits en este período</EmptyState>}
-
-                {/* Desktop: tabla. En lg llena el alto de la card (= altura de la izquierda) con scroll
-                    interno y header fijo, así ambas columnas terminan a la misma altura. */}
                 {data.history.length > 0 && (
                   <div className="hidden md:block lg:absolute lg:inset-0 lg:[&>div]:h-full">
                     <Table className="table-fixed">
@@ -532,25 +625,25 @@ export default function ProjectDetail() {
                           <TableRow key={c.sha}>
                             <TableCell>
                               <div className="flex min-w-0 items-center gap-2">
-                                <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{c.sha}</code>
+                                <code className="shrink-0 font-mono text-[11px] text-faint">{c.sha}</code>
                                 {c.url && c.url !== '#' ? (
                                   <a href={c.url} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 hover:underline">
-                                    <span className="truncate text-sm">{c.message}</span>
-                                    <ExternalLink className="size-3 shrink-0 opacity-60" />
+                                    <span className="truncate text-[13px]">{c.message}</span>
+                                    <ExternalLink className="size-3 shrink-0 opacity-50" />
                                   </a>
                                 ) : (
-                                  <span className="truncate text-sm">{c.message}</span>
+                                  <span className="truncate text-[13px]">{c.message}</span>
                                 )}
                               </div>
                             </TableCell>
                             <TableCell>
                               <div className="flex min-w-0 items-center gap-2">
-                                <UserAvatar url={c.avatarUrl} name={c.author ?? '—'} className="size-5 shrink-0" />
+                                <UserAvatar url={c.avatarUrl} id={c.devId} name={c.author ?? '—'} className="size-5 shrink-0" />
                                 <span className="truncate text-xs text-muted-foreground">{c.author ?? '—'}</span>
                               </div>
                             </TableCell>
                             <TableCell className="text-right"><LineDelta additions={c.additions} deletions={c.deletions} /></TableCell>
-                            <TableCell className="text-right text-xs text-muted-foreground">{relative(c.committedAt)}</TableCell>
+                            <TableCell className="text-right text-[11px] text-faint tabular-nums">{relative(c.committedAt)}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -558,33 +651,162 @@ export default function ProjectDetail() {
                   </div>
                 )}
 
-                {/* Móvil: lista compacta */}
-                <div className="divide-y md:hidden">
+                {/* Móvil: lista compacta con alto acotado */}
+                <div className="max-h-[28rem] divide-y overflow-y-auto md:hidden">
                   {data.history.map((c) => (
                     <div key={c.sha} className="px-4 py-3">
                       <div className="flex items-start gap-2">
-                        <code className="mt-0.5 shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">{c.sha}</code>
+                        <code className="mt-0.5 shrink-0 font-mono text-[11px] text-faint">{c.sha}</code>
                         <span className="min-w-0 flex-1 break-words text-sm leading-snug line-clamp-2">
                           {c.url && c.url !== '#' ? <a href={c.url} target="_blank" rel="noreferrer" className="hover:underline">{c.message}</a> : c.message}
                         </span>
                       </div>
                       <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                        <UserAvatar url={c.avatarUrl} name={c.author ?? '—'} className="size-4" />
+                        <UserAvatar url={c.avatarUrl} id={c.devId} name={c.author ?? '—'} className="size-4" />
                         <span className="truncate">{c.author ?? '—'}</span>
                         <span className="ml-auto shrink-0"><LineDelta additions={c.additions} deletions={c.deletions} /></span>
-                        <span className="shrink-0">· {relative(c.committedAt)}</span>
+                        <span className="shrink-0 text-[11px] text-faint tabular-nums">· {relative(c.committedAt)}</span>
                       </div>
                     </div>
                   ))}
                 </div>
               </CardContent>
             </Card>
+
+            <div className="grid min-w-0 content-start gap-3.5">
+              <Card className="min-w-0">
+                <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+                  <CardTitle>Contribuidores</CardTitle>
+                  <span className="text-[11px] text-faint tabular-nums">{data.contributors.length}</span>
+                </CardHeader>
+                <CardContent className="grid gap-2.5">
+                  {data.contributors.length ? (
+                    data.contributors.slice(0, 8).map((c, i) => (
+                      <div key={i} className="flex items-center gap-2.5">
+                        <GithubAvatar url={c.avatarUrl} id={c.devId} name={c.name} className="size-7" />
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{c.name}</span>
+                        <span className="shrink-0 text-[11px] text-faint tabular-nums">{c.commits} · {compact(c.lines)} lín.</span>
+                      </div>
+                    ))
+                  ) : <EmptyState icon={<Users />}>Sin contribuidores en este período</EmptyState>}
+                  {data.contributors.length > 8 && (
+                    <span className="text-[12px] text-faint">y {data.contributors.length - 8} más</span>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="flex min-w-0 flex-col">
+                <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle>Commits por repo</CardTitle>
+                  <span className="text-[11px] text-faint tabular-nums">top 5</span>
+                </CardHeader>
+                <CardContent className="flex flex-1 flex-col">
+                  {data.byRepo.some((r) => r.commits > 0) ? (
+                    <Columns
+                      fill
+                      topN={5}
+                      color={tokenColor('orange')}
+                      data={data.byRepo.map((r) => ({ label: r.repo.split('/').pop() ?? r.repo, value: r.commits }))}
+                    />
+                  ) : <EmptyState icon={<GitBranch />}>Sin actividad en repos</EmptyState>}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+
+          {/* Tareas cerradas | repos vinculados. La de repos marca la altura; la lista llena el resto. */}
+          <div className="grid gap-3.5 lg:grid-cols-2">
+            <Card className="min-w-0 lg:flex lg:flex-col">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle>Cerradas en el período</CardTitle>
+                <span className="text-[11px] text-faint tabular-nums">{data.resolvedTickets.length}</span>
+              </CardHeader>
+              <CardContent className="lg:relative lg:min-h-[16rem] lg:flex-1">
+                {data.resolvedTickets.length ? (
+                  <ul className="scroll-list grid max-h-[22rem] content-start gap-0.5 [--edge:1rem] sm:[--edge:1.25rem] lg:absolute lg:inset-x-5 lg:bottom-5 lg:top-0 lg:max-h-none">
+                    {data.resolvedTickets.map((t) => (
+                      <li key={t.id}>
+                        <a
+                          href={t.url && t.url !== '#' ? t.url : undefined}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-2.5 rounded-md px-1.5 py-1.5 text-[13px] transition-colors hover:bg-sidebar"
+                        >
+                          <span className={cn('size-1.5 shrink-0 rounded-full', PRIO_DOT[t.priority ?? ''] ?? 'bg-toggle-off')} title={t.priority ?? 'sin prioridad'} />
+                          <span className="w-[86px] shrink-0 truncate font-mono text-[11px] text-faint">{t.identifier}</span>
+                          <span className="min-w-0 flex-1 truncate">{t.name}</span>
+                          {t.assignee && <UserAvatar url={t.assignee.avatarUrl} id={t.assignee.id} name={t.assignee.name} className="size-[18px] shrink-0" />}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <EmptyState icon={<CircleCheck />}>Nada cerrado en este período</EmptyState>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="min-w-0">
+              <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <IntegrationIcon name="github" framed />
+                  <CardTitle>Repositorios</CardTitle>
+                </div>
+                <span className="text-[11px] text-faint tabular-nums">{repos.items.length}</span>
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                {repos.items.length ? (
+                  <div className="grid gap-1.5 rounded-lg bg-panel p-1.5">
+                    {repos.items.map((r) => (
+                      <Fresh key={r} fresh={repos.isFresh(r)} className="rounded-md">
+                        <RepoRow
+                          repo={r}
+                          status={statusFor(r)}
+                          live={liveSet.has(r)}
+                          isAdmin={isAdmin}
+                          active={isActive(r)}
+                          busy={repos.isBusy(r) || action.busy(`resync:${r}`)}
+                          onResync={() => resyncRepo(r)}
+                          onRemove={() => setConfirmRepo(r)}
+                        />
+                      </Fresh>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-toggle-off">
+                    <EmptyState icon={<GitBranch />}>Sin repos vinculados. Vincula uno para empezar a contar su actividad.</EmptyState>
+                  </div>
+                )}
+                {isAdmin && (
+                  <RepoCombobox
+                    available={available}
+                    linked={repos.items}
+                    busy={repos.busyCount > 0}
+                    error={repoList.error}
+                    onAdd={linkRepo}
+                  />
+                )}
+              </CardContent>
+            </Card>
           </div>
         </Revalidating>
       )}
 
-      {/* Desvincular un repo corta su vínculo con el proyecto (y su historial atribuido), así que
-          ahora se confirma. Antes era un clic directo, sin `busy`: un doble clic mandaba dos DELETE. */}
+      <ProjectDialog project={editable} open={editOpen} onOpenChange={setEditOpen} onSubmit={saveProject} />
+      <ArchiveProjectDialog
+        project={project ? { name: project.name, active: !archived } : null}
+        open={archiveOpen}
+        onOpenChange={setArchiveOpen}
+        onConfirm={toggleArchive}
+      />
+      <DeleteProjectDialog
+        project={project ? { name: project.name, repos: repos.items } : null}
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        onConfirm={deleteProject}
+      />
+
+      {/* Desvincular corta el vínculo del repo con el proyecto: se confirma. */}
       <AlertDialog open={!!confirmRepo} onOpenChange={(v) => !v && setConfirmRepo(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -610,5 +832,25 @@ export default function ProjectDetail() {
         </AlertDialogContent>
       </AlertDialog>
     </Layout>
+  );
+}
+
+/** Esqueleto con la MISMA composición que la página (nada salta al llegar los datos). */
+function DetailSkeleton() {
+  return (
+    <div className="grid gap-3.5">
+      <Card className="grid gap-3 p-5"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-4 w-1/2" /><div className="flex gap-1.5"><Skeleton className="h-5 w-20 rounded-full" /><Skeleton className="h-5 w-28 rounded-full" /></div></Card>
+      <BalancedGrid max={{ base: 2, md: 3, lg: 5 }} className="gap-3.5">
+        {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-[92px] rounded-lg" />)}
+      </BalancedGrid>
+      <div className="grid gap-3.5 lg:grid-cols-[1fr_1.4fr]">
+        <Card className="flex items-center gap-5 p-5"><Skeleton className="size-[140px] shrink-0 rounded-full" /><div className="grid flex-1 gap-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-5" />)}</div></Card>
+        <Card className="grid gap-3 p-5"><Skeleton className="h-4 w-40" /><Skeleton className="h-48" /></Card>
+      </div>
+      <div className="grid gap-3.5 lg:grid-cols-[2fr_1fr]">
+        <Card className="grid gap-2 p-5">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-8" />)}</Card>
+        <Card className="grid content-start gap-2.5 p-5">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-7" />)}</Card>
+      </div>
+    </div>
   );
 }

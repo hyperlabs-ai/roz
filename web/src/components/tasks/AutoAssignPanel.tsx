@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { toast } from '@/lib/toast';
-import { AlertTriangle, ChevronDown, Loader2, RotateCw, Sparkles, XCircle } from 'lucide-react';
+import { AlertTriangle, ChevronDown, Loader2, RotateCw, Bot, XCircle, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiGet, apiSend, type AssignClassification, type AssignmentDetailResponse, type AssignCandidate, type Ticket } from '@/lib/api';
 import {
@@ -100,7 +100,7 @@ export function AutoAssignPanel({
     setRunning(false);
   }
 
-  const runButton = (label: string, icon = <Sparkles className="size-3.5" />) => (
+  const runButton = (label: string, icon = <Zap className="size-3.5" />) => (
     <Button size="sm" variant="outline" className="h-7 gap-1.5 px-2 text-xs" onClick={run} disabled={running}>
       {running ? <Loader2 className="size-3.5 animate-spin" /> : icon} {label}
     </Button>
@@ -125,9 +125,9 @@ export function AutoAssignPanel({
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted"
+          className="inline-flex items-center gap-1.5 rounded-full bg-yellow-soft px-2.5 py-0.5 text-[11px] font-medium text-yellow-ink transition-colors hover:bg-yellow-soft/80"
         >
-          <Sparkles className="size-3" /> roz no tenía candidato · la asignó una persona
+          <Bot className="size-3" /> roz no tenía candidato · la asignó una persona
           <ChevronDown className={cn('size-3 transition-transform', expanded && 'rotate-180')} />
         </button>
         {expanded && d && (
@@ -141,9 +141,9 @@ export function AutoAssignPanel({
 
   if (state === 'escalated') {
     return (
-      <div className="space-y-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
+      <div className="space-y-2 rounded-md bg-yellow-soft px-3 py-2 text-xs">
         <div className="flex items-center gap-1.5 font-medium text-foreground">
-          <AlertTriangle className="size-3.5 text-warning" /> Necesita decisión
+          <AlertTriangle className="size-3.5 text-yellow-ink" /> Necesita decisión
           {task.autoAssign?.suggestion && (
             <span className="font-normal text-muted-foreground">· {SUGGESTION_LABEL[task.autoAssign.suggestion] ?? task.autoAssign.suggestion}</span>
           )}
@@ -172,9 +172,9 @@ export function AutoAssignPanel({
 
   if (state === 'failed') {
     return (
-      <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs">
+      <div className="space-y-2 rounded-md bg-red-soft px-3 py-2 text-xs">
         <div className="flex items-center gap-1.5 font-medium text-foreground">
-          <XCircle className="size-3.5 text-destructive" /> No se pudo asignar automáticamente
+          <XCircle className="size-3.5 text-red" /> No se pudo asignar automáticamente
         </div>
         {d && (
           <p className="text-muted-foreground">
@@ -193,9 +193,9 @@ export function AutoAssignPanel({
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
+        className="inline-flex items-center gap-1.5 rounded-full bg-lavender px-2.5 py-0.5 text-[11px] font-medium text-purple-deep transition-colors hover:bg-lavender/80"
       >
-        <Sparkles className="size-3" />
+        <Bot className="size-3" />
         {state === 'overridden' ? 'roz eligió a otra persona · corregida' : 'Asignada automáticamente'}
         <ChevronDown className={cn('size-3 transition-transform', expanded && 'rotate-180')} />
       </button>
@@ -205,7 +205,7 @@ export function AutoAssignPanel({
         ) : d ? (
           <div className="rounded-md border bg-card px-3 py-2 text-xs">
             {d.overriddenAt && (
-              <p className="mb-2 rounded bg-muted px-2 py-1">
+              <p className="mb-2 rounded-sm bg-yellow-soft px-2 py-1 text-yellow-ink">
                 Cambiada de <span className="font-medium">{name(d.chosenDevId)}</span> a{' '}
                 <span className="font-medium">{d.overrideDevId ? name(d.overrideDevId) : 'nadie'}</span> ·{' '}
                 {overrideLabels[d.overrideCategory ?? ''] ?? d.overrideCategory}
@@ -224,7 +224,7 @@ export function Row({ label, children, source }: { label: string; children: Reac
     <div className="flex items-baseline gap-2">
       <span className="w-24 shrink-0 text-muted-foreground">{label}</span>
       <span className="min-w-0 flex-1">{children}</span>
-      {source && <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">{SOURCE_LABEL[source] ?? source}</span>}
+      {source && <span className="shrink-0 label-caps text-faint">{SOURCE_LABEL[source] ?? source}</span>}
     </div>
   );
 }
@@ -234,10 +234,10 @@ export function CapacityBar({ c }: { c: NonNullable<AssignCandidate['capacity']>
   const pct = (h: number) => `${Math.min(100, (h / max) * 100)}%`;
   return (
     <div className="space-y-1">
-      <div className="relative h-2 overflow-hidden rounded-full bg-muted">
-        <div className="absolute inset-y-0 left-0 bg-muted-foreground/40" style={{ width: pct(c.loadHours) }} />
+      <div className="relative h-1.5 overflow-hidden rounded-full bg-panel">
+        <div className="absolute inset-y-0 left-0 bg-toggle-off" style={{ width: pct(c.loadHours) }} />
         <div
-          className={cn('absolute inset-y-0', c.fits ? 'bg-primary' : 'bg-destructive')}
+          className={cn('absolute inset-y-0', c.fits ? 'bg-orange' : 'bg-red')}
           style={{ left: pct(c.loadHours), width: pct(c.effectiveHours) }}
         />
         <div className="absolute inset-y-0 w-px bg-foreground" style={{ left: pct(c.limitHours) }} title="85%" />
@@ -369,28 +369,28 @@ function DecisionDetail({ decision: d, name }: { decision: NonNullable<Assignmen
     <div className="space-y-3">
       {c && (
         <section className="space-y-1">
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Cómo la entendió roz</h4>
+          <h4 className="label-caps">Cómo la entendió roz</h4>
           <ClassificationRows c={c} />
         </section>
       )}
 
       {chosen && (
         <section className="space-y-1.5">
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Por qué {chosen.name}</h4>
+          <h4 className="label-caps">Por qué {chosen.name}</h4>
           <ChosenWhy chosen={chosen} tieBreaks={d.tieBreaks} name={name} />
         </section>
       )}
 
       {alternatives.length > 0 && (
         <section className="space-y-1">
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">También cabían</h4>
+          <h4 className="label-caps">También cabían</h4>
           <p>{alternatives.map((a) => a.name).join(', ')}</p>
         </section>
       )}
 
       {discarded.length > 0 && (
         <section className="space-y-1">
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Descartados</h4>
+          <h4 className="label-caps">Descartados</h4>
           <DiscardedList candidates={discarded} />
         </section>
       )}
@@ -400,7 +400,7 @@ function DecisionDetail({ decision: d, name }: { decision: NonNullable<Assignmen
           {d.jevModel ?? 'sin modelo'} · política {d.policyVersion}
           {d.questionsVersion ? ` · preguntas ${d.questionsVersion}` : ''} · ver lo que se envió a Jev
         </summary>
-        <pre className="scroll-thin mt-1 max-h-56 overflow-auto rounded bg-muted p-2 text-[10px] leading-snug">
+        <pre className="scroll-thin mt-1 max-h-56 overflow-auto rounded-sm bg-panel p-2 font-mono text-[10px] leading-snug">
           {JSON.stringify(d.request, null, 2)}
         </pre>
       </details>

@@ -54,10 +54,10 @@ export function DevPicker({
           {selected.map((id) => {
             const d = devs.find((x) => x.id === id);
             return (
-              <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 py-0.5 pl-0.5 pr-2 text-xs font-medium text-primary">
-                <UserAvatar url={d?.avatarUrl ?? null} name={d?.name ?? '?'} className="size-5" />
+              <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-orange-soft py-0.5 pl-0.5 pr-2 text-xs font-medium text-orange-ink">
+                <UserAvatar url={d?.avatarUrl ?? null} email={d?.email} id={d?.id} name={d?.name ?? '?'} className="size-5" />
                 {d?.name ?? 'Alguien'}
-                <button type="button" onClick={() => toggle(id)} aria-label={`Quitar a ${d?.name}`} className="rounded-full hover:bg-primary/20">
+                <button type="button" onClick={() => toggle(id)} aria-label={`Quitar a ${d?.name}`} className="rounded-full hover:bg-orange/20">
                   <X className="size-3" />
                 </button>
               </span>
@@ -80,9 +80,9 @@ export function DevPicker({
                 key={d.id}
                 type="button"
                 onClick={() => toggle(d.id)}
-                className={cn('flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-accent', on && 'bg-primary/5')}
+                className={cn('flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-sidebar', on && 'bg-orange-soft')}
               >
-                <UserAvatar url={d.avatarUrl} name={d.name} className="size-7" />
+                <UserAvatar url={d.avatarUrl} email={d.email} id={d.id} name={d.name} className="size-7" />
                 <span className="flex-1 truncate font-medium">{d.name}</span>
                 <span className={cn('grid size-5 place-items-center rounded border', on ? 'border-primary bg-primary text-primary-foreground' : 'border-input')}>
                   {on && <Check className="size-3.5" />}
@@ -109,8 +109,8 @@ function PrivacyToggle({ value, onChange, disabled }: { value: boolean; onChange
           disabled={disabled}
           onClick={() => onChange(o.v)}
           className={cn(
-            'rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
-            value === o.v ? 'border-primary bg-primary/5 ring-1 ring-primary/30' : 'hover:bg-accent',
+            'rounded-lg border-[1.5px] p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+            value === o.v ? 'border-orange bg-orange-soft' : 'hover:bg-sidebar',
           )}
         >
           <span className="flex items-center gap-1.5 text-sm font-medium">
@@ -192,7 +192,7 @@ export function ChannelDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="scroll-thin max-h-[92dvh] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
+        <DialogHeader eyebrow="Chat · canal">
           <DialogTitle>{editing ? 'Editar canal' : 'Crear un canal'}</DialogTitle>
           <DialogDescription>
             {editing ? 'Cambia el nombre, el tema o la descripción.' : 'Los canales organizan las conversaciones del equipo por tema.'}
@@ -292,7 +292,7 @@ export function NewDmDialog({ open, onOpenChange }: { open: boolean; onOpenChang
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+        <DialogHeader eyebrow="Chat · mensaje directo">
           <DialogTitle>Nuevo mensaje</DialogTitle>
           <DialogDescription>Elige una persona, o varias para un mensaje grupal (hasta 8).</DialogDescription>
         </DialogHeader>
@@ -351,7 +351,7 @@ export function BrowseChannelsDialog({ open, onOpenChange }: { open: boolean; on
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
+        <DialogHeader eyebrow="Chat · canales públicos">
           <DialogTitle>Explorar canales</DialogTitle>
           <DialogDescription>Canales públicos del equipo. Puedes abrirlos para leer antes de unirte.</DialogDescription>
         </DialogHeader>
@@ -447,7 +447,7 @@ export function MembersDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+        <DialogHeader eyebrow="Chat · personas">
           <DialogTitle>Miembros</DialogTitle>
           <DialogDescription>
             {members.length === 1 ? '1 persona' : `${members.length} personas`} en {isChannel ? `#${conversation.name}` : 'esta conversación'}.
@@ -459,7 +459,7 @@ export function MembersDialog({
             const owner = conversation.ownerIds.includes(id);
             return (
               <div key={id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-accent">
-                <UserAvatar url={d?.avatarUrl ?? null} name={d?.name ?? '?'} className="size-7" />
+                <UserAvatar url={d?.avatarUrl ?? null} email={d?.email} id={d?.id} name={d?.name ?? '?'} className="size-7" />
                 <span className="flex-1 truncate text-sm font-medium">
                   {d?.name ?? 'Alguien'} {id === me && <span className="font-normal text-muted-foreground">(tú)</span>}
                 </span>

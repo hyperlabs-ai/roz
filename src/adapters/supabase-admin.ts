@@ -3,7 +3,33 @@
 // gratis con un Personal Access Token (PAT). El PAT es a nivel de cuenta (no se puede scopear a un
 // proyecto) → conviene crearlo bajo una service account dedicada.
 import { config } from '../config.js';
-import { degraded, type ServiceProbe, type ServiceStatus } from '../infra/types.js';
+import { degraded, type FailureInfo, type ServiceProbe, type ServiceStatus } from '../infra/types.js';
+
+/** Qué quiere decir cada estado no sano del proyecto, en palabras (lo dice Supabase, no roz). */
+const STATUS_REASON: Record<string, string> = {
+  ACTIVE_UNHEALTHY: 'Supabase reporta el proyecto activo pero sin salud',
+  INIT_FAILED: 'La inicialización del proyecto falló',
+  RESTORE_FAILED: 'La restauración del proyecto falló',
+  PAUSE_FAILED: 'La pausa del proyecto falló',
+  INACTIVE: 'El proyecto está pausado',
+  COMING_UP: 'El proyecto está arrancando',
+  GOING_DOWN: 'El proyecto se está apagando',
+  RESTORING: 'El proyecto se está restaurando',
+  UPGRADING: 'El proyecto se está actualizando',
+  PAUSING: 'El proyecto se está pausando',
+  RESTARTING: 'El proyecto se está reiniciando',
+  RESIZING: 'El proyecto está cambiando de tamaño',
+};
+
+/** Causa determinística de un estado no sano: el estado del proyecto + qué subsistemas fallan. */
+export function supabaseFailure(nativeStatus: string | undefined, subsystems: { name: string; healthy: boolean }[]): FailureInfo | null {
+  const native = (nativeStatus ?? '').toUpperCase();
+  const bad = subsystems.filter((s) => !s.healthy).map((s) => s.name);
+  const reason = native !== 'ACTIVE_HEALTHY' ? STATUS_REASON[native] ?? null : null;
+  if (!reason && !bad.length) return null;
+  const parts = [reason, bad.length ? `Sin salud: ${bad.join(', ')}` : null].filter(Boolean);
+  return { scope: 'platform', deployId: null, step: bad.length ? bad.join(', ') : null, code: native || null, message: parts.join('. '), logTail: [], helpUrl: null };
+}
 
 const BASE = 'https://api.supabase.com';
 
@@ -104,6 +130,7 @@ export async function probeSupabase(ref: string, _cfg: Record<string, unknown> =
         dbVersion: proj.database?.version ?? null,
         postgresEngine: proj.database?.postgres_engine ?? null,
         subsystems,
+        failure: supabaseFailure(proj.status, subsystems),
       },
       error: null,
     };

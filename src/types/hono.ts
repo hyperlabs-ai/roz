@@ -11,6 +11,8 @@ export interface DashboardUser {
   devId: string;
   devName: string;
   devActive: boolean;
+  /** Login de GitHub del dev (foto del avatar en el dashboard). */
+  githubLogin?: string | null;
 }
 
 export type RozContext = {

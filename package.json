@@ -13,6 +13,8 @@
     "lint": "eslint src --ext .ts",
     "test": "vitest",
     "test:run": "vitest run",
+    "discord:commands": "tsx scripts/discord-commands.ts",
+    "discord:emojis": "tsx scripts/discord-emojis.ts",
     "vercel-build": "npm install --prefix web && npm run build --prefix web"
   },
   "keywords": [

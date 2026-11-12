@@ -159,6 +159,9 @@ export async function disconnectAccount(devId: string): Promise<boolean> {
 
 // ---------- `state` del flujo OAuth ----------
 
+/** Proveedores que comparten roz.oauth_state: Google Calendar y la cuenta de Discord (chat). */
+export type OAuthProvider = 'google' | 'discord';
+
 /**
  * Crea un `state` de un solo uso que transporta la identidad del dev hasta el callback.
  *
@@ -166,11 +169,11 @@ export async function disconnectAccount(devId: string): Promise<boolean> {
  * navegación del browser que no lleva ese header: sin esto, el callback no sabría de quién es el
  * calendario que acaba de autorizarse.
  */
-export async function createOAuthState(devId: string, authUserId: string | null): Promise<string> {
+export async function createOAuthState(devId: string, authUserId: string | null, provider: OAuthProvider = 'google'): Promise<string> {
   const state = randomBytes(32).toString('hex');
   const { error } = await db().from('oauth_state').insert({
     state,
-    provider: 'google',
+    provider,
     dev_id: devId,
     auth_user_id: authUserId,
     expires_at: new Date(Date.now() + STATE_TTL_MS).toISOString(),
@@ -217,11 +220,14 @@ export interface ConsumedState {
  * El `update ... is('used_at', null)` es lo que hace atómico el consumo: si dos callbacks llegan a
  * la vez con el mismo state (un doble clic, un reintento del browser), solo uno actualiza la fila.
  */
-export async function consumeOAuthState(state: string): Promise<ConsumedState> {
+export async function consumeOAuthState(state: string, provider: OAuthProvider = 'google'): Promise<ConsumedState> {
+  // Filtrado por proveedor: un state creado para ligar Discord no sirve en el callback de Google, ni
+  // al revés (la tabla es compartida).
   const { data } = await db()
     .from('oauth_state')
     .select('state, dev_id, auth_user_id, expires_at, used_at')
     .eq('state', state)
+    .eq('provider', provider)
     .maybeSingle();
 
   const row = (data as OAuthStateRow | null) ?? null;

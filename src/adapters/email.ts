@@ -19,6 +19,13 @@ export interface EmailResult {
   suppressed?: boolean;
 }
 
+/** Los correos los firma Roz: `algo <a@b>` o `a@b` → `Roz <a@b>`. El buzón no cambia, solo el nombre visible. */
+export function senderFrom(from: string): string {
+  const m = from.match(/<([^>]+)>/);
+  const address = (m?.[1] ?? from).trim();
+  return `Roz <${address}>`;
+}
+
 export async function sendEmail(input: SendEmailInput): Promise<EmailResult> {
   // Killswitch global (roz.notification_switch). Omite en silencio en vez de lanzar: si lanzara,
   // el drain reintentaría y los eventos acabarían en el dead-letter, que es justo lo que se quiere
@@ -34,7 +41,7 @@ export async function sendEmail(input: SendEmailInput): Promise<EmailResult> {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      from: config.resend.from,
+      from: senderFrom(config.resend.from),
       to: input.to,
       subject: input.subject,
       html: input.html,
