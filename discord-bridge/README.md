@@ -153,7 +153,6 @@ Antes: la migración `0038_discord_chat.sql` aplicada en Supabase y el schema `r
 4. **Settings → Deploy**: **Healthcheck Path** = `/health` (timeout 120 s), **Restart Policy** =
    On Failure (10 reintentos) y **1 réplica**. Dos instancias con el mismo token se pelearían la
    sesión del gateway y duplicarían escrituras.
-   sesión del gateway y duplicarían escrituras.
 5. Despliega. En los logs debe verse `conectando al gateway`, `estado del puente … backfilling` y
    `backfill terminado`. En roz, `GET /api/dashboard/discord/status` → `bridge.healthy: true`.
 6. No hace falta dominio público; si lo agregas, solo expone `/health` (sin datos sensibles).
