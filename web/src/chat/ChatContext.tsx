@@ -7,6 +7,12 @@ import { playSound } from '@/lib/sound';
 import {
   chatApi, chatBadge, messageAlerts, type ChatConversation, type ChatDev, type ChatEvent, type ChatMessage,
 } from '@/lib/chat';
+import { DISCORD_REALTIME_EVENTS, type DiscordRealtimeEvent, type DiscordRealtimePayloads } from '@/lib/api';
+
+/** Un evento `discord.*` del buzón (chat de Discord, ROZ_DISCORD_CHAT). Ver docs/discord-chat-contracts.md §C. */
+export type DiscordSocketEvent = {
+  [K in DiscordRealtimeEvent]: { event: K; payload: DiscordRealtimePayloads[K] };
+}[DiscordRealtimeEvent];
 
 /**
  * Estado GLOBAL del chat. Vive en el root (como la cola y la presencia) porque el badge del nav se
@@ -38,6 +44,11 @@ interface ChatState {
   /** La conversación que la persona tiene abierta (la marca la página del chat). */
   setActiveId: (id: string | null) => void;
   subscribe: (fn: (e: ChatEvent) => void) => () => void;
+  /**
+   * Eventos `discord.*` del MISMO buzón privado (una sola suscripción para los dos chats). Con el
+   * flag apagado nunca llega ninguno. La reconexión se avisa por `subscribe` (`resync`).
+   */
+  subscribeDiscord: (fn: (e: DiscordSocketEvent) => void) => () => void;
   /** Aplica un cambio local (respuesta de la API) por el mismo camino que el tiempo real. */
   dispatch: (e: ChatEvent) => void;
   upsertConversation: (c: ChatConversation) => void;
@@ -50,7 +61,7 @@ interface ChatState {
 const noop = () => {};
 const Ctx = createContext<ChatState>({
   ready: false, error: null, me: null, conversations: [], devs: [], nameOf: () => undefined, devOf: () => undefined,
-  realtime: 'off', badge: { count: 0, dot: false }, setActiveId: noop, subscribe: () => noop, dispatch: noop,
+  realtime: 'off', badge: { count: 0, dot: false }, setActiveId: noop, subscribe: () => noop, subscribeDiscord: () => noop, dispatch: noop,
   upsertConversation: noop, removeConversation: noop, reloadConversation: async () => null, markRead: noop,
   refresh: async () => {},
 });
@@ -70,6 +81,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [realtime, setRealtime] = useState<RealtimeStatus>('off');
 
   const listeners = useRef(new Set<(e: ChatEvent) => void>());
+  const discordListeners = useRef(new Set<(e: DiscordSocketEvent) => void>());
   const activeId = useRef<string | null>(null);
   const meRef = useRef(me);
   meRef.current = me;
@@ -275,6 +287,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       for (const ev of SOCKET_EVENTS) {
         channel.on('broadcast', { event: ev }, (msg) => onSocket(ev, (msg.payload ?? {}) as Record<string, unknown>));
       }
+      // Chat de Discord: mismos permisos y mismo socket; solo se reenvían a quien escuche.
+      for (const ev of DISCORD_REALTIME_EVENTS) {
+        channel.on('broadcast', { event: ev }, (msg) => {
+          const e = { event: ev, payload: msg.payload ?? {} } as DiscordSocketEvent;
+          for (const fn of discordListeners.current) {
+            try {
+              fn(e);
+            } catch (err) {
+              console.error('[chat] listener discord', err);
+            }
+          }
+        });
+      }
       channel.subscribe((status) => {
         if (cancelled) return;
         if (status === 'SUBSCRIBED') {
@@ -373,13 +398,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const subscribeDiscord = useCallback((fn: (e: DiscordSocketEvent) => void) => {
+    discordListeners.current.add(fn);
+    return () => {
+      discordListeners.current.delete(fn);
+    };
+  }, []);
+
   const value = useMemo<ChatState>(
     () => ({
-      ready, error, me, conversations, devs, nameOf, devOf, realtime, badge, setActiveId, subscribe, dispatch,
-      upsertConversation, removeConversation, reloadConversation, markRead, refresh,
+      ready, error, me, conversations, devs, nameOf, devOf, realtime, badge, setActiveId, subscribe, subscribeDiscord,
+      dispatch, upsertConversation, removeConversation, reloadConversation, markRead, refresh,
     }),
-    [ready, error, me, conversations, devs, nameOf, devOf, realtime, badge, setActiveId, subscribe, dispatch,
-      upsertConversation, removeConversation, reloadConversation, markRead, refresh],
+    [ready, error, me, conversations, devs, nameOf, devOf, realtime, badge, setActiveId, subscribe, subscribeDiscord,
+      dispatch, upsertConversation, removeConversation, reloadConversation, markRead, refresh],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

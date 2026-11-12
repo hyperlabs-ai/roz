@@ -293,10 +293,26 @@ export interface ProjectRow {
 
 /** Crea un proyecto manual (sin ancla a Linear/HyperOps). La `key` se deriva del nombre si no
  *  se da; queda en MAYÚSCULAS y debe ser única (lo garantiza el unique de la tabla). */
-export async function createProject(input: { name: string; key?: string | null; kind?: 'client' | 'internal'; color?: string | null }): Promise<ProjectRow> {
+export async function createProject(input: {
+  name: string;
+  key?: string | null;
+  kind?: 'client' | 'internal';
+  color?: string | null;
+  projectType?: string | null;
+  description?: string | null;
+}): Promise<ProjectRow> {
   const name = input.name.trim();
   const key = (input.key?.trim() || slugKey(name)).toUpperCase();
-  const base = { name, key, kind: input.kind ?? 'internal' };
+  const base: Record<string, unknown> = { name, key, kind: input.kind ?? 'internal' };
+  // Perfil desde el alta: lo escribió una persona (no queda "pendiente de revisar").
+  const projectType = input.projectType || null;
+  const description = input.description?.trim() || null;
+  if (projectType || description) {
+    base.project_type = projectType;
+    base.description = description;
+    base.profile_source = 'humano';
+    base.profile_updated_at = new Date().toISOString();
+  }
   let res = await db().from('project').insert({ ...base, color: input.color?.trim() || null }).select('id, name, key, kind, color').single();
   if (res.error && /color/i.test(res.error.message ?? '')) {
     // columna color aún no migrada (0012): crea sin color.
@@ -454,10 +470,20 @@ async function reattributeOrphans(devId: string, githubLogin: string | null, git
 /** Edita nombre / key / kind / perfil de un proyecto. Solo aplica los campos presentes. */
 export async function updateProject(
   id: string,
-  patch: { name?: string; key?: string; kind?: 'client' | 'internal'; color?: string | null; projectType?: string | null; description?: string | null },
+  patch: {
+    name?: string;
+    key?: string;
+    kind?: 'client' | 'internal';
+    color?: string | null;
+    projectType?: string | null;
+    description?: string | null;
+    active?: boolean;
+  },
 ): Promise<ProjectRow> {
   const row: Record<string, unknown> = {};
   if (patch.name !== undefined) row.name = patch.name.trim();
+  // Archivar / restaurar: el resto del sistema ya filtra por `active`.
+  if (patch.active !== undefined) row.active = patch.active;
   if (patch.key !== undefined) row.key = patch.key.trim().toUpperCase();
   if (patch.kind !== undefined) row.kind = patch.kind;
   if (patch.color !== undefined) row.color = patch.color?.trim() || null;
@@ -481,13 +507,17 @@ export async function updateProject(
   return { id: d.id, name: d.name, key: d.key, kind: d.kind, color: d.color ?? null };
 }
 
-/** Borra un proyecto. Los repos (project_repo) caen por cascade; el trabajo y el conocimiento
- *  se desvinculan (project_id → null) y los borradores (proposal) se eliminan, ya que esas FK
- *  no tienen cascade. Acción destructiva: el front exige confirmación escribiendo el nombre. */
+/** Borra un proyecto. Los repos (project_repo) y servicios de infra caen por cascade; el trabajo,
+ *  los commits y el conocimiento se desvinculan (project_id → null) y los borradores (proposal) se
+ *  eliminan, ya que esas FK no tienen cascade. `commit.project_id` (0003) tampoco tiene ON DELETE:
+ *  sin desvincularlo, borrar un proyecto con historial fallaba por FK. Acción destructiva: el front
+ *  solo la ofrece para proyectos archivados y exige escribir el nombre. */
 export async function deleteProject(id: string) {
   const supabase = db();
-  await supabase.from('work_item').update({ project_id: null }).eq('project_id', id);
-  await supabase.from('knowledge_atom').update({ project_id: null }).eq('project_id', id);
+  for (const table of ['work_item', 'commit', 'knowledge_atom'] as const) {
+    const { error } = await supabase.from(table).update({ project_id: null }).eq('project_id', id);
+    if (error) throw error;
+  }
   await supabase.from('proposal').delete().eq('project_id', id);
   const { error } = await supabase.from('project').delete().eq('id', id);
   if (error) throw error;
@@ -863,11 +893,13 @@ export async function listDevelopers(period: Period) {
     commitsListByDev.get(c.dev_id)!.push(c);
   });
 
+  // Los inactivos también vuelven (con `active: false`): el único consumidor es la pantalla de
+  // Developers, que los separa con su filtro y permite reactivarlos.
   return devs
-    .filter((d) => d.active)
     .map((d) => ({
       id: d.id,
       name: d.name,
+      email: d.email ?? null,
       githubLogin: d.github_login,
       avatarUrl: avatarFor(d.github_login),
       active: d.active,
@@ -1043,6 +1075,8 @@ export async function listProjects(period: Period) {
   ]);
   const devName = new Map(devs.map((d) => [d.id, d.name]));
   const kindById = new Map(projects.map((p) => [p.id, p.kind]));
+  // Los archivados (active=false) también vuelven: el front los separa con su filtro de estado.
+  const activeById = new Map(projects.map((p) => [p.id, p.active !== false]));
   const keyById = new Map(projects.map((p) => [p.id, p.key]));
   const byId = new Map<string, { projectId: string; name: string; commits: number; additions: number; deletions: number; contributors: Set<string>; repos: Set<string>; ticketsResolved: number }>();
   projects.forEach((p) => byId.set(p.id, { projectId: p.id, name: p.name, commits: 0, additions: 0, deletions: 0, contributors: new Set(), repos: new Set(), ticketsResolved: 0 }));
@@ -1070,6 +1104,7 @@ export async function listProjects(period: Period) {
       name: p.name,
       key: keyById.get(p.projectId) ?? '',
       kind: kindById.get(p.projectId) ?? 'internal',
+      active: activeById.get(p.projectId) ?? true,
       color: colorById.get(p.projectId) ?? null,
       ...(profileById.get(p.projectId) ?? EMPTY_PROFILE),
       commits: p.commits,
@@ -1090,8 +1125,8 @@ async function projectRepos(): Promise<{ project_id: string; repo: string }[]> {
 }
 
 export async function getProject(projectId: string, period: Period) {
-  const proj = await db().from('project').select('id, name, key, kind').eq('id', projectId).maybeSingle();
-  const p = proj.data as unknown as { id: string; name: string; key: string; kind: string } | null;
+  const proj = await db().from('project').select('id, name, key, kind, active').eq('id', projectId).maybeSingle();
+  const p = proj.data as unknown as { id: string; name: string; key: string; kind: string; active: boolean | null } | null;
   if (!p) return null;
   const color = (await projectColors()).get(projectId) ?? null;
   const profile = (await projectProfiles()).get(projectId) ?? EMPTY_PROFILE;
@@ -1120,6 +1155,7 @@ export async function getProject(projectId: string, period: Period) {
       message: (c.message ?? '').split('\n')[0],
       author: c.dev_id ? devName.get(c.dev_id) ?? c.author_login : c.author_login,
       avatarUrl: c.dev_id ? devAvatar.get(c.dev_id) ?? null : avatarFor(c.author_login),
+      devId: c.dev_id ?? null,
       committedAt: c.committed_at,
       additions: c.additions,
       deletions: c.deletions,
@@ -1128,12 +1164,12 @@ export async function getProject(projectId: string, period: Period) {
     }));
 
   // Contribuidores con su volumen.
-  const contribMap = new Map<string, { name: string; avatarUrl: string | null; commits: number; lines: number }>();
+  const contribMap = new Map<string, { name: string; avatarUrl: string | null; devId: string | null; commits: number; lines: number }>();
   commits.forEach((c) => {
     const key = c.dev_id ?? c.author_login ?? 'desconocido';
     const name = c.dev_id ? devName.get(c.dev_id) ?? '—' : c.author_login ?? 'desconocido';
     const avatarUrl = c.dev_id ? devAvatar.get(c.dev_id) ?? null : avatarFor(c.author_login);
-    if (!contribMap.has(key)) contribMap.set(key, { name, avatarUrl, commits: 0, lines: 0 });
+    if (!contribMap.has(key)) contribMap.set(key, { name, avatarUrl, devId: c.dev_id ?? null, commits: 0, lines: 0 });
     const row = contribMap.get(key)!;
     row.commits++;
     row.lines += (c.additions ?? 0) + (c.deletions ?? 0);
@@ -1179,11 +1215,11 @@ export async function getProject(projectId: string, period: Period) {
       statusLabel: STATE_LABEL[w.status as TaskState] ?? w.status,
       priority: w.priority,
       url: w.url,
-      assignee: w.assignee_dev_id ? { name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
+      assignee: w.assignee_dev_id ? { id: w.assignee_dev_id, name: devName.get(w.assignee_dev_id) ?? '—', avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null } : null,
     }));
 
   return {
-    project: { id: p.id, name: p.name, key: p.key, kind: p.kind, color, ...profile },
+    project: { id: p.id, name: p.name, key: p.key, kind: p.kind, color, active: p.active !== false, ...profile },
     repos,
     repoSync,
     period,
@@ -1551,12 +1587,12 @@ export async function getTickets(f: TicketFilters) {
     .eq('role', 'reviewer');
   if (f.projectId) revQ = revQ.eq('work_item.project_id', f.projectId);
   const { data: revRows } = await revQ.limit(5000);
-  const revMap = new Map<string, { name: string; avatarUrl: string | null; count: number }>();
+  const revMap = new Map<string, { name: string; avatarUrl: string | null; devId: string | null; count: number }>();
   for (const r of (revRows ?? []) as any[]) {
     const k = r.dev_id ?? r.github_login;
     const name = r.dev_id ? devName.get(r.dev_id) ?? r.github_login : r.github_login;
     const avatarUrl = r.dev_id ? devAvatar.get(r.dev_id) ?? avatarFor(r.github_login) : avatarFor(r.github_login);
-    if (!revMap.has(k)) revMap.set(k, { name, avatarUrl, count: 0 });
+    if (!revMap.has(k)) revMap.set(k, { name, avatarUrl, devId: r.dev_id ?? null, count: 0 });
     revMap.get(k)!.count++;
   }
   const topReviewers = [...revMap.values()].sort((a, b) => b.count - a.count);
@@ -1569,12 +1605,12 @@ export async function getTickets(f: TicketFilters) {
     .eq('role', 'merger');
   if (f.projectId) mrgQ = mrgQ.eq('work_item.project_id', f.projectId);
   const { data: mrgRows } = await mrgQ.limit(5000);
-  const mrgMap = new Map<string, { name: string; avatarUrl: string | null; count: number }>();
+  const mrgMap = new Map<string, { name: string; avatarUrl: string | null; devId: string | null; count: number }>();
   for (const r of (mrgRows ?? []) as any[]) {
     const k = r.dev_id ?? r.github_login;
     const name = r.dev_id ? devName.get(r.dev_id) ?? r.github_login : r.github_login;
     const avatarUrl = r.dev_id ? devAvatar.get(r.dev_id) ?? avatarFor(r.github_login) : avatarFor(r.github_login);
-    if (!mrgMap.has(k)) mrgMap.set(k, { name, avatarUrl, count: 0 });
+    if (!mrgMap.has(k)) mrgMap.set(k, { name, avatarUrl, devId: r.dev_id ?? null, count: 0 });
     mrgMap.get(k)!.count++;
   }
   const topMergers = [...mrgMap.values()].sort((a, b) => b.count - a.count);
@@ -1606,11 +1642,11 @@ export async function getTickets(f: TicketFilters) {
   // Developers involucrados: sobre el conjunto COMPLETO (no los 500 visibles), para que no
   // dependa del scope/orden. Antes se calculaba sobre `tickets` y devs con tickets viejos
   // quedaban fuera del corte de 500 en scope "todos".
-  const devMap = new Map<string, { name: string; avatarUrl: string | null; count: number }>();
+  const devMap = new Map<string, { name: string; avatarUrl: string | null; devId: string; count: number }>();
   all.forEach((w) => {
     if (!w.assignee_dev_id) return;
     const name = devName.get(w.assignee_dev_id) ?? '—';
-    if (!devMap.has(name)) devMap.set(name, { name, avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null, count: 0 });
+    if (!devMap.has(name)) devMap.set(name, { name, avatarUrl: devAvatar.get(w.assignee_dev_id) ?? null, devId: w.assignee_dev_id, count: 0 });
     devMap.get(name)!.count++;
   });
   const developers = [...devMap.values()].sort((a, b) => b.count - a.count);
@@ -1693,8 +1729,8 @@ function countMap<T>(items: T[], key: (t: T) => string): { label: string; value:
 async function loadCreators(
   ids: string[],
   devByEmail: Map<string, { name: string; avatarUrl: string | null }>,
-): Promise<Map<string, { name: string; avatarUrl: string | null }>> {
-  const map = new Map<string, { name: string; avatarUrl: string | null }>();
+): Promise<Map<string, { name: string; avatarUrl: string | null; email: string | null }>> {
+  const map = new Map<string, { name: string; avatarUrl: string | null; email: string | null }>();
   const unique = [...new Set(ids)];
   if (!unique.length) return map;
   try {
@@ -1703,7 +1739,7 @@ async function loadCreators(
     for (const p of rows) {
       const email = (p.email ?? '').toLowerCase();
       const dev = email ? devByEmail.get(email) : undefined;
-      map.set(p.user_id, { name: p.full_name ?? p.email ?? '—', avatarUrl: dev?.avatarUrl ?? null });
+      map.set(p.user_id, { name: p.full_name ?? p.email ?? '—', avatarUrl: dev?.avatarUrl ?? null, email: email || null });
     }
   } catch {
     /* user_profiles ausente / schema public no expuesto: sin creador resuelto */
@@ -1752,6 +1788,8 @@ export interface CreateTaskInput {
   /** Mensaje del chat del que nace la tarea (ya validado por quien llama). */
   chatMessageId?: string | null;
   createdBy?: string | null;
+  /** Dev de roz que la crea/asigna: el aviso al responsable dice quién fue. */
+  actorDevId?: string | null;
   /** Story points (1/2/3/5/8/13). La asignación automática los usa para medir carga. */
   estimate?: number | null;
   /** Tipo de solución que fijó una persona (o se confirmó en /ticket). */
@@ -1759,9 +1797,18 @@ export interface CreateTaskInput {
 }
 
 /** Aviso de asignación a cada responsable (idempotente por dev: a quien ya se avisó no se le repite). */
-async function notifyAssignees(workItemId: string, identifier: string, devIds: string[]): Promise<void> {
+/** Contexto del aviso: quién asignó, a quién se le quitó, o si fue roz por reglas. */
+interface AssignNoticeContext {
+  actorDevId?: string | null;
+  previousDevId?: string | null;
+  auto?: boolean;
+}
+
+async function notifyAssignees(workItemId: string, identifier: string, devIds: string[], ctx: AssignNoticeContext = {}): Promise<void> {
   for (const devId of devIds) {
-    await emit('work_item.assigned', { workItemId, devId, identifier }, { idempotencyKey: `assigned:${workItemId}:${devId}` });
+    // Quien se asigna a sí mismo no necesita que se lo avisen.
+    if (ctx.actorDevId && ctx.actorDevId === devId) continue;
+    await emit('work_item.assigned', { workItemId, devId, identifier, ...ctx }, { idempotencyKey: `assigned:${workItemId}:${devId}` });
   }
 }
 
@@ -1827,7 +1874,7 @@ export async function createTask(input: CreateTaskInput): Promise<{ id: string; 
   const created = data as unknown as { id: string; identifier: string };
 
   if (assigneeIds.length) await syncAssignees(supabase, created.id, assigneeIds);
-  await notifyAssignees(created.id, identifier, assigneeIds);
+  await notifyAssignees(created.id, identifier, assigneeIds, { actorDevId: input.actorDevId ?? null });
   return created;
 }
 
@@ -1857,7 +1904,7 @@ export async function assignIfUnassigned(
     await supabase.from('work_item').update({ estimate: estimateIfNull }).eq('id', id).is('estimate', null);
   }
   await syncAssignees(supabase, w.id, [devId]);
-  await notifyAssignees(w.id, w.identifier, [devId]);
+  await notifyAssignees(w.id, w.identifier, [devId], { auto: true });
   return { id: w.id, identifier: w.identifier };
 }
 
@@ -1949,7 +1996,7 @@ export interface TaskPatch {
 
 /** Edita una tarea. Solo aplica los campos presentes (whitelist). Setea los timestamps de
  *  transición (started/completed/canceled) según el nuevo estado y bumpea updated_at. */
-export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: string }> {
+export async function updateTask(id: string, patch: TaskPatch, opts: { actorDevId?: string | null } = {}): Promise<{ id: string }> {
   const supabase = db();
   const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (patch.name !== undefined) upd.name = patch.name.trim();
@@ -1985,9 +2032,16 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<{ id: st
   const w = data as unknown as { id: string; identifier: string };
 
   if (newAssignees !== null) {
+    // Responsables previos: si la tarea cambia de manos, el aviso dice de quién venía.
+    const { data: prevRows } = await supabase.from('work_item_assignee').select('dev_id').eq('work_item_id', w.id);
+    const prev = ((prevRows ?? []) as { dev_id: string }[]).map((r) => r.dev_id);
+    const removed = prev.filter((d) => !newAssignees.includes(d));
     await syncAssignees(supabase, w.id, newAssignees);
-    // Aviso a cada responsable (idempotente por dev → los ya avisados no se re-notifican).
-    await notifyAssignees(w.id, w.identifier, newAssignees);
+    // Aviso a cada responsable NUEVO (idempotente por dev → los ya avisados no se re-notifican).
+    await notifyAssignees(w.id, w.identifier, newAssignees.filter((d) => !prev.includes(d)), {
+      actorDevId: opts.actorDevId ?? null,
+      previousDevId: removed[0] ?? null,
+    });
   }
 
   // Cierre → dispara los efectos de documentación al brain + aviso al proposer (fase 4).

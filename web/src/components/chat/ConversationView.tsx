@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
 import {
@@ -7,6 +7,7 @@ import {
 import { useChat } from '@/chat/ChatContext';
 import { useConversationMessages } from '@/chat/useMessages';
 import { AvatarStack, UserAvatar } from '@/components/bits';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -150,76 +151,101 @@ export function ConversationView({
   const people = conv.memberIds
     .map((id) => devOf(id))
     .filter((d): d is NonNullable<typeof d> => !!d)
-    .map((d) => ({ name: d.name, avatarUrl: d.avatarUrl }));
+    .map((d) => ({ name: d.name, avatarUrl: d.avatarUrl, id: d.id, email: d.email }));
   const level = LEVELS.find((l) => l.value === conv.membership?.notifyLevel) ?? LEVELS[1]!;
 
   const empty = (
-    <div className="px-4 pb-4 pt-10 md:px-5">
-      {isChannel ? (
-        <>
-          <div className="mb-3 grid size-12 place-items-center rounded-xl bg-primary/10 text-primary">
-            {conv.isPrivate ? <Lock className="size-6" /> : <Hash className="size-6" />}
-          </div>
-          <h2 className="text-xl font-bold">Este es el inicio de #{conv.name}</h2>
-          <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-            {conv.description || conv.topic || 'Aquí empieza la conversación. Menciona a alguien con @ o convierte un mensaje en tarea.'}
-          </p>
-        </>
-      ) : (
-        <>
-          <div className="mb-3 flex items-center gap-2">
-            {others.length > 1 ? (
-              <AvatarStack people={people.filter((p) => p.name !== nameOf(me ?? ''))} size="size-12" max={4} />
-            ) : (
-              <UserAvatar url={dmPeer?.avatarUrl ?? null} name={dmPeer?.name ?? '?'} className="size-12 rounded-xl" />
-            )}
-          </div>
-          <h2 className="text-xl font-bold">{title}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {others.length === 0
-              ? 'Tu espacio personal: notas, borradores, recordatorios.'
-              : 'Esta conversación es solo entre ustedes. Lo que se acuerde aquí puede volverse tarea desde el menú de cada mensaje.'}
-          </p>
-        </>
-      )}
+    // Inicio de la conversación: panel gris del mock (`.pc`) con eyebrow, título apretado y lede.
+    <div className="px-4 pb-4 pt-8 md:px-5">
+      <div className="grid max-w-2xl gap-4 rounded-xl bg-panel p-5 sm:p-6">
+        {isChannel ? (
+          <>
+            <div className="flex items-center gap-3">
+              <span className="grid size-11 place-items-center rounded-[10px] bg-orange text-primary-foreground">
+                {conv.isPrivate ? <Lock className="size-5" /> : <Hash className="size-5" />}
+              </span>
+              <span className="eyebrow">{conv.isPrivate ? 'Canal privado' : 'Canal público'} · inicio</span>
+            </div>
+            <div className="grid gap-2">
+              <h2 className="text-[22px] leading-tight tracking-[-0.03em] sm:text-[26px]">Este es el inicio de #{conv.name}</h2>
+              <p className="max-w-[58ch] text-sm text-muted-foreground sm:text-[15px]">
+                {conv.description || conv.topic || 'Aquí empieza la conversación. Menciona a alguien con @ o convierte un mensaje en tarea.'}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <Badge variant="neutral" className="bg-card">@ mencionar</Badge>
+              <Badge variant="neutral" className="bg-card">@tarea citar</Badge>
+              <Badge variant="warn" dot>/ticket crea un ticket</Badge>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-3">
+              {others.length > 1 ? (
+                <AvatarStack people={people.filter((p) => p.name !== nameOf(me ?? ''))} size="size-11" max={4} />
+              ) : (
+                <UserAvatar url={dmPeer?.avatarUrl ?? null} email={dmPeer?.email} id={dmPeer?.id} name={dmPeer?.name ?? '?'} className="size-11 rounded-full" />
+              )}
+              <span className="eyebrow" style={{ '--sq': 'var(--yellow)' } as CSSProperties}>
+                {others.length === 0 ? 'Tus notas' : others.length > 1 ? 'Mensaje grupal' : 'Mensaje directo'}
+              </span>
+            </div>
+            <div className="grid gap-2">
+              <h2 className="text-[22px] leading-tight tracking-[-0.03em] sm:text-[26px]">{title}</h2>
+              <p className="max-w-[58ch] text-sm text-muted-foreground sm:text-[15px]">
+                {others.length === 0
+                  ? 'Tu espacio personal: notas, borradores, recordatorios.'
+                  : 'Esta conversación es solo entre ustedes. Lo que se acuerde aquí puede volverse tarea desde el menú de cada mensaje.'}
+              </p>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       {/* Encabezado */}
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b px-3 md:px-5">
+      <div className="flex h-16 shrink-0 items-center gap-2 border-b bg-card px-3 md:px-5">
         {onBack && (
           <Button variant="ghost" size="icon-sm" onClick={onBack} aria-label="Volver a las conversaciones" className="md:hidden">
             <ArrowLeft />
           </Button>
         )}
-        <div className="min-w-0 flex-1">
+        <div className="grid min-w-0 flex-1 gap-1">
+          <span
+            className="eyebrow hidden px-1 text-[10px] sm:inline-flex"
+            style={{ '--sq': isChannel ? 'var(--orange)' : 'var(--yellow)' } as CSSProperties}
+          >
+            {isChannel ? (conv.isPrivate ? 'Canal privado' : 'Canal') : others.length > 1 ? 'Mensaje grupal' : 'Mensaje directo'}
+            {conv.topic && <span className="normal-case tracking-normal text-faint">· {conv.topic}</span>}
+          </span>
           <button
             type="button"
             onClick={() => (isChannel && isMember ? setEditOpen(true) : setMembersOpen(true))}
-            className="flex max-w-full items-center gap-1.5 rounded-md px-1 text-left hover:bg-accent"
+            className="flex max-w-full items-center gap-1.5 rounded-md px-1 text-left transition-colors hover:bg-panel"
           >
             {isChannel ? (
-              conv.isPrivate ? <Lock className="size-4 shrink-0 text-muted-foreground" /> : <Hash className="size-[18px] shrink-0 text-muted-foreground" />
+              conv.isPrivate ? <Lock className="size-4 shrink-0 text-faint" /> : <Hash className="size-[18px] shrink-0 text-faint" />
             ) : others.length <= 1 ? (
-              <UserAvatar url={dmPeer?.avatarUrl ?? null} name={dmPeer?.name ?? '?'} className="size-6 rounded-md" />
+              <UserAvatar url={dmPeer?.avatarUrl ?? null} email={dmPeer?.email} id={dmPeer?.id} name={dmPeer?.name ?? '?'} className="size-6 rounded-full" />
             ) : (
-              <Users className="size-4 shrink-0 text-muted-foreground" />
+              <Users className="size-4 shrink-0 text-faint" />
             )}
-            <span className="truncate text-[17px] font-bold">{title}</span>
+            <span className="truncate text-[18px] font-semibold leading-tight tracking-[-0.03em]">{title}</span>
           </button>
-          {conv.topic && <p className="truncate px-1 text-xs text-muted-foreground">{conv.topic}</p>}
+          {conv.topic && <p className="truncate px-1 text-xs text-muted-foreground sm:hidden">{conv.topic}</p>}
         </div>
 
         <button
           type="button"
           onClick={() => setMembersOpen(true)}
-          className="hidden items-center gap-1.5 rounded-lg border px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent sm:flex"
+          className="hidden items-center gap-1.5 rounded-btn bg-panel px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-toggle-off/70 sm:flex"
           aria-label="Ver miembros"
         >
           <AvatarStack people={people} size="size-5" max={3} />
-          <span className="pr-0.5 font-medium">{conv.memberIds.length}</span>
+          <span className="pr-0.5 text-[11px] font-semibold tabular-nums">{conv.memberIds.length}</span>
         </button>
 
         {isMember && (
@@ -309,10 +335,13 @@ export function ConversationView({
           autoFocus={!onBack}
         />
       ) : (
-        <div className="m-3 flex flex-col items-center gap-2 rounded-xl border bg-muted/40 p-4 text-center md:m-5">
-          <p className="text-sm">
-            Estás viendo <span className="font-semibold">#{conv.name}</span>. Únete para escribir y recibir avisos.
-          </p>
+        <div className="m-3 flex flex-col items-center gap-3 rounded-xl bg-panel p-5 text-center md:m-5 sm:flex-row sm:justify-between sm:text-left">
+          <div className="grid gap-1">
+            <span className="label-caps">Solo lectura</span>
+            <p className="text-sm">
+              Estás viendo <span className="font-semibold">#{conv.name}</span>. Únete para escribir y recibir avisos.
+            </p>
+          </div>
           <Button onClick={() => void join()} disabled={joining}>
             {joining && <Loader2 className="animate-spin" />} Unirme al canal
           </Button>

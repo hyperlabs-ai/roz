@@ -34,19 +34,21 @@ function useCollapsed(key: string): [boolean, () => void] {
 function Section({ id, title, action, children }: { id: string; title: string; action?: ReactNode; children: ReactNode }) {
   const [collapsed, toggle] = useCollapsed(id);
   return (
-    <div className="mt-3">
+    <div className="mt-4">
+      {/* Encabezado de sección como `.aside .sec` del mock: `label-caps`, tenue. */}
       <div className="group/sec flex items-center gap-1 px-2">
         <button
           type="button"
           onClick={toggle}
-          className="flex flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] font-medium text-chat-sidebar-muted transition-colors hover:bg-chat-sidebar-hover hover:text-chat-sidebar-foreground"
+          aria-expanded={!collapsed}
+          className="flex flex-1 items-center gap-1.5 rounded-md px-2 py-1 label-caps text-chat-sidebar-muted transition-colors hover:bg-chat-sidebar-hover hover:text-chat-sidebar-foreground"
         >
-          <ChevronDown className={cn('size-3.5 transition-transform duration-200', collapsed && '-rotate-90')} />
+          <ChevronDown className={cn('size-3 transition-transform duration-200', collapsed && '-rotate-90')} />
           {title}
         </button>
         {action}
       </div>
-      {!collapsed && <div className="mt-0.5 space-y-px px-2">{children}</div>}
+      {!collapsed && <div className="mt-1 space-y-px px-2">{children}</div>}
     </div>
   );
 }
@@ -60,9 +62,9 @@ function Item({ conv, title, icon }: { conv: ChatConversation; title: string; ic
       to={`/app/chat/${conv.id}`}
       className={({ isActive }) =>
         cn(
-          'flex h-8 items-center gap-2 rounded-md px-2.5 text-[15px] transition-colors',
+          'group flex h-8 items-center gap-2 rounded-md px-2.5 text-[14px] transition-colors',
           isActive
-            ? 'bg-primary text-primary-foreground'
+            ? 'bg-primary font-semibold text-primary-foreground'
             : cn(
                 'hover:bg-chat-sidebar-hover',
                 bold ? 'font-semibold text-chat-sidebar-foreground' : 'text-chat-sidebar-muted',
@@ -74,7 +76,8 @@ function Item({ conv, title, icon }: { conv: ChatConversation; title: string; ic
       {icon}
       <span className="min-w-0 flex-1 truncate">{title}</span>
       {count > 0 && (
-        <span className="grid h-5 min-w-5 place-items-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
+        // Contador mono como `.tab .count` del mock, pero en naranja: pide atención.
+        <span className="grid h-[18px] min-w-[18px] place-items-center rounded-full bg-orange px-1.5 text-[10.5px] font-semibold text-primary-foreground group-[.active]:bg-primary-foreground group-[.active]:text-orange tabular-nums">
           {count > 99 ? '99+' : count}
         </span>
       )}
@@ -83,7 +86,8 @@ function Item({ conv, title, icon }: { conv: ChatConversation; title: string; ic
 }
 
 /**
- * Lista de conversaciones, con los colores de roz (azul marino; el activo en el azul de marca).
+ * Lista de conversaciones con la identidad roz v2: tinta cálida (tokens `chat-sidebar`, oscuros en
+ * ambos modos) y el activo en el naranja de marca.
  * Canales por nombre; MDs por actividad reciente. Un MD cerrado no aparece hasta que llegue algo.
  */
 export function ChatSidebar({
@@ -114,12 +118,27 @@ export function ChatSidebar({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-chat-sidebar text-chat-sidebar-foreground">
-      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-chat-sidebar-border px-4">
-        <span className="flex-1 truncate text-[17px] font-bold">Conversaciones</span>
+      <div className="flex h-16 shrink-0 items-center gap-2 border-b border-chat-sidebar-border px-4">
+        <div className="grid min-w-0 flex-1 gap-1">
+          <span className="eyebrow text-[10px] text-chat-sidebar-muted">Chat del equipo</span>
+          <span className="truncate text-[17px] font-semibold leading-none tracking-[-0.03em]">Conversaciones</span>
+        </div>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className={cn('flex items-center gap-1 text-[11px]', realtime === 'live' ? 'text-success' : 'text-chat-sidebar-muted')}>
-              <Radio className="size-3.5" />
+            <span
+              className={cn(
+                'flex items-center gap-1.5 label-caps',
+                realtime === 'live' ? 'text-green' : 'text-chat-sidebar-muted',
+              )}
+            >
+              {realtime === 'live' ? (
+                <span className="relative grid size-2 place-items-center">
+                  <span className="absolute inset-0 animate-ping rounded-full bg-green opacity-60" />
+                  <span className="size-2 rounded-full bg-green" />
+                </span>
+              ) : (
+                <Radio className="size-3.5" />
+              )}
               <span className="hidden lg:inline">{realtime === 'live' ? 'En vivo' : realtime === 'connecting' ? 'Conectando' : 'Sin conexión'}</span>
             </span>
           </TooltipTrigger>
@@ -135,7 +154,7 @@ export function ChatSidebar({
               type="button"
               onClick={onNewDm}
               aria-label="Nuevo mensaje"
-              className="grid size-8 place-items-center rounded-md bg-chat-sidebar-hover text-chat-sidebar-foreground transition-colors hover:bg-primary hover:text-primary-foreground"
+              className="grid size-8 place-items-center rounded-btn bg-primary text-primary-foreground transition-colors hover:bg-primary/85"
             >
               <PenSquare className="size-4" />
             </button>
@@ -144,15 +163,26 @@ export function ChatSidebar({
         </Tooltip>
       </div>
 
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto pb-4 [scrollbar-color:hsl(var(--chat-sidebar-border))_transparent]">
+      <div className="min-h-0 flex-1 overflow-y-auto pb-4">
         {!ready ? (
-          <div className="space-y-2 p-4">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-6 animate-pulse rounded-md bg-chat-sidebar-hover" />
+          <div className="space-y-5 px-4 pt-5" aria-label="Cargando conversaciones">
+            {[4, 3].map((rows, s) => (
+              <div key={s} className="space-y-2">
+                <div className="h-2.5 w-20 rounded-sm bg-chat-sidebar-hover" />
+                {Array.from({ length: rows }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="size-4 shrink-0 animate-pulse rounded bg-chat-sidebar-hover" />
+                    <div className="h-3.5 animate-pulse rounded-sm bg-chat-sidebar-hover" style={{ width: `${55 + ((i * 17) % 35)}%` }} />
+                  </div>
+                ))}
+              </div>
             ))}
           </div>
         ) : error && !conversations.length ? (
-          <p className="p-4 text-sm text-chat-sidebar-muted">No se pudo cargar el chat: {error}</p>
+          <div className="m-3 grid gap-1.5 rounded-md border-l-[3px] border-l-red bg-chat-sidebar-hover p-3">
+            <span className="label-caps text-red">Sin conexión al chat</span>
+            <p className="text-[13px] text-chat-sidebar-muted">{error}</p>
+          </div>
         ) : (
           <>
             <Section
@@ -187,7 +217,7 @@ export function ChatSidebar({
               <button
                 type="button"
                 onClick={onBrowse}
-                className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-[15px] text-chat-sidebar-muted transition-colors hover:bg-chat-sidebar-hover hover:text-chat-sidebar-foreground"
+                className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-[14px] text-chat-sidebar-muted transition-colors hover:bg-chat-sidebar-hover hover:text-chat-sidebar-foreground"
               >
                 <span className="grid size-4 place-items-center rounded bg-chat-sidebar-hover"><Plus className="size-3" /></span>
                 Agregar canales
@@ -218,11 +248,11 @@ export function ChatSidebar({
                     title={conversationTitle(c, nameOf, me)}
                     icon={
                       others.length > 1 ? (
-                        <span className="grid size-5 shrink-0 place-items-center rounded bg-chat-sidebar-hover text-[10px] font-bold">
+                        <span className="grid size-5 shrink-0 place-items-center rounded-full bg-chat-sidebar-hover text-[10px] font-bold">
                           <Users className="size-3" />
                         </span>
                       ) : (
-                        <UserAvatar url={single?.avatarUrl ?? null} name={single?.name ?? '?'} className="size-5 shrink-0 rounded" />
+                        <UserAvatar url={single?.avatarUrl ?? null} email={single?.email} id={single?.id} name={single?.name ?? '?'} className="size-5 shrink-0 rounded-full" />
                       )
                     }
                   />
@@ -231,7 +261,7 @@ export function ChatSidebar({
               <button
                 type="button"
                 onClick={onNewDm}
-                className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-[15px] text-chat-sidebar-muted transition-colors hover:bg-chat-sidebar-hover hover:text-chat-sidebar-foreground"
+                className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-[14px] text-chat-sidebar-muted transition-colors hover:bg-chat-sidebar-hover hover:text-chat-sidebar-foreground"
               >
                 <span className="grid size-4 place-items-center rounded bg-chat-sidebar-hover"><Plus className="size-3" /></span>
                 Nuevo mensaje

@@ -23,8 +23,8 @@ export function PresenceSchedule({ presence }: { presence: DevPresence }) {
       align="start"
       className="max-w-[19rem] rounded-lg border bg-popover p-3 text-left font-normal text-popover-foreground shadow-lg"
     >
-      <div className="flex items-center gap-1.5 text-xs font-semibold">
-        <CalendarDays className="size-3.5 text-muted-foreground" /> Próximas 24 h
+      <div className="flex items-center gap-1.5 label-caps text-faint">
+        <CalendarDays className="size-3.5" /> Próximas 24 h
       </div>
 
       {!upcoming.length ? (
@@ -36,16 +36,16 @@ export function PresenceSchedule({ presence }: { presence: DevPresence }) {
               key={`${b.startsAt}-${i}`}
               className={cn(
                 'flex items-start gap-2.5 px-2.5 py-1.5 text-[11px]',
-                i % 2 === 0 && 'bg-muted/50',
+                i % 2 === 0 && 'bg-sidebar',
                 // El bloque en curso se distingue: separa "esto" de "lo que viene", que es la
                 // diferencia que importa al mirar el horario.
-                b.current && 'bg-warning/10',
+                b.current && 'bg-yellow-soft',
               )}
             >
               <span
                 className={cn(
-                  'shrink-0 font-mono tabular-nums',
-                  b.current ? 'font-semibold text-warning' : 'text-muted-foreground',
+                  'shrink-0 tabular-nums',
+                  b.current ? 'font-semibold text-yellow-ink' : 'text-faint',
                 )}
               >
                 {clockTime(b.startsAt)}–{clockTime(b.endsAt)}
@@ -56,7 +56,7 @@ export function PresenceSchedule({ presence }: { presence: DevPresence }) {
         </div>
       )}
 
-      <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground/70">
+      <p className="mt-2 text-[10px] leading-relaxed text-faint">
         Horario en tu zona. Los eventos de todo el día y los marcados «Disponible» no cuentan.
       </p>
     </TooltipContent>

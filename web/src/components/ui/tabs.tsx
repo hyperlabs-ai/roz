@@ -56,7 +56,7 @@ const TabsList = React.forwardRef<
     <TabsPrimitive.List
       ref={setRefs}
       className={cn(
-        'relative inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground',
+        'relative inline-flex h-9 items-center justify-center rounded-md bg-panel p-[3px] text-muted-foreground',
         className,
       )}
       {...props}
@@ -67,7 +67,7 @@ const TabsList = React.forwardRef<
         // en `useLayoutEffect`), así que no se ve viajar desde el borde izquierdo al montar.
         <span
           aria-hidden
-          className="absolute bottom-1 top-1 rounded-md bg-background shadow-sm transition-[left,width] duration-fast ease-spring"
+          className="absolute bottom-[3px] top-[3px] rounded-sm bg-card shadow-sm transition-[left,width] duration-fast ease-spring"
           style={{ left: pill.left, width: pill.width }}
         />
       )}
@@ -86,7 +86,7 @@ const TabsTrigger = React.forwardRef<
     className={cn(
       // `relative z-10` para quedar por encima de la píldora; el fondo y la sombra del activo ya
       // los pinta ella, así que aquí solo cambia el color del texto.
-      'relative z-10 inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium ring-offset-background transition-colors duration-fast ease-spring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=active]:text-foreground [&_svg]:size-4',
+      'relative z-10 inline-flex h-full items-center justify-center gap-1.5 whitespace-nowrap rounded-sm px-2.5 text-[12.5px] font-medium ring-offset-background transition-colors duration-fast ease-spring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 data-[state=active]:font-semibold data-[state=active]:text-foreground [&_svg]:size-3.5',
       className,
     )}
     {...props}

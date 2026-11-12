@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CircleAlert, RefreshCw } from 'lucide-react';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { PersonAvatar } from '@/components/avatars';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { compact, initials } from '@/lib/format';
+import { compact } from '@/lib/format';
 import { STATE_LABEL, stateBadgeVariant, PRIO_DOT, DEV_PRESENCE } from '@/lib/labels';
+import { tokenColor, type BrandColor } from '@/components/brand';
+import { BalancedGrid } from '@/components/grid';
 
 // ---- Señales de carga y de cambio ----
 // `useApi` siempre expuso `refetching`, pero solo Tareas lo consumía, así que en las otras doce
@@ -227,10 +229,12 @@ export function MatrixLoader({ className }: { className?: string }) {
  * tres cosas.
  */
 export function ProgressBar({
-  pct, tone = 'primary', className, barClassName,
+  pct, tone = 'primary', color, className, barClassName,
 }: {
   pct: number | null;
   tone?: 'primary' | 'success' | 'warning' | 'destructive';
+  /** Token de marca para el relleno (`'purple-deep'`, `'chart-3'`…). Gana sobre `tone`. */
+  color?: BrandColor;
   className?: string;
   barClassName?: string;
 }) {
@@ -242,18 +246,22 @@ export function ProgressBar({
   }, [pct]);
   const indeterminate = pct == null;
   return (
-    <div className={cn('h-2 overflow-hidden rounded-full bg-muted', indeterminate && 'shimmer', className)}>
+    // Barra fina del mock (`.prog`): 6px, pista gris cálida.
+    <div className={cn('h-1.5 overflow-hidden rounded-full bg-panel', indeterminate && 'shimmer', className)}>
       <div
         className={cn(
           'h-full rounded-full transition-[width] duration-700 ease-spring',
-          tone === 'success' && 'bg-success',
-          tone === 'warning' && 'bg-warning',
-          tone === 'destructive' && 'bg-destructive',
-          tone === 'primary' && 'bg-primary',
+          !color && tone === 'success' && 'bg-success',
+          !color && tone === 'warning' && 'bg-warning',
+          !color && tone === 'destructive' && 'bg-destructive',
+          !color && tone === 'primary' && 'bg-primary',
           indeterminate && 'w-1/3 animate-pulse',
           barClassName,
         )}
-        style={indeterminate ? undefined : { width: `${w}%` }}
+        style={{
+          ...(indeterminate ? {} : { width: `${w}%` }),
+          ...(color ? { background: tokenColor(color) } : {}),
+        }}
       />
     </div>
   );
@@ -274,18 +282,20 @@ export function ProgressBar({
  * se lea como una escala y no como una barra troceada.
  */
 export function SegmentMeter({
-  value, max = 5, tone = 'primary', shape = 'bar', size, className,
+  value, max = 5, tone = 'primary', color, shape = 'bar', size, className,
 }: {
   value: number;
   max?: number;
   tone?: 'primary' | 'success' | 'warning';
+  /** Token de marca para los tramos llenos. Gana sobre `tone`. */
+  color?: BrandColor;
   /** `bar` = tramos que llenan el ancho; `dots` = puntos de tamaño fijo (listas densas). */
   shape?: 'bar' | 'dots';
   size?: string;
   className?: string;
 }) {
   const lvl = Math.max(0, Math.min(max, value));
-  const fill = tone === 'success' ? 'bg-success' : tone === 'warning' ? 'bg-warning' : 'bg-primary';
+  const fill = color ? '' : tone === 'success' ? 'bg-success' : tone === 'warning' ? 'bg-warning' : 'bg-primary';
   return (
     <div className={cn('flex', shape === 'dots' ? 'gap-0.5' : 'gap-1', className)}>
       {Array.from({ length: max }, (_, i) => i + 1).map((n) => (
@@ -293,10 +303,14 @@ export function SegmentMeter({
           key={n}
           className={cn(
             'rounded-full transition-colors duration-fast',
-            n <= lvl ? fill : 'bg-muted',
+            n <= lvl ? fill : 'bg-panel',
             shape === 'dots' ? size ?? 'size-1.5' : cn('h-1.5 flex-1', size),
           )}
-          style={n <= lvl ? { opacity: 0.45 + (n / max) * 0.55 } : undefined}
+          style={
+            n <= lvl
+              ? { opacity: 0.45 + (n / max) * 0.55, ...(color ? { background: tokenColor(color) } : {}) }
+              : undefined
+          }
         />
       ))}
     </div>
@@ -314,7 +328,7 @@ export function SegmentMeter({
  * el render queda idéntico al de siempre y ninguna vista existente se mueve.
  */
 export function UserAvatar({
-  url, name, className, title, presence, presenceTitle,
+  url, name, className, title, presence, presenceTitle, id, email, login, discordUrl,
 }: {
   url: string | null;
   name: string;
@@ -322,26 +336,24 @@ export function UserAvatar({
   title?: string;
   presence?: 'busy' | 'free' | 'unknown';
   presenceTitle?: string;
+  /** id del dev: semilla del avatar generado si no hay correo (ver `PersonAvatar`). */
+  id?: string | null;
+  /** Correo: semilla preferida del avatar generado. */
+  email?: string | null;
+  login?: string | null;
+  discordUrl?: string | null;
 }) {
-  // Sin presencia: exactamente el render de siempre.
-  if (!presence) {
-    return (
-      <Avatar className={className} title={title}>
-        {url && <AvatarImage src={url} alt={name} />}
-        <AvatarFallback>{initials(name)}</AvatarFallback>
-      </Avatar>
-    );
-  }
+  // Sin foto cae a DiceBear `micah` (semilla correo → id); sin semilla, a las iniciales.
+  const person = { url, name, title, id, email, login, discordUrl };
+  // Sin presencia: el avatar ES el elemento (los llamadores le mandan `ring-2`, `-space-x`…).
+  if (!presence) return <PersonAvatar {...person} className={cn('size-9', className)} />;
 
   // Con presencia, `className` va SOLO al envoltorio y el avatar lo llena. Pasarlo a los dos
   // duplicaba el `ring-2` que mandan varias vistas (se veía un doble borde) y dejaba dos reglas de
   // tamaño peleando. El envoltorio lleva `rounded-full` para que ese anillo salga redondo.
   return (
     <span className={cn('relative inline-flex shrink-0 rounded-full', className)}>
-      <Avatar className="size-full" title={title}>
-        {url && <AvatarImage src={url} alt={name} />}
-        <AvatarFallback>{initials(name)}</AvatarFallback>
-      </Avatar>
+      <PersonAvatar {...person} className="size-full" />
       {/* `bottom-0 right-0`, no offsets negativos: el avatar es un círculo, y en la esquina de su
           caja el borde ya se curvó hacia dentro — un punto ahí flota separado, fuera del círculo.
           Pegado a la caja cae justo sobre el filo y se lee como insignia de estado. */}
@@ -366,7 +378,7 @@ export function UserAvatar({
 export function AvatarStack({
   people, max = 3, size = 'size-5', className,
 }: {
-  people: { name: string; avatarUrl: string | null }[] | null | undefined;
+  people: { name: string; avatarUrl: string | null; id?: string | null; email?: string | null }[] | null | undefined;
   max?: number;
   size?: string;
   className?: string;
@@ -379,7 +391,7 @@ export function AvatarStack({
   return (
     <div className={cn('t-avatars flex -space-x-1.5', className)}>
       {shown.map((p, i) => (
-        <UserAvatar key={i} url={p.avatarUrl} name={p.name} className={cn('t-avatar', size, 'ring-2 ring-background')} title={p.name} />
+        <UserAvatar key={i} url={p.avatarUrl} name={p.name} id={p.id} email={p.email} className={cn('t-avatar', size, 'ring-2 ring-background')} title={p.name} />
       ))}
       {extra > 0 && (
         <span className={cn('t-avatar grid place-items-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground ring-2 ring-background', size)} title={`+${extra} más`}>
@@ -405,7 +417,7 @@ export function EmptyState({ icon, children, action }: { icon?: ReactNode; child
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
       {icon && (
-        <div className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground [&_svg]:size-5">{icon}</div>
+        <div className="flex size-11 items-center justify-center rounded-lg bg-panel text-muted-foreground [&_svg]:size-5">{icon}</div>
       )}
       <span className="max-w-xs text-sm text-muted-foreground">{children}</span>
       {action}
@@ -424,7 +436,7 @@ export function ErrorCard({ message, className }: { message: ReactNode; classNam
   return (
     <div
       className={cn(
-        't-shake flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive',
+        't-shake flex items-start gap-2.5 rounded-lg border border-red/25 bg-red-soft px-4 py-3 text-sm text-red',
         className,
       )}
     >
@@ -469,9 +481,9 @@ export function SkillMeters({ skills }: { skills: { tag: string; level: number }
   if (!skills.length) return <EmptyState>Sin skills asignadas</EmptyState>;
   const sorted = [...skills].sort((a, b) => b.level - a.level);
   return (
-    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
+    <BalancedGrid max={{ base: 2, sm: 3, lg: 4 }} className="gap-2.5">
       {sorted.map((s) => <SkillMeter key={s.tag} tag={s.tag} level={s.level} />)}
-    </div>
+    </BalancedGrid>
   );
 }
 
@@ -481,7 +493,7 @@ export function LineDelta({ additions, deletions }: { additions: number | null; 
   return (
     // `compact()`: antes imprimía `+24571` mientras cada otra cifra de la app decía `24.6k`, y en
     // una fila de tabla eso desalinea la columna entera.
-    <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums">
+    <span className="inline-flex items-center gap-1.5 text-xs tabular-nums">
       <span className="text-success">+{compact(additions ?? 0)}</span>
       <span className="text-destructive">−{compact(deletions ?? 0)}</span>
     </span>

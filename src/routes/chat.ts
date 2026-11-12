@@ -24,6 +24,8 @@ import { deleteMessage, editMessage, getThread, listMessages, locateMessage, sen
 import { MAX_CHAT_ATTACHMENT_BYTES, completeUpload, requestUpload, tooLargeMessage } from '../chat/attachments.js';
 import { MAX_MESSAGE_LENGTH, MAX_STATUS_TASKS } from '../chat/text.js';
 import { searchTasks } from '../chat/tasks.js';
+import { assertInternalChatWritable } from '../discord/enabled.js';
+import { AppError } from '../utils/errors.js';
 
 export const chatRoutes = new Hono<RozContext>();
 
@@ -38,6 +40,24 @@ function backgroundLogger(c: any) {
   const logger = c.get('logger');
   return (err: unknown) => logger?.warn({ err }, 'chat: tarea en segundo plano falló');
 }
+
+// Con ROZ_DISCORD_CHAT encendido el chat interno queda de solo lectura: lo escrito aquí no llegaría
+// a nadie en Discord (409 CHAT_REPLACED_BY_DISCORD). Marcar leído, salir y las preferencias de la
+// membresía siguen permitidos (no publican nada). Con el flag apagado no cambia nada.
+const INTERNAL_CHAT_ALLOWED_WRITES = [/\/conversations\/[^/]+\/read\/?$/, /\/conversations\/[^/]+\/leave\/?$/, /\/conversations\/[^/]+\/membership\/?$/];
+chatRoutes.use('*', async (c, next) => {
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && !INTERNAL_CHAT_ALLOWED_WRITES.some((re) => re.test(c.req.path))) {
+    try {
+      assertInternalChatWritable();
+    } catch (err) {
+      if (err instanceof AppError) {
+        return c.json({ error: { code: err.code, message: err.message } }, err.status as 409);
+      }
+      throw err;
+    }
+  }
+  await next();
+});
 
 // ---- Arranque y no leídos ----
 

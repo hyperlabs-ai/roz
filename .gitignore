@@ -6,3 +6,12 @@ dist/
 *.log
 .DS_Store
 coverage/
+
+# Artefactos locales de operación (respaldos de prod, vistas previas de correo)
+.backups/
+.email-previews/
+.send-templates.ts
+
+.vercel
+.env*
+.deploy/

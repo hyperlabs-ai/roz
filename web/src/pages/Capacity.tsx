@@ -1,32 +1,48 @@
-// Capacidad — quién es cada quien, en qué está puesto, y cuánto le queda.
+// Capacidad — quién es cada quien, en qué está puesto y cuánto le queda.
 //
-// Sustituye a la tabla que vivía en un documento. La diferencia que importa: ahí "Proyecto /
-// Enfoque" era texto suelto y el "Estado de Carga" se escribía a mano, así que envejecía en cuanto
-// cambiaba cualquier otra celda. Aquí los proyectos son los de roz (con su repo cuando el proyecto
-// tiene varios) y la carga SALE de las asignaciones — nadie la teclea.
+// La carga SALE de las asignaciones (nadie la teclea) y llega ya calculada del backend
+// (src/dashboard/capacity.ts). La pantalla se lee de arriba abajo en tres niveles:
 //
-// Cada celda guarda sola y el backend responde la tabla completa recalculada: subirle el % a una
-// asignación repinta el estado de esa persona en la misma respuesta, sin una segunda petición.
+//   1. KPIs del equipo (rejilla balanceada).
+//   2. Columnas de carga por persona contra la línea del 100%, coloreadas por estado.
+//   3. Lista densa: una fila por persona, sin inputs. Click → panel lateral donde se edita todo.
+//
+// Cada mutación devuelve la tabla entera recalculada y se sustituye la copia local con ella, así
+// que subir un % repinta la fila, la columna y los KPIs con el mismo viaje.
 import { useEffect, useMemo, useState } from 'react';
-import { Users, AlertTriangle, RefreshCw, Clock, UserCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Clock, Gauge, Hourglass, Search, Users, X, AlertTriangle } from 'lucide-react';
 import { Layout } from '@/components/Layout';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Card, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { EmptyState, ErrorCard } from '@/components/bits';
-import { CAPACITY_COLUMNS, type CapacityActions } from '@/components/capacity/cells';
+import { EmptyState, ErrorCard, RefreshButton } from '@/components/bits';
+import { MetricCard } from '@/components/MetricCard';
+import { BalancedGrid } from '@/components/grid';
+import { Segmented } from '@/components/pulse/roz-v2';
+import { LOAD_GROUPS, loadGroup, type CapacityActions, type LoadGroup } from '@/components/capacity/cells';
+import { LoadChart, LoadChartSkeleton } from '@/components/capacity/LoadChart';
+import { PeopleListHeader, PersonRow, PersonRowSkeleton } from '@/components/capacity/PeopleList';
+import { PersonSheet } from '@/components/capacity/PersonSheet';
 import { useAuth } from '@/auth/AuthContext';
 import { useApi } from '@/lib/useApi';
-import { apiGet, apiSend, type CapacityResponse } from '@/lib/api';
+import { apiGet, apiSend, type CapacityDev, type CapacityResponse } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
+
+type Scope = 'active' | 'inactive' | 'all';
+type GroupFilter = 'all' | LoadGroup;
+
+const KPI_MAX = { base: 2, md: 3, lg: 5 };
 
 export default function Capacity() {
   const { user } = useAuth();
   const canEdit = !!user; // control total para cualquier usuario autenticado (sin roles), como Developers
   const [q, setQ] = useState('');
-  const [showInactive, setShowInactive] = useState(false);
+  const [scope, setScope] = useState<Scope>('active');
+  const [group, setGroup] = useState<GroupFilter>('all');
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const { data, loading, refetching, error, reload } = useApi<CapacityResponse>(
     () => apiGet('/capacity'),
@@ -34,16 +50,10 @@ export default function Capacity() {
     { key: '/capacity', ttl: 60_000 },
   );
 
-  // Copia local, igual que la lista de tareas: cada mutación devuelve la tabla ya recalculada y se
-  // sustituye entera, sin recargar.
+  // Copia local: cada mutación devuelve la tabla ya recalculada y se sustituye entera, sin recargar.
   const [table, setTable] = useState<CapacityResponse | null>(null);
   useEffect(() => { if (data) setTable(data); }, [data]);
 
-  /**
-   * Toda mutación devuelve la tabla entera ya recalculada, así que se sustituye el estado con la
-   * respuesta en vez de recargar. Es lo que hace que cambiar un % actualice el estado de carga de
-   * esa fila al instante y sin un segundo viaje.
-   */
   const send = async (fn: () => Promise<CapacityResponse>, fallback: string) => {
     try {
       setTable(await fn());
@@ -51,6 +61,9 @@ export default function Capacity() {
       // Las reglas (tope de principales, dedicación) llegan como 400 con su mensaje: se enseña el
       // del servidor, que explica QUÉ hacer, no un "no se pudo" genérico.
       toast.error(fallback, { description: String(e?.message ?? e) });
+      // Se relanza para que el panel pinte "No se guardó" en el campo; el panel SIEMPRE lo atrapa
+      // (`useSaveState`), así que nunca queda una promesa rechazada suelta.
+      throw e;
     }
   };
 
@@ -67,165 +80,212 @@ export default function Capacity() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [canEdit]);
 
-  const devs = useMemo(() => {
+  const all = table?.devs ?? [];
+  const active = useMemo(() => all.filter((d) => d.active), [all]);
+  const inactiveCount = all.length - active.length;
+  const projects = table?.projects ?? [];
+  const totals = table?.totals;
+
+  // Lo que tiene alcance (activos/inactivos) y búsqueda, ANTES del filtro de estado: los contadores
+  // del segmentado de estado se calculan sobre esto, así dicen cuántos quedarían al elegir uno.
+  const scoped = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return (table?.devs ?? [])
-      .filter((d) => showInactive || d.active)
+    return all
+      .filter((d) => scope === 'all' || (scope === 'active' ? d.active : !d.active))
       .filter((d) => !needle
         || d.name.toLowerCase().includes(needle)
         || (d.profile ?? '').toLowerCase().includes(needle)
-        || d.principal.some((a) => (a.projectName ?? '').toLowerCase().includes(needle))
-        || d.secondary.some((a) => (a.projectName ?? '').toLowerCase().includes(needle)));
-  }, [table, q, showInactive]);
+        || [...d.principal, ...d.secondary].some((a) =>
+          (a.projectName ?? '').toLowerCase().includes(needle) || (a.repo ?? '').toLowerCase().includes(needle)));
+  }, [all, q, scope]);
 
-  const projects = table?.projects ?? [];
-  const totals = table?.totals;
-  const inactive = (table?.devs ?? []).filter((d) => !d.active).length;
+  const groupCount = (g: LoadGroup) => scoped.filter((d) => loadGroup(d) === g).length;
+  const rows = useMemo(
+    () => (group === 'all' ? scoped : scoped.filter((d) => loadGroup(d) === group))
+      // Activos primero y, dentro, de más a menos carga: lo saturado (lo que hay que resolver) arriba.
+      .slice()
+      .sort((a, b) => Number(b.active) - Number(a.active) || b.load.pct - a.load.pct || a.name.localeCompare(b.name)),
+    [scoped, group],
+  );
+  const chartDevs = useMemo(() => [...active].sort((a, b) => b.load.pct - a.load.pct), [active]);
+
+  const avgPct = active.length ? Math.round(active.reduce((s, d) => s + d.load.pct, 0) / active.length) : 0;
+  const hoursFree = active.reduce((s, d) => s + d.load.hoursFree, 0);
+  const holgura = active.filter((d) => loadGroup(d) === 'holgura').length;
+
+  const filtered = !!q.trim() || group !== 'all' || scope !== 'active';
+  const clearFilters = () => { setQ(''); setGroup('all'); setScope('active'); };
+  const openDev: CapacityDev | null = openId ? all.find((d) => d.id === openId) ?? null : null;
 
   return (
-    <Layout
-      title="Capacidad"
-      subtitle="Quién es cada quien, en qué está, y cuánto le queda"
-      actions={
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="size-8 text-muted-foreground"
-          onClick={reload}
-          disabled={refetching}
-          title="Traer cambios"
-          aria-label="Actualizar"
-        >
-          <RefreshCw className={cn('size-3.5', refetching && 'animate-spin')} />
-        </Button>
-      }
-    >
+    <Layout title="Capacidad" actions={<RefreshButton busy={refetching} onClick={reload} />}>
       {error && <ErrorCard message={error} className="mb-4" />}
 
-      {totals && (
-        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Tile icon={<Users className="size-4" />} label="En el equipo" value={String(totals.people)} />
-          <Tile
-            icon={<Clock className="size-4" />}
-            label="Horas por semana"
+      {/* ---- 1. KPIs ---- */}
+      {loading && !table ? (
+        <BalancedGrid max={KPI_MAX} className="mb-3.5 gap-3.5">
+          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-[104px] rounded-lg" />)}
+        </BalancedGrid>
+      ) : totals && all.length > 0 ? (
+        <BalancedGrid max={KPI_MAX} className="mb-3.5 gap-3.5">
+          <MetricCard
+            label="Personas activas"
+            value={totals.people}
+            icon={Users}
+            sub={inactiveCount ? `${inactiveCount} inactiva${inactiveCount === 1 ? '' : 's'}` : 'Todo el equipo'}
+          />
+          <MetricCard
+            label="Horas comprometidas"
             value={`${totals.hoursUsed} / ${totals.hours}`}
-            hint={totals.hours ? `${Math.round((totals.hoursUsed / totals.hours) * 100)}% comprometido` : undefined}
+            icon={Clock}
+            sub={totals.hours ? `${Math.round((totals.hoursUsed / totals.hours) * 100)}% de la semana` : undefined}
           />
-          <Tile
-            icon={<UserCheck className="size-4" />}
-            label="Con holgura"
-            value={String(totals.free)}
-            tone={totals.free > 0 ? 'success' : undefined}
+          <MetricCard label="Carga media" value={avgPct} format={(v) => `${v}%`} icon={Gauge} sub="Por persona activa" />
+          <MetricCard
+            label="Horas libres"
+            value={hoursFree}
+            format={(v) => `${v} h`}
+            icon={Hourglass}
+            tone={hoursFree > 0 ? 'success' : undefined}
+            sub={`${holgura} con holgura`}
           />
-          <Tile
-            icon={<AlertTriangle className="size-4" />}
+          <MetricCard
             label="Saturadas"
-            value={String(totals.saturated)}
+            value={totals.saturated}
+            icon={AlertTriangle}
             tone={totals.saturated > 0 ? 'destructive' : undefined}
+            sub={totals.saturated > 0 ? 'Más carga de la que cabe' : 'Nadie por encima'}
           />
-        </div>
-      )}
+        </BalancedGrid>
+      ) : null}
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Buscar persona o proyecto…"
-          className="h-8 w-56 text-xs"
-        />
-        {inactive > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowInactive((v) => !v)}
-            className={cn(
-              'flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-[13px] font-medium transition-colors',
-              showInactive ? 'border-primary/20 bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-accent',
-            )}
-          >
-            Inactivos ({inactive})
-          </button>
-        )}
-        {!canEdit && (
-          <span className="text-xs text-muted-foreground">Solo lectura — inicia sesión para editar</span>
-        )}
-      </div>
-
-      {loading ? (
-        <div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}</div>
-      ) : !devs.length ? (
-        <Card>
-          <EmptyState icon={<Users className="size-6" />}>
-            {q ? 'Nadie coincide con la búsqueda.' : 'Todavía no hay gente en el equipo.'}
-          </EmptyState>
-        </Card>
-      ) : (
-        <div className="overflow-hidden rounded-xl border">
-          {/* Scroll horizontal propio: son seis columnas anchas y comprimirlas para que quepan
-              dejaría los textos de enfoque en una palabra por renglón. */}
-          <div className="scroll-thin max-h-[calc(100dvh-19rem)] overflow-auto">
-            <table className="w-full border-collapse text-left">
-              <thead className="sticky top-0 z-10">
-                <tr>
-                  {CAPACITY_COLUMNS.map((col) => (
-                    <th
-                      key={col.key}
-                      className={cn(
-                        'border-b bg-muted/80 px-3 py-2 align-bottom text-[11px] font-semibold uppercase leading-tight tracking-[0.06em] text-muted-foreground backdrop-blur',
-                        col.width,
-                      )}
-                    >
-                      {col.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {devs.map((dev) => (
-                  <tr
-                    key={dev.id}
-                    className={cn(
-                      'align-top transition-colors hover:bg-muted/40',
-                      !dev.active && 'opacity-60',
-                      dev.load.overAssigned && 'bg-destructive/[0.04]',
-                    )}
-                  >
-                    {CAPACITY_COLUMNS.map((col) => (
-                      <td key={col.key} className={cn('px-3 py-2.5', col.width)}>
-                        {col.render(dev, projects, actions)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {/* ---- 2. Carga contra capacidad ---- */}
+      {(loading && !table) || active.length > 0 ? (
+        <Card className="mb-3.5 p-4 sm:p-5">
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+            <CardTitle>Carga contra capacidad</CardTitle>
+            <ChartLegend />
           </div>
+          {loading && !table
+            ? <LoadChartSkeleton />
+            : <LoadChart devs={chartDevs} onPick={(d) => setOpenId(d.id)} />}
+        </Card>
+      ) : null}
+
+      {/* ---- 3. Equipo ---- */}
+      <Card className="overflow-hidden">
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+          <div className="mr-auto flex items-baseline gap-2">
+            <CardTitle>Equipo</CardTitle>
+            {table && <span className="text-[12px] tabular-nums text-faint">{rows.length}</span>}
+          </div>
+
+          <div className="relative w-full sm:w-60">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-faint" />
+            <Input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar persona, proyecto o repo…"
+              className="h-8 pl-8 pr-7 text-[13px]"
+              aria-label="Buscar en el equipo"
+            />
+            {q && (
+              <button
+                type="button"
+                onClick={() => setQ('')}
+                aria-label="Limpiar búsqueda"
+                className="absolute right-1.5 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-faint hover:bg-panel hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            )}
+          </div>
+
+          <Segmented<GroupFilter>
+            value={group}
+            onChange={setGroup}
+            className="max-w-full overflow-x-auto scroll-none"
+            options={[
+              { value: 'all', label: 'Todos' },
+              ...LOAD_GROUPS.map((g) => ({
+                value: g.value,
+                label: g.label,
+                icon: <span className={cn('size-1.5 rounded-full', g.dot)} />,
+                count: table ? groupCount(g.value) : undefined,
+              })),
+            ]}
+          />
+
+          {inactiveCount > 0 && (
+            <Segmented<Scope>
+              value={scope}
+              onChange={setScope}
+              options={[
+                { value: 'active', label: 'Activos' },
+                { value: 'inactive', label: 'Inactivos', count: inactiveCount },
+                { value: 'all', label: 'Todos' },
+              ]}
+            />
+          )}
         </div>
-      )}
+
+        <div className="border-t">
+          {loading && !table ? (
+            <>
+              <PeopleListHeader />
+              <div className="divide-y">
+                {Array.from({ length: 6 }).map((_, i) => <PersonRowSkeleton key={i} />)}
+              </div>
+            </>
+          ) : !all.length ? (
+            <EmptyState
+              icon={<Users />}
+              action={
+                <Button asChild variant="outline" size="sm">
+                  <Link to="/app/developers">Ir a Developers</Link>
+                </Button>
+              }
+            >
+              Todavía no hay gente en el equipo. Cuando des de alta a alguien en Developers, aparece aquí
+              para repartirle proyectos.
+            </EmptyState>
+          ) : !rows.length ? (
+            <EmptyState
+              icon={<Search />}
+              action={filtered ? <Button variant="secondary" size="sm" onClick={clearFilters}>Limpiar filtros</Button> : undefined}
+            >
+              Nadie coincide con {q.trim() ? <>“{q.trim()}”</> : 'estos filtros'}.
+            </EmptyState>
+          ) : (
+            <>
+              <PeopleListHeader />
+              <div className="divide-y">
+                {rows.map((d) => <PersonRow key={d.id} dev={d} onOpen={() => setOpenId(d.id)} />)}
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+
+      <PersonSheet dev={openDev} projects={projects} actions={actions} onClose={() => setOpenId(null)} />
     </Layout>
   );
 }
 
-function Tile({ icon, label, value, hint, tone }: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  hint?: string;
-  tone?: 'success' | 'destructive';
-}) {
+/** Leyenda de la gráfica: los tres grupos de estado y la línea de capacidad. */
+function ChartLegend() {
   return (
-    <div className="rounded-xl border bg-card px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-muted-foreground">
-        {icon}
-        <span className="truncate text-[11px] font-medium uppercase tracking-wide">{label}</span>
-      </div>
-      <p className={cn(
-        'mt-1 text-xl font-semibold tabular-nums',
-        tone === 'success' && 'text-success',
-        tone === 'destructive' && 'text-destructive',
-      )}>
-        {value}
-      </p>
-      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-muted-foreground">
+      {LOAD_GROUPS.map((g) => (
+        <span key={g.value} className="inline-flex items-center gap-1.5">
+          <span className={cn('size-2 rounded-[2px]', g.dot)} />
+          {g.label}
+        </span>
+      ))}
+      <span className="inline-flex items-center gap-1.5">
+        <span className="w-4 border-t-[1.5px] border-dashed border-foreground/45" />
+        Capacidad (100%)
+      </span>
     </div>
   );
 }

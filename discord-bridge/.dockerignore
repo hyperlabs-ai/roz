@@ -1,0 +1,7 @@
+node_modules
+dist
+test
+scripts
+.env
+.env.*
+*.log

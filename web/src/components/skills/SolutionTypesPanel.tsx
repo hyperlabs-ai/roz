@@ -4,7 +4,8 @@ import { Loader2, Pencil, Plus } from 'lucide-react';
 import { EmptyState, ErrorCard, Revalidating } from '@/components/bits';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
+import { SectionHeader } from '@/components/brand';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -39,8 +40,8 @@ export function SolutionTypesPanel({ skills, isAdmin }: { skills: SkillCatalogIt
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-        <div className="space-y-1.5">
-          <CardTitle>Tipos de solución</CardTitle>
+        <div className="space-y-2">
+          <SectionHeader size="sm" eyebrow="Clasificación · roz" eyebrowColor="purple-deep" title="Tipos de solución" />
           <CardDescription>
             Qué clase de trabajo es cada tarea y qué pide. roz clasifica cada ticket en un tipo; la skill, el nivel mínimo y el tamaño salen
             de aquí. Nivel 4 o más manda la tarea primero al especialista.
@@ -63,8 +64,8 @@ export function SolutionTypesPanel({ skills, isAdmin }: { skills: SkillCatalogIt
             <div className="scroll-thin overflow-x-auto">
               <table className="w-full min-w-[720px] text-sm">
                 <thead>
-                  <tr className="border-b text-left text-xs text-muted-foreground">
-                    <th className="py-2 pr-3 font-medium">Tipo</th>
+                  <tr className="border-b bg-sidebar text-left label-caps text-faint">
+                    <th className="py-2 pl-3 pr-3 font-medium">Tipo</th>
                     <th className="py-2 pr-3 font-medium">Skill primaria</th>
                     <th className="py-2 pr-3 font-medium">Nivel mín.</th>
                     <th className="py-2 pr-3 font-medium">Secundaria</th>
@@ -75,27 +76,47 @@ export function SolutionTypesPanel({ skills, isAdmin }: { skills: SkillCatalogIt
                 </thead>
                 <tbody>
                   {types.map((t) => (
-                    <tr key={t.id} className={cn('border-b last:border-0 align-top', !t.active && 'opacity-50')}>
-                      <td className="py-2 pr-3">
-                        <div className="font-medium">
-                          {t.name} {!t.active && <Badge variant="outline" className="ml-1 text-[10px]">retirado</Badge>}
+                    <tr key={t.id} className={cn('border-b last:border-0 align-top transition-colors hover:bg-sidebar', !t.active && 'opacity-50')}>
+                      <td className="py-3 pl-3 pr-3">
+                        <div className="font-semibold tracking-[-0.01em]">
+                          {t.name} {!t.active && <Badge variant="secondary" className="ml-1 label-caps">retirado</Badge>}
                         </div>
-                        <div className="max-w-md text-xs text-muted-foreground">{t.description}</div>
+                        <div className="mt-0.5 max-w-md text-xs leading-relaxed text-muted-foreground">{t.description}</div>
                       </td>
-                      <td className="py-2 pr-3">
-                        {t.primarySkillTag ?? <span className="text-muted-foreground">la del módulo afectado</span>}
+                      <td className="py-3 pr-3">
+                        {t.primarySkillTag
+                          ? <span className="inline-block rounded-md bg-orange-soft px-2 py-0.5 text-xs font-semibold text-orange-ink">{t.primarySkillTag}</span>
+                          : <span className="text-xs text-muted-foreground">la del módulo afectado</span>}
                       </td>
-                      <td className="py-2 pr-3">
-                        <span className={cn('font-medium', t.minLevel >= 4 && 'text-primary')}>{t.minLevel}</span>
-                        {t.minLevel >= 4 && <span className="block text-[11px] text-muted-foreground">especialista primero</span>}
+                      <td className="py-3 pr-3">
+                        <span className={cn('inline-grid size-6 place-items-center rounded-md text-xs font-semibold tabular-nums', t.minLevel >= 4 ? 'bg-orange-soft text-orange-ink' : 'bg-panel')}>{t.minLevel}</span>
+                        {t.minLevel >= 4 && <span className="mt-1 block text-[10.5px] text-orange-ink tabular-nums">especialista primero</span>}
                       </td>
-                      <td className="py-2 pr-3">{t.secondarySkillTag ?? <span className="text-muted-foreground">—</span>}</td>
-                      <td className="py-2 pr-3 whitespace-nowrap">
-                        {t.sizeMin === t.sizeMax ? t.sizeMin : `${t.sizeMin}–${t.sizeMax}`} pts
+                      <td className="py-3 pr-3">
+                        {t.secondarySkillTag
+                          ? <span className="inline-block rounded-md bg-panel px-2 py-0.5 text-xs font-medium">{t.secondarySkillTag}</span>
+                          : <span className="text-muted-foreground">—</span>}
                       </td>
-                      <td className="py-2 pr-3 text-muted-foreground">{t.taskCount}</td>
+                      <td className="py-3 pr-3 whitespace-nowrap text-xs tabular-nums">
+                        {/* La escala de puntos completa con el rango del tipo encendido: se compara de un vistazo entre filas. */}
+                        <span className="flex items-center gap-0.5" aria-hidden>
+                          {POINTS.map((p) => (
+                            <span
+                              key={p}
+                              className={cn(
+                                'grid h-5 min-w-5 place-items-center rounded px-1 text-[10.5px] font-semibold',
+                                p >= t.sizeMin && p <= t.sizeMax ? 'bg-ink text-ink-foreground' : 'bg-panel text-faint',
+                              )}
+                            >
+                              {p}
+                            </span>
+                          ))}
+                        </span>
+                        <span className="sr-only">{t.sizeMin === t.sizeMax ? t.sizeMin : `${t.sizeMin}–${t.sizeMax}`} pts</span>
+                      </td>
+                      <td className="py-3 pr-3 text-xs text-muted-foreground tabular-nums">{t.taskCount}</td>
                       {isAdmin && (
-                        <td className="py-2 text-right">
+                        <td className="py-3 pr-2 text-right">
                           <Button size="icon-sm" variant="ghost" onClick={() => setEditing(t)} aria-label={`Editar ${t.name}`}>
                             <Pencil className="size-3.5" />
                           </Button>
@@ -187,18 +208,18 @@ function SolutionTypeDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
+        <DialogHeader eyebrow="Skills · tipo de solución">
           <DialogTitle>{type ? 'Editar tipo de solución' : 'Nuevo tipo de solución'}</DialogTitle>
           <DialogDescription>
             El nombre y la descripción son lo que lee roz para clasificar cada ticket: cambiarlos cambia cómo clasifica.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="st-name">Nombre</Label>
             <Input id="st-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej. Endpoint / CRUD" maxLength={80} />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="st-desc">Qué trabajo entra aquí</Label>
             <textarea
               id="st-desc"
@@ -207,11 +228,11 @@ function SolutionTypeDialog({
               rows={3}
               maxLength={1000}
               placeholder="Describe el trabajo con ejemplos concretos: así roz distingue este tipo de los demás."
-              className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-full resize-y rounded-md border border-input bg-card px-3 py-2 text-[13.5px] transition-colors placeholder:text-faint focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20"
             />
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>Skill primaria</Label>
               <Select value={primary} onValueChange={setPrimary}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -223,7 +244,7 @@ function SolutionTypeDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>Nivel mínimo</Label>
               <Select value={minLevel} onValueChange={setMinLevel}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -250,7 +271,7 @@ function SolutionTypeDialog({
               </Select>
               {sameSkill && <p className="text-xs text-destructive">La secundaria no puede ser la misma que la primaria.</p>}
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>Tamaño típico, desde</Label>
               <Select value={sizeMin} onValueChange={setSizeMin}>
                 <SelectTrigger className={cn(rangeBad && 'border-destructive')}><SelectValue /></SelectTrigger>
@@ -259,7 +280,7 @@ function SolutionTypeDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <Label>hasta</Label>
               <Select value={sizeMax} onValueChange={setSizeMax}>
                 <SelectTrigger className={cn(rangeBad && 'border-destructive')}><SelectValue /></SelectTrigger>

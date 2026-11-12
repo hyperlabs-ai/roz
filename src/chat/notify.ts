@@ -8,6 +8,7 @@ import { pushToDev } from '../notify/push.js';
 import type { ChatDev, ConversationRow, MemberRow, MessageRow } from './model.js';
 import { chatPushRecipients } from './rules.js';
 import { previewText, statusTaskIds } from './text.js';
+import { chatNotice } from '../notify/copy.js';
 
 function chatUrl(conversationId: string, threadId?: string | null): string {
   const path = `/app/chat/${conversationId}${threadId ? `?thread=${threadId}` : ''}`;
@@ -53,43 +54,33 @@ export async function notifyChatMessage(input: {
   const nameOf = (id: string) => devById.get(id)?.name;
   const author = nameOf(msg.author_dev_id) ?? 'Alguien';
 
-  let preview = previewText(msg.body, nameOf);
-  const statusCount = statusTaskIds(msg.meta).length;
-  if (statusCount) {
-    const label = `📋 Status · ${statusCount === 1 ? '1 tarea' : `${statusCount} tareas`}`;
-    preview = preview ? `${label} — ${preview}` : label;
-  }
-  if (!preview && input.attachmentCount) {
-    preview = input.attachmentCount === 1 ? '📎 Envió un archivo' : `📎 Envió ${input.attachmentCount} archivos`;
-  }
-
-  let title: string;
-  let body: string;
-  if (conv.kind === 'dm') {
-    const others = members.map((m) => m.dev_id).filter((d) => d !== msg.author_dev_id);
-    title = others.length > 1 ? `${author} · grupo` : author;
-    body = preview;
-  } else {
-    title = isReply ? `Hilo en #${conv.name}` : `#${conv.name}`;
-    body = `${author}: ${preview}`;
-  }
-  if (isReply && conv.kind === 'dm') title = `${title} (hilo)`;
-
-  const payload = {
-    title,
-    body,
+  const others = members.map((m) => m.dev_id).filter((d) => d !== msg.author_dev_id);
+  const mentions = new Set(msg.mentions ?? []);
+  // El texto depende de a quién le llega: a quien mencionaron se le dice que lo mencionaron.
+  const payloadFor = (devId: string) => ({
+    ...chatNotice({
+      author,
+      preview: previewText(msg.body, nameOf),
+      kind: conv.kind === 'dm' ? 'dm' : 'channel',
+      channelName: conv.name,
+      group: others.length > 1,
+      isReply,
+      mentioned: mentions.has(devId) || !!msg.mention_channel,
+      statusCount: statusTaskIds(msg.meta).length,
+      attachmentCount: input.attachmentCount,
+    }),
     url: chatUrl(conv.id, msg.parent_id),
     // Una notificación por conversación: la nueva reemplaza a la anterior en vez de apilar 20.
     tag: `chat:${conv.id}`,
     // `messageId`: la app abierta usa la misma llave para el sonido que dispara por tiempo real, así
     // el mensaje suena UNA vez aunque llegue por los dos caminos (socket y push).
     data: { kind: 'chat', conversationId: conv.id, threadId: msg.parent_id, messageId: msg.id },
-  };
+  });
 
   await Promise.all(
     recipients.map((devId) =>
       // `high`: un chat que llega al teléfono cuando éste sale del reposo no sirve.
-      pushToDev(devId, devById.get(devId)?.email ?? null, payload, 'chat_message', { logSent: false, urgency: 'high' }),
+      pushToDev(devId, devById.get(devId)?.email ?? null, payloadFor(devId), 'chat_message', { logSent: false, urgency: 'high' }),
     ),
   );
 }

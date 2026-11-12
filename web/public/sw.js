@@ -99,7 +99,7 @@ self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = { body: event.data && event.data.text() }; }
 
-  const title = data.title || 'ROZ';
+  const title = data.title || 'Roz';
   const info = data.data || {};
   // Misma llave que usa la app al recibir el mensaje por tiempo real: suena una sola vez.
   const soundKey = info.kind === 'chat' && info.messageId ? 'chat:' + info.messageId : data.tag || undefined;
@@ -109,7 +109,8 @@ self.addEventListener('push', (event) => {
     const silent = await playInOpenWindow(soundKey);
     const options = {
       body: data.body || '',
-      icon: data.icon || '/icon-192.png',
+      // Los avisos los firma Roz-bot: el backend manda su avatar con la expresión del aviso.
+      icon: data.icon || '/brand/roz-bot.png',
       badge: data.badge || '/icon-192.png',
       tag: data.tag || undefined,
       renotify: !!data.tag,

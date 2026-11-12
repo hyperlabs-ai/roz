@@ -13,6 +13,9 @@ import {
   type PrReview,
 } from '../adapters/github.js';
 import { persistActors } from './pull-request.js';
+import { notifyPrReviewed } from '../notify/notifications.js';
+import { resolveReference } from '../linear/legacy.js';
+import { linearSourceOfTruth } from '../linear/enabled.js';
 
 // Estados desde los que una señal de código puede AVANZAR la tarea (no retrocede desde review/done).
 const CAN_START = ['planificada', 'pendiente'];
@@ -24,7 +27,7 @@ const CLOSED = ['completada', 'cancelada'];
  * guarda la rama. Idempotente: reprocesar deja el mismo estado.
  */
 export async function handleBranchCreated(input: { repo: string; ref: string; githubId?: number | null }): Promise<{ action: string; identifier?: string }> {
-  const identifier = referencesLinearIssue(input.ref);
+  const identifier = await resolveReference(referencesLinearIssue(input.ref));
   if (!identifier) return { action: 'no-ref' };
   const supabase = db();
   const { data: wi } = await supabase.from('work_item').select('id, status, started_at').eq('identifier', identifier).maybeSingle();
@@ -33,12 +36,15 @@ export async function handleBranchCreated(input: { repo: string; ref: string; gi
 
   const now = new Date().toISOString();
   const upd: Record<string, unknown> = { head_ref: input.ref, updated_at: now };
-  if (CAN_START.includes(item.status)) {
+  // Con Linear como fuente de verdad el estado lo mueve la integración de GitHub de Linear y llega por
+  // el espejo: aquí solo se liga la rama.
+  const moves = CAN_START.includes(item.status) && !linearSourceOfTruth();
+  if (moves) {
     upd.status = 'en_progreso'; // el valor, no STATE_LABEL: `status` tiene check constraint
     if (!item.started_at) upd.started_at = now;
   }
   await supabase.from('work_item').update(upd).eq('id', item.id);
-  return { action: CAN_START.includes(item.status) ? 'en_progreso' : 'branch-linked', identifier };
+  return { action: moves ? 'en_progreso' : 'branch-linked', identifier };
 }
 
 /**
@@ -48,7 +54,7 @@ export async function handleBranchCreated(input: { repo: string; ref: string; gi
  */
 export async function handlePrOpened(input: { repo: string; number: number; githubId?: number | null }): Promise<{ action: string; identifier?: string }> {
   const pr = await getPullRequest(input.repo, input.number);
-  const identifier = referencesLinearIssue(`${pr.title}\n${pr.body ?? ''}\n${pr.headRef ?? ''}`);
+  const identifier = await resolveReference(referencesLinearIssue(`${pr.title}\n${pr.body ?? ''}\n${pr.headRef ?? ''}`));
   if (!identifier) return { action: 'no-ref' };
   const supabase = db();
   const { data: wi } = await supabase.from('work_item').select('id, status, started_at').eq('identifier', identifier).maybeSingle();
@@ -63,7 +69,9 @@ export async function handlePrOpened(input: { repo: string; number: number; gith
     head_ref: pr.headRef ?? null,
     updated_at: now,
   };
-  if (!CLOSED.includes(item.status)) {
+  // Igual que con la rama: con el flag encendido el estado viene de Linear; aquí solo PR y atribución.
+  const moves = !CLOSED.includes(item.status) && !linearSourceOfTruth();
+  if (moves) {
     upd.status = 'revision'; // idem: valor, no etiqueta
     if (!item.started_at) upd.started_at = now;
   }
@@ -76,7 +84,7 @@ export async function handlePrOpened(input: { repo: string; number: number; gith
   ]);
   await persistActors(supabase, item.id, { authors, reviews, mergerLogin: null });
 
-  return { action: CLOSED.includes(item.status) ? 'pr-linked' : 'revision', identifier };
+  return { action: moves ? 'revision' : 'pr-linked', identifier };
 }
 
 /**
@@ -87,7 +95,7 @@ export async function handlePrOpened(input: { repo: string; number: number; gith
  */
 export async function handlePrReviewed(input: { repo: string; number: number; githubId?: number | null }): Promise<{ action: string; identifier?: string }> {
   const pr = await getPullRequest(input.repo, input.number);
-  const identifier = referencesLinearIssue(`${pr.title}\n${pr.body ?? ''}\n${pr.headRef ?? ''}`);
+  const identifier = await resolveReference(referencesLinearIssue(`${pr.title}\n${pr.body ?? ''}\n${pr.headRef ?? ''}`));
   if (!identifier) return { action: 'no-ref' };
   const supabase = db();
   const { data: wi } = await supabase.from('work_item').select('id').eq('identifier', identifier).maybeSingle();
@@ -99,5 +107,11 @@ export async function handlePrReviewed(input: { repo: string; number: number; gi
     listPullRequestReviews(input.repo, input.number).catch(() => [] as PrReview[]),
   ]);
   await persistActors(supabase, item.id, { authors, reviews, mergerLogin: null });
+  // Aviso al autor de la PR: quién la revisó y con qué veredicto (best-effort, una vez por veredicto).
+  await notifyPrReviewed({
+    pr: { repo: input.repo, number: pr.number, title: pr.title, branch: pr.headRef ?? null, identifier },
+    authorLogins: [pr.authorLogin, ...authors.map((a) => a.login)],
+    reviews,
+  });
   return { action: 'reviewed', identifier };
 }

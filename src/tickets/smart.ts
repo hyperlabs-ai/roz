@@ -8,6 +8,11 @@
 //                   a Jev: se reusa su respuesta y solo se recalcula la política.
 //   createTicket  → reclama la vista previa (atómico), recalcula con la carga actual, crea la tarea,
 //                   completa la misma fila como la decisión de esa tarea y manda el DM.
+//
+// roz v2 (ROZ_LINEAR_SOT encendido): todo igual, salvo que "crear la tarea" es crear el ISSUE en
+// Linear (título, descripción, proyecto, etiqueta del tipo de solución, estimación, prioridad 1-4,
+// asignado por correo). El espejo queda escrito en el momento, así la decisión se liga a su
+// work_item sin esperar al webhook. Con el flag apagado el camino es idéntico al de antes.
 import { config } from '../config.js';
 import { systemOne, TypeSafeError, type SystemOneRequest, type SystemOneResponse } from '../adapters/typesafe.js';
 import { buildJevRequest, needsHuman, readClassification, type Classification, type TaskInput } from '../assign/classify.js';
@@ -27,8 +32,13 @@ import { POLICY_VERSION, decide, type CandidateEval, type Suggestion, type TieBr
 import { validateOverride } from '../assign/rules.js';
 import { openDm } from '../chat/conversations.js';
 import { sendMessage } from '../chat/messages.js';
+import { discordChatEnabled } from '../discord/enabled.js';
+import { notifyTicketAssigneeOnDiscord } from '../discord/notify.js';
 import { db } from '../db/supabase.js';
 import { createTask, getTicketById } from '../dashboard/queries.js';
+import { createIssueFromTicket } from '../linear/issues.js';
+import { linearSourceOfTruth } from '../linear/enabled.js';
+import { ROZ_PRIORITY_TO_LINEAR, type LinearPriority, type RozPriority } from '../types/roz-v2.js';
 import { AppError, ValidationError } from '../utils/errors.js';
 import { todayLocal } from '../utils/team-time.js';
 import {
@@ -93,6 +103,7 @@ async function activeProject(projectId: string) {
 function baseTaskInput(
   t: TicketInput,
   project: { name: string; kind: string | null; type?: string | null; description?: string | null; typeKey?: string | null },
+  prioritySource: TaskInput['prioritySource'] = 'humano',
 ): TaskInput {
   return {
     id: 'ticket',
@@ -105,7 +116,7 @@ function baseTaskInput(
     projectDescription: project.description ?? null,
     projectTypeKey: project.typeKey ?? null,
     priority: null,
-    prioritySource: 'humano',
+    prioritySource,
     dueDate: null,
     estimate: null,
     solutionTypeId: null,
@@ -129,6 +140,7 @@ async function plan(
   ticket: TicketInput,
   corrections: TicketCorrections | undefined,
   response: SystemOneResponse,
+  prioritySource: TaskInput['prioritySource'] = 'humano',
 ): Promise<TicketPlan> {
   const project = await activeProject(ticket.projectId);
   const catalog = await loadCatalog();
@@ -136,7 +148,7 @@ async function plan(
   if (corrections?.solutionTypeId && !types.some((t) => t.id === corrections.solutionTypeId)) {
     throw new ValidationError('ese tipo de solución no existe');
   }
-  const task = applyCorrections(baseTaskInput(ticket, project), corrections);
+  const task = applyCorrections(baseTaskInput(ticket, project, prioritySource), corrections);
   const today = todayLocal();
   const classification = readClassification(response.answers, task, catalog, types, null, today);
   const stored = (extra: { deadline: string | null; horizonDays: number | null }): StoredClassification => ({
@@ -208,6 +220,35 @@ function storedTicket(row: DecisionRow): TicketInput | null {
 async function devNames(): Promise<Record<string, string>> {
   const { data } = await db().from('dev').select('id, name');
   return Object.fromEntries(((data ?? []) as { id: string; name: string }[]).map((d) => [d.id, d.name]));
+}
+
+/** Prioridad de roz ('urgent' … 'low') → la de Linear (1-4). Algo fuera del vocabulario → sin prioridad. */
+export function linearPriorityOf(priority: string | null | undefined): Exclude<LinearPriority, 0> | null {
+  if (!priority) return null;
+  return ROZ_PRIORITY_TO_LINEAR[priority as RozPriority] ?? null;
+}
+
+/**
+ * Jev + política para un issue NUEVO que nadie va a previsualizar (intake con Linear como fuente de
+ * verdad): misma clasificación y misma política que /ticket, en una sola pasada y sin escrituras.
+ * Los errores de Jev se relanzan TAL CUAL (TypeSafeError) para que quien llama sepa si reintentar.
+ */
+export async function classifyNewIssue(
+  ticket: TicketInput,
+  prioritySource: TaskInput['prioritySource'] = 'intake',
+): Promise<{ plan: TicketPlan; request: SystemOneRequest; response: SystemOneResponse; model: string }> {
+  const input = normalizeTicket(ticket);
+  const project = await activeProject(input.projectId);
+  const catalog = await loadCatalog();
+  const types = await loadSolutionTypes(catalog);
+  const request = buildJevRequest(baseTaskInput(input, project, prioritySource), catalog, types, null, config.typesafe.model);
+  const response = await systemOne(request);
+  return { plan: await plan(input, undefined, response, prioritySource), request, response, model: response.model };
+}
+
+/** Campos de la decisión para guardarla en assignment_decision (los mismos que la vista previa). */
+export function decisionFields(p: TicketPlan) {
+  return planFields(p);
 }
 
 // ---------------------------------------------------------------- vista previa
@@ -282,6 +323,8 @@ export interface CreateTicketResult {
   identifier: string;
   conversationId: string | null;
   messageSent: boolean;
+  /** Solo con Linear como fuente de verdad: el issue creado y lo que no se pudo mapear. null = tarea nativa. */
+  linear: { linearIssueId: string; url: string; warnings: string[] } | null;
 }
 
 export async function createTicket(user: TicketUser, body: CreateTicketInput, opts: { log?: Log } = {}): Promise<CreateTicketResult> {
@@ -316,18 +359,39 @@ export async function createTicket(user: TicketUser, body: CreateTicketInput, op
   if (!(await claimPreview(row.id))) throw new AppError('PREVIEW_USED', 'Este ticket ya se creó', 409);
 
   let created: { id: string; identifier: string };
+  let linear: CreateTicketResult['linear'] = null;
+  const priority = body.corrections?.priority ?? p.classification.suggestedPriority;
+  const dueDate = body.corrections?.dueDate ?? null;
+  const solutionTypeId = p.classification.solutionType?.id ?? null;
   try {
-    created = await createTask({
-      projectId: input.projectId,
-      name: input.title,
-      description: input.description || null,
-      priority: body.corrections?.priority ?? p.classification.suggestedPriority,
-      dueDate: body.corrections?.dueDate ?? null,
-      estimate: p.classification.points,
-      solutionTypeId: p.classification.solutionType?.id ?? null,
-      assigneeDevIds: assignee ? [assignee] : [],
-      createdBy: user.userId,
-    });
+    if (linearSourceOfTruth()) {
+      const issue = await createIssueFromTicket({
+        projectId: input.projectId,
+        title: input.title,
+        description: input.description || null,
+        solutionTypeId,
+        estimate: p.classification.points,
+        priority: linearPriorityOf(priority),
+        assigneeDevId: assignee,
+        dueDate,
+        origin: 'ticket',
+        requestedBy: user.userId,
+      });
+      created = { id: issue.workItemId, identifier: issue.identifier };
+      linear = { linearIssueId: issue.linearIssueId, url: issue.url, warnings: issue.warnings };
+    } else {
+      created = await createTask({
+        projectId: input.projectId,
+        name: input.title,
+        description: input.description || null,
+        priority,
+        dueDate,
+        estimate: p.classification.points,
+        solutionTypeId,
+        assigneeDevIds: assignee ? [assignee] : [],
+        createdBy: user.userId,
+      });
+    }
   } catch (err) {
     await releasePreview(row.id).catch(() => {});
     throw err;
@@ -348,10 +412,19 @@ export async function createTicket(user: TicketUser, body: CreateTicketInput, op
       : {}),
   }).catch((err) => log('ticket: no se pudo cerrar la decisión', { taskId: created.id, error: String(err) }));
 
-  // DM desde el perfil de quien pidió el ticket. Si falla, la tarea igual queda creada.
+  // Aviso al responsable. Sin ROZ_DISCORD_CHAT: DM interno desde el perfil de quien pidió el ticket.
+  // Con el flag: Discord (canal del proyecto o DM del bot). Si falla, la tarea igual queda creada.
   let conversationId: string | null = null;
   let messageSent = false;
-  if (shouldMessage(user.devId, assignee)) {
+  if (discordChatEnabled() && shouldMessage(user.devId, assignee)) {
+    // Con el chat de Discord: aviso en el canal del proyecto mencionando al responsable, o DM del
+    // bot si no hay canal. Nunca lanza; sin DM interno (conversationId queda en null).
+    const r = await notifyTicketAssigneeOnDiscord(
+      { assigneeDevId: assignee, projectId: input.projectId, identifier: created.identifier, title: input.title },
+      (msg, extra) => log(msg, { taskId: created.id, ...extra }),
+    );
+    messageSent = r.messageSent;
+  } else if (shouldMessage(user.devId, assignee)) {
     try {
       const dm = await openDm(user.devId, [assignee]);
       conversationId = dm.id;
@@ -364,5 +437,5 @@ export async function createTicket(user: TicketUser, body: CreateTicketInput, op
     }
   }
 
-  return { task: await getTicketById(created.id), identifier: created.identifier, conversationId, messageSent };
+  return { task: await getTicketById(created.id), identifier: created.identifier, conversationId, messageSent, linear };
 }

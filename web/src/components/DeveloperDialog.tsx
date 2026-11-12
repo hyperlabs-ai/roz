@@ -1,13 +1,23 @@
 import { useEffect, useState } from 'react';
+import { Loader2, Mail, User } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Field } from '@/components/ui/field';
+import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ErrorCard } from '@/components/bits';
+import { IntegrationIcon } from '@/components/brand';
 import { apiGet, apiSend, type DeveloperCredentials } from '@/lib/api';
 import { cn } from '@/lib/utils';
+
+const AVAILABILITY = [
+  { value: '1', label: 'Completa', dot: 'bg-green' },
+  { value: '0.5', label: 'Media', dot: 'bg-yellow' },
+  { value: '0', label: 'Ninguna', dot: 'bg-toggle-off' },
+];
+
+const looksLikeEmail = (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 
 /**
  * Alta / edición de developer con las credenciales que arrancan su flujo: GitHub (atribución de
@@ -60,8 +70,12 @@ export function DeveloperDialog({
       .finally(() => setLoading(false));
   }, [open, devId]);
 
+  const emailBad = !!email.trim() && !looksLikeEmail(email);
+  const ghEmailBad = !!githubEmail.trim() && !looksLikeEmail(githubEmail);
+  const canSave = !!name.trim() && !emailBad && !ghEmailBad && !busy && !loading;
+
   async function save() {
-    if (!name.trim()) return;
+    if (!canSave) return;
     setBusy(true);
     const body = {
       name: name.trim(),
@@ -92,7 +106,7 @@ export function DeveloperDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader>
+        <DialogHeader eyebrow={editing ? 'Developer · credenciales' : 'Equipo · alta'}>
           <DialogTitle>{editing ? 'Editar developer' : 'Nuevo developer'}</DialogTitle>
           <DialogDescription>
             {editing
@@ -101,67 +115,135 @@ export function DeveloperDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <form
+          id="dev-form"
+          className="grid gap-4"
+          onSubmit={(e) => { e.preventDefault(); void save(); }}
+        >
           {/* Si la precarga falló, se dice: un formulario vacío parece un dev sin datos, y guardarlo
               así le borraría sus credenciales. */}
           {loadError && (
             <ErrorCard message={`No se pudieron traer sus credenciales (${loadError}). Ciérralo y vuelve a abrirlo.`} />
           )}
-          <div className="space-y-1.5">
-            <Label htmlFor="dev-name">Nombre</Label>
-            <Input id="dev-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="ej. Fernando Dévora" />
-          </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="dev-email">Email (notificaciones)</Label>
-            <Input id="dev-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="dev@empresa.com" />
-          </div>
+          <fieldset disabled={loading} className={cn('grid min-w-0 gap-4 transition-opacity', loading && 'opacity-50')}>
+            <Field label="Nombre" htmlFor="dev-name" required>
+              <Input
+                id="dev-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Fernando Dévora"
+                autoFocus={!editing}
+                leading={<User />}
+              />
+            </Field>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="dev-gh-login">Login de GitHub</Label>
-              <Input id="dev-gh-login" value={githubLogin} onChange={(e) => setGithubLogin(e.target.value)} placeholder="nitrofd" className="font-mono" />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="dev-gh-email">Email de GitHub</Label>
-              <Input id="dev-gh-email" type="email" value={githubEmail} onChange={(e) => setGithubEmail(e.target.value)} placeholder="commits@…" className="font-mono" />
-            </div>
-          </div>
-          <p className="-mt-1 text-xs text-muted-foreground">
-            Sus commits se atribuyen por email (lo más confiable) y, si no, por login. Idealmente pon ambos.
-          </p>
+            <Field
+              label="Correo"
+              htmlFor="dev-email"
+              hint="Aquí le llegan los avisos de roz."
+              error={emailBad ? 'No parece un correo válido.' : undefined}
+            >
+              <Input
+                id="dev-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="dev@empresa.com"
+                invalid={emailBad}
+                leading={<Mail />}
+              />
+            </Field>
 
-          <div className={cn('grid gap-3', editing ? 'grid-cols-2' : 'grid-cols-1')}>
-            <div className="space-y-1.5">
-              <Label htmlFor="dev-availability">Disponibilidad</Label>
-              <Select value={availability} onValueChange={setAvailability}>
-                <SelectTrigger id="dev-availability"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1">Disponible (100%)</SelectItem>
-                  <SelectItem value="0.5">Media (50%)</SelectItem>
-                  <SelectItem value="0">No disponible</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="rounded-lg border bg-sidebar p-3">
+              <div className="mb-3 flex h-6 items-center gap-2">
+                <IntegrationIcon name="github" size="sm" />
+                <span className="text-[13px] font-medium">Identidad en GitHub</span>
+                {githubLogin.trim() && (
+                  <img
+                    key={githubLogin.trim()}
+                    src={`https://github.com/${encodeURIComponent(githubLogin.trim())}.png?size=48`}
+                    alt=""
+                    className="ml-auto size-6 rounded-full bg-panel"
+                    onError={(e) => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }}
+                  />
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Usuario" htmlFor="dev-gh-login">
+                  <Input
+                    id="dev-gh-login"
+                    value={githubLogin}
+                    onChange={(e) => setGithubLogin(e.target.value.replace(/^@/, ''))}
+                    placeholder="nitrofd"
+                    className="font-mono text-[13px]"
+                    leading="@"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                  />
+                </Field>
+                <Field
+                  label="Correo de commits"
+                  htmlFor="dev-gh-email"
+                  error={ghEmailBad ? 'No parece un correo válido.' : undefined}
+                >
+                  <Input
+                    id="dev-gh-email"
+                    type="email"
+                    value={githubEmail}
+                    onChange={(e) => setGithubEmail(e.target.value)}
+                    placeholder="commits@empresa.com"
+                    className="font-mono text-[13px]"
+                    invalid={ghEmailBad}
+                    spellCheck={false}
+                  />
+                </Field>
+              </div>
+              <p className="mt-2.5 text-[11.5px] leading-snug text-faint">
+                Sus commits se atribuyen por correo (lo más confiable) y, si no, por usuario. Lo ideal es poner los dos.
+              </p>
             </div>
+
+            <Field label="Disponibilidad">
+              <div role="radiogroup" aria-label="Disponibilidad" className="grid grid-cols-3 gap-1 rounded-md bg-panel p-1">
+                {AVAILABILITY.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={availability === o.value}
+                    onClick={() => setAvailability(o.value)}
+                    className={cn(
+                      'flex h-8 items-center justify-center gap-1.5 rounded-[5px] text-[12.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      availability === o.value ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <span className={cn('size-1.5 rounded-full', o.dot)} />
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </Field>
+
             {editing && (
-              <div className="space-y-1.5">
-                <Label htmlFor="dev-active">Estado</Label>
-                <Select value={active} onValueChange={setActive}>
-                  <SelectTrigger id="dev-active"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="true">Activo</SelectItem>
-                    <SelectItem value="false">Inactivo</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-medium">Activo en el equipo</span>
+                  <span className="block text-[11.5px] text-faint">
+                    {active === 'true' ? 'Recibe tareas y aparece en los tableros.' : 'No recibe tareas ni avisos; su historial se conserva.'}
+                  </span>
+                </span>
+                <Switch aria-label="Activo en el equipo" checked={active === 'true'} onCheckedChange={(v) => setActive(String(v))} />
               </div>
             )}
-          </div>
-        </div>
+          </fieldset>
+        </form>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button onClick={save} disabled={busy || loading || !name.trim()}>
-            {busy ? 'Guardando…' : editing ? 'Guardar cambios' : 'Crear developer'}
+          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button type="submit" form="dev-form" disabled={!canSave}>
+            {busy && <Loader2 className="animate-spin" />}
+            {editing ? 'Guardar cambios' : 'Crear developer'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -11,7 +11,7 @@ function SiteLine({ p }: { p: LinkPreview }) {
   const site = p.siteName ?? p.provider;
   if (!site) return null;
   return (
-    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+    <div className="flex items-center gap-1.5 label-caps text-faint">
       {p.icon && iconOk && (
         <img src={p.icon} alt="" referrerPolicy="no-referrer" onError={() => setIconOk(false)} className="size-3.5 rounded-sm" />
       )}
@@ -39,10 +39,10 @@ function VideoCard({ p }: { p: LinkPreview & { embed: NonNullable<LinkPreview['e
   const vertical = p.embed.type === 'tiktok';
   const src = PLAYER[p.embed.type](p.embed.id);
   return (
-    <div className={cn('w-full space-y-1.5 border-l-4 border-l-destructive/70 pl-3', vertical ? 'max-w-[18rem]' : 'max-w-md')}>
+    <div className={cn('w-full space-y-1.5 border-l-[3px] border-l-red pl-3', vertical ? 'max-w-[18rem]' : 'max-w-md')}>
       <SiteLine p={p} />
       {p.title && (
-        <a href={p.url} target="_blank" rel="noreferrer noopener" className="line-clamp-2 text-sm font-semibold text-primary hover:underline">
+        <a href={p.url} target="_blank" rel="noreferrer noopener" className="line-clamp-2 text-sm font-semibold text-foreground underline-offset-2 hover:text-orange-ink hover:underline">
           {p.title}
         </a>
       )}
@@ -80,7 +80,7 @@ function PostCard({ p }: { p: LinkPreview }) {
       href={p.url}
       target="_blank"
       rel="noreferrer noopener"
-      className="block w-full max-w-md rounded-lg border bg-card px-3 py-2.5 shadow-sm transition-colors hover:bg-accent/50"
+      className="block w-full max-w-md rounded-lg border bg-card px-3 py-2.5 transition-colors hover:bg-sidebar"
     >
       <SiteLine p={p} />
       {p.title && <div className="mt-1 text-sm font-semibold">{p.title}</div>}
@@ -93,11 +93,11 @@ function PostCard({ p }: { p: LinkPreview }) {
 function LinkCard({ p }: { p: LinkPreview }) {
   const big = p.kind === 'video';
   return (
-    <div className={cn('w-full max-w-md border-l-4 border-l-primary/50 pl-3', big ? 'space-y-1.5' : 'flex gap-3')}>
+    <div className={cn('w-full max-w-md border-l-[3px] border-l-orange pl-3', big ? 'space-y-1.5' : 'flex gap-3')}>
       <div className="min-w-0 flex-1 space-y-0.5">
         <SiteLine p={p} />
         {p.title && (
-          <a href={p.url} target="_blank" rel="noreferrer noopener" className="line-clamp-2 text-sm font-semibold text-primary hover:underline">
+          <a href={p.url} target="_blank" rel="noreferrer noopener" className="line-clamp-2 text-sm font-semibold text-foreground underline-offset-2 hover:text-orange-ink hover:underline">
             {p.title}
           </a>
         )}

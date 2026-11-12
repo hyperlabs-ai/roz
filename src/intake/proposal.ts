@@ -2,12 +2,18 @@
 // evaluateProposal NO crea nada: valida estrictamente, compone una description bien documentada (según el
 // tipo), guarda el borrador, recupera contexto, pide el veredicto de Claude y rankea candidatos.
 // confirmProposal materializa la tarea nativa en roz (asignada + con prioridad).
+//
+// roz v2 (ROZ_LINEAR_SOT encendido): confirmProposal crea el ISSUE en Linear en vez de la tarea
+// nativa (el espejo queda escrito en el momento). Con el flag apagado, idéntico a antes.
 import { db } from '../db/supabase.js';
 import { config } from '../config.js';
 import { complete } from '../adapters/anthropic.js';
 import { getProjectContext } from '../brain/retrieval.js';
 import { rankAssignees, type AssigneeSuggestion } from '../router/assign.js';
 import { createTask } from '../dashboard/queries.js';
+import { createIssueFromTicket } from '../linear/issues.js';
+import { linearSourceOfTruth } from '../linear/enabled.js';
+import { ROZ_PRIORITY_TO_LINEAR } from '../types/roz-v2.js';
 import { ValidationError } from '../utils/errors.js';
 
 export type ProposalKind = 'feature' | 'bug' | 'chore' | 'ticket' | 'refactor';
@@ -206,6 +212,16 @@ export interface ConfirmResult {
   workItemId: string;
   identifier: string;
   url: string;
+  /** Solo con Linear como fuente de verdad: lo que no se pudo mapear al crear el issue. */
+  warnings?: string[];
+  /** Solo con Linear como fuente de verdad: el asignado que de verdad quedó en el issue. */
+  assigneeDevId?: string | null;
+}
+
+/** Lo que el intake ya sabe del issue (Jev + política) al confirmar con Linear como fuente de verdad. */
+export interface ConfirmExtras {
+  estimate?: number | null;
+  solutionTypeId?: string | null;
 }
 
 /**
@@ -216,6 +232,7 @@ export interface ConfirmResult {
 export async function confirmProposal(
   proposalId: string,
   assigneeDevId: string | null,
+  extras: ConfirmExtras = {},
 ): Promise<ConfirmResult> {
   const supabase = db();
 
@@ -245,6 +262,30 @@ export async function confirmProposal(
     if (!dev) throw new ValidationError(`Dev no encontrado: ${assigneeDevId}`);
     if (dev.active === false) throw new ValidationError(`El dev ${assigneeDevId} está inactivo.`);
     devId = dev.id;
+  }
+
+  if (linearSourceOfTruth()) {
+    const issue = await createIssueFromTicket({
+      projectId: proposal.project.id,
+      title: proposal.name,
+      description: proposal.description,
+      solutionTypeId: extras.solutionTypeId ?? null,
+      estimate: extras.estimate ?? null,
+      priority: ROZ_PRIORITY_TO_LINEAR[proposal.priority as Priority] ?? null,
+      assigneeDevId: devId,
+      dueDate: null,
+      origin: 'intake',
+      source: { requester: proposal.requester ?? null },
+      requestedBy: null,
+    });
+    await supabase.from('proposal').update({ status: 'promoted' }).eq('id', proposalId);
+    return {
+      workItemId: issue.workItemId,
+      identifier: issue.identifier,
+      url: issue.url,
+      warnings: issue.warnings,
+      assigneeDevId: issue.assigneeDevId,
+    };
   }
 
   // Materializa la tarea NATIVA: asignada, con prioridad, estado inicial "Por hacer".

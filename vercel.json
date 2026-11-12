@@ -13,6 +13,10 @@
     { "path": "/v1/internal/calendar-poll", "schedule": "*/5 * * * *" },
     { "path": "/v1/internal/brain-sweep", "schedule": "0 9 * * *" },
     { "path": "/v1/internal/ops-bridge", "schedule": "*/30 * * * *" },
-    { "path": "/v1/internal/weekly-digest", "schedule": "0 3 * * 6" }
+    { "path": "/v1/internal/weekly-digest", "schedule": "0 3 * * 6" },
+    { "path": "/v1/internal/linear-reconcile", "schedule": "*/30 * * * *" },
+    { "path": "/v1/internal/granola-poll", "schedule": "*/5 * * * *" },
+    { "path": "/v1/internal/plan-watchdog", "schedule": "*/5 * * * *" },
+    { "path": "/v1/internal/task-reminders", "schedule": "0 15 * * 1-5" }
   ]
 }

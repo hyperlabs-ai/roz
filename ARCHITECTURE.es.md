@@ -265,6 +265,90 @@ mensajes propios. La identidad es `roz.dev`, la misma de toda la app. El código
 - **Adjuntos privados.** Bucket `chat-attachments` privado; el backend firma URLs temporales al
   entregar mensajes. Mismo tope de 4 MB que los adjuntos de tareas (límite de body de Vercel).
 
+#### 7b. Chat de Discord (`ROZ_DISCORD_CHAT`, default `false`)
+Con el flag encendido el chat de `/app/chat` deja de ser el interno y muestra los canales reales del
+servidor de Discord de la empresa, con el diseño de roz. Con el flag apagado todo lo anterior queda
+idéntico. Contrato completo en `docs/discord-chat-contracts.md`; tablas `discord_*` en la migración 0038.
+- **Puente (`discord-bridge/`, Railway).** Servicio Node + discord.js aparte, porque el gateway de
+  Discord necesita una conexión persistente que Vercel no da. Espeja en Supabase el servidor completo
+  (categorías, canales, hilos, roles, miembros, emojis, mensajes, reacciones, ediciones y borrados
+  suaves), hace backfill y se pone al día en cada `READY`, y después de escribir avisa a roz por
+  `POST /v1/internal/discord/events` (Bearer `ROZ_BRIDGE_SECRET`; 404 con el flag apagado). Copia
+  `src/types/discord.ts`, `reply.ts` y `normalize.ts` con `npm run sync-shared` (un test falla si se
+  desfasan). No se despliega en Vercel (`.vercelignore`).
+- **Lectura** (`src/discord/`, `/api/dashboard/discord/*`). Sale del espejo, filtrada por el
+  algoritmo oficial de permisos de Discord (`permissions.ts`, puro y probado): @everyone + roles +
+  overwrites, ADMINISTRATOR ve todo, los hilos heredan del padre. Sin cuenta ligada (OAuth2
+  `identify`, callback en `/api/discord/callback`) no se ve ningún canal.
+- **Escritura.** Por un webhook del canal (token cifrado con `utils/crypto.ts`) con el nombre del dev
+  y su foto de GitHub; respuestas como cita + mención, hilos, adjuntos y menciones seguras. Editar y
+  borrar solo lo propio enviado desde roz. El eco del gateway se funde con la fila de roz
+  (`client_nonce`/`dev_id`). Reacciones de solo lectura.
+- **Tiempo real.** Los mismos buzones privados `chat:dev:<devId>` del chat interno, con eventos
+  `discord.*`, solo a quien puede ver el canal.
+- **Lo de roz que sigue.** Fichas de tarea (`#HYP-12`, `ROZ-123`), "crear issue desde un mensaje"
+  (Linear con `ROZ_LINEAR_SOT`, tarea nativa sin él) y el aviso de `/ticket`: con el flag se publica
+  en el canal mapeado al proyecto mencionando al responsable, o por DM del bot (`src/discord/notify.ts`).
+  Las escrituras del chat interno responden 409 `CHAT_REPLACED_BY_DISCORD` (leer sigue permitido).
+- **Límites de Discord** (la UI los explica): no se ven los DMs personales ni la voz, y no se puede
+  escribir como la cuenta real (sale como webhook con etiqueta APP).
+- **Comandos `/roz` y acciones de mensaje** (`src/discord/commands/`, contrato
+  `docs/discord-commands-contract.md`). Un solo comando de servidor `/roz` con subcomandos (`tarea`,
+  `ticket`, `status`, `plan`, `pulso`, `infra`, `junta`) y tres acciones de mensaje ("Crear tarea con
+  roz", "Guardar como decisión", "Citar tareas"). Sin URL pública: el puente recibe
+  `INTERACTION_CREATE` por el gateway y la reenvía a `POST /v1/internal/discord/interactions` (Bearer
+  `ROZ_BRIDGE_SECRET`, comparado en tiempo constante); roz devuelve el `callback` exacto de Discord y el
+  puente lo manda. Para los 3 s: el router (`router.ts`) corre el handler con un presupuesto (≤ 1,8 s
+  según el snowflake); si no alcanza, responde diferido (type 5/6) y completa en segundo plano con el
+  token de la interacción (`PATCH @original` / followup). Modales y autocompletado no se pueden
+  diferir. El puente espera ≤ 2,5 s y, si roz no contesta, manda un fallback efímero.
+  - **Identidad y permisos**: el usuario de Discord → su dev (`discord_link` ⋈ dev activo); sin vínculo,
+    efímero con el link a Configuración. Interacciones de otro servidor o app no se ejecutan. Los
+    `custom_id` (`roz1:<acción>:<ids>`, `custom-id.ts`) solo llevan ids validados por tipo; todo se
+    revalida en el servidor con los servicios de siempre (planes: solo su dueño aprueba; tareas: reglas
+    del PATCH del dashboard, Linear con `ROZ_LINEAR_SOT`; mensajes: permisos del espejo).
+  - **Respuestas** (`respond.ts`): efímero para consultas y errores, público para fichas, status y
+    tickets; `allowed_mentions` siempre `parse: []` (solo suenan los usuarios que el handler nombra);
+    topes de Discord recortados; errores sin detalle crudo ni tokens. Embeds naranja `#ff5b23`, autor
+    "roz" y Roz-bot según el caso (`embeds.ts`, `links.ts`; se omiten si la URL de roz es local).
+  - **Registro** (`register.ts`): comandos de servidor, idempotente por hash. Al primer `READY` el
+    puente llama a `POST /v1/internal/discord/commands/sync`; a mano `npm run discord:commands` (roz) o
+    `npm run register-commands` (puente).
+  - **Paridad en roz** (`from-roz.ts`, `/api/dashboard/discord/commands*`): el compositor del chat de
+    Discord tiene "/" con los mismos subcomandos, "@tarea" y el botón "Status"; corre el MISMO handler
+    con un contexto sin token, como el dev de la sesión, y publica lo público por el webhook del dev.
+
+### 8. roz v2: Linear como fuente de verdad, juntas, planes del agente y Pulso
+Todo detrás de **`ROZ_LINEAR_SOT`** (default `false`). Con el flag apagado roz se comporta como
+antes: las rutas nuevas de juntas, planes, runners y `/v1/runner` responden `409 LINEAR_SOT_OFF`, los
+crons nuevos se saltan y el webhook de Linear responde 200 sin emitir. Contratos entre módulos en
+`docs/roz-v2-contracts.md`; tablas en las migraciones 0036 y 0037.
+
+- **Linear manda (`src/linear/`).** `work_item` pasa a ser espejo de solo lectura (columnas
+  `linear_*`), alimentado por `POST /webhooks/linear` (firma + anti-replay → outbox `linear.webhook`)
+  y por la reconciliación GraphQL cada 30 min (`/v1/internal/linear-reconcile`, que sustituye a
+  `ops-bridge` con el flag encendido). El espejo es monótono por `updatedAt` y emite los efectos
+  (`plan.enqueue`, `work_item.assigned`, `work_item.done`). `/ticket` e intake siguen pasando por Jev
+  y la política p2, pero crean el issue en Linear. Las demás escrituras de tareas responden
+  `409 TASKS_READ_ONLY` (`assertTasksWritable`). Las señales de código ya no mueven el estado (lo hace
+  la integración de GitHub de Linear) y un `ROZ-123` viejo se resuelve a su issue vigente.
+- **Juntas (`src/meetings/`).** Sesión manual (texto, .txt/.vtt/.srt o resumen de Granola) o Granola
+  por API (cron cada 5 min, opcional). Claude extrae tareas, compromisos y decisiones con cita
+  literal; el código descarta las citas que no aparecen en el texto. Jev clasifica (q3), la búsqueda
+  híbrida marca duplicados y la política propone responsable. La bandeja acepta (issue en Linear o
+  comentario en el duplicado) o descarta. Las decisiones van al brain como átomos.
+- **Planes por dev (`src/plans/`, `runner/`).** Cada issue asignado genera un `agent_plan` en la cola
+  de su dueño, con riesgo 0/1/2 por reglas (paths sensibles, migraciones, auth/RLS, pagos, SLA). Las
+  transiciones pasan solo por `transitionPlan` (update condicional → 409 `PLAN_TAKEN`). Reclamar es
+  atómico, cambia el asignado en Linear y queda como corrección `'reclamado'`. Un watchdog cada 5 min
+  regresa a la cola lo que no late y marca reclamable lo atorado (push al equipo). Sin nube: el
+  **roz-runner** (CLI Node en la PC del dev, token `rozr_…` revocable, polling saliente) corre
+  `claude -p` en un git worktree por plan, con el MCP de roz y lista blanca de herramientas. Con su
+  token, `/mcp` solo expone las herramientas de lectura y `report_progress`.
+- **Pulso (`src/dashboard/pulse.ts`, `/app` con el flag).** KPIs de la semana, tarjeta por persona,
+  mapa de calor y feed en vivo. Lecturas puras y tolerantes: sin la migración 0036 esa parte sale
+  vacía en vez de dar 500.
+
 ---
 
 ## Núcleo de eventos (outbox + Vercel Cron)

@@ -10,9 +10,22 @@ import { drainOutbox } from '../events/outbox.js';
 import { recordJobRun } from '../events/job-run.js';
 import { brainSweep } from '../brain/sweep.js';
 import { sendWeeklyDigest, sendDevWeeklyDigests } from '../notify/digest.js';
+import { notifyDueTasks } from '../notify/notifications.js';
 import { pollInfra } from '../infra/poll.js';
 import { pollCalendars } from '../calendar/poll.js';
 import { reconcileOpsBridge, auditOpsBridge } from '../reconcile/ops-bridge.js';
+import { linearSourceOfTruth } from '../linear/enabled.js';
+import { scheduleLinearReconcile } from '../linear/reconcile.js';
+import { pollGranola } from '../meetings/granola.js';
+import { runPlanWatchdog } from '../plans/service.js';
+import { discordChatEnabled, DISCORD_CHAT_DISABLED_CODE } from '../discord/enabled.js';
+import { bridgeAuthorized } from './discord.js';
+import { InteractionEnvelopeSchema, failureCallback, routeInteraction } from '../discord/commands/router.js';
+import { syncGuildCommands } from '../discord/commands/register.js';
+import { definitionsHash, commandDefinitions } from '../discord/commands/definitions.js';
+import type { DiscordInteractionEnvelope } from '../discord/commands/types.js';
+import { inBackground } from '../utils/background.js';
+import { AppError } from '../utils/errors.js';
 
 export const internalRoutes = new Hono<RozContext>();
 
@@ -79,8 +92,12 @@ internalRoutes.get('/calendar-poll', async (c) => {
 // recoge lo que ningún evento pudo disparar — sobre todo tareas ya asignadas a un dev que acaba
 // de activarse. Audita, repara y vuelve a auditar: si `converged` sale false, la reparación no
 // alcanzó y hay que mirarlo a mano.
+//
+// Con ROZ_LINEAR_SOT encendido las tareas viven en Linear y su red es /linear-reconcile: este cron se
+// salta. Con el flag apagado corre exactamente igual que siempre.
 internalRoutes.get('/ops-bridge', async (c) => {
   if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  if (linearSourceOfTruth()) return c.json({ ok: true, skipped: 'linear_sot' });
   const result = await reconcileOpsBridge();
   if (!result.converged) c.get('logger')?.error(result, 'ops bridge no convergió');
   else if (result.repaired > 0) c.get('logger')?.warn(result, 'ops bridge reparado');
@@ -93,9 +110,117 @@ internalRoutes.get('/ops-bridge/audit', async (c) => {
   return c.json({ ok: true, ...(await auditOpsBridge()) });
 });
 
+// ---- roz v2 ----
+// Los tres responden { skipped: 'flag' } con ROZ_LINEAR_SOT apagado, sin tocar la base ni APIs.
+// Se registra la corrida (como el drain) para distinguir "no hubo nada" de "el cron no corre".
+
+/** Corre un job de cron registrando su latido en job_run, con éxito o con error. */
+async function cronJob<T>(name: string, run: () => Promise<T>): Promise<T> {
+  const t0 = Date.now();
+  try {
+    const result = await run();
+    await recordJobRun(name, { durationMs: Date.now() - t0, result });
+    return result;
+  } catch (err) {
+    await recordJobRun(name, { durationMs: Date.now() - t0, error: String(err) });
+    throw err;
+  }
+}
+
+// Reconciliación con Linear cada 30 min: encola un 'linear.reconcile' por tick (el drain lo procesa).
+// Es la red del webhook de Linear y sustituye a /ops-bridge cuando el flag está encendido.
+internalRoutes.get('/linear-reconcile', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  if (!linearSourceOfTruth()) return c.json({ ok: true, skipped: 'flag' });
+  return c.json(await cronJob('linear-reconcile', () => scheduleLinearReconcile()));
+});
+
+// Sondeo de Granola cada 5 min (opcional: sin GRANOLA_API_KEY se salta sin tocar la red).
+internalRoutes.get('/granola-poll', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  // Sin flag de Linear: las juntas funcionan con o sin él; pollGranola se salta solo sin llave.
+  const logger = c.get('logger');
+  return c.json(await cronJob('granola-poll', () => pollGranola({ log: (m, d) => logger?.info(d, m) })));
+});
+
+// Watchdog de planes cada 5 min: lo que no late regresa a la cola; lo atorado se marca reclamable.
+internalRoutes.get('/plan-watchdog', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  if (!linearSourceOfTruth()) return c.json({ ok: true, requeued: 0, claimable: 0, skipped: 'flag' });
+  const result = await cronJob('plan-watchdog', () => runPlanWatchdog());
+  return c.json({ ok: true, ...result });
+});
+
+// ---- comandos de roz en Discord (/roz, acciones de mensaje) ----
+// Contrato: docs/discord-commands-contract.md. Las interacciones llegan al PUENTE por el gateway; el
+// puente las reenvía aquí con ROZ_BRIDGE_SECRET y manda a Discord el `callback` que roz devuelve. Lo
+// que no cabe en los 3 s de Discord se completa en segundo plano con el token de la interacción.
+// Mismo criterio que /discord/events: flag apagado → 404; bearer malo o secreto vacío → 403.
+
+const discordDisabled = (c: any) =>
+  c.json({ error: { code: DISCORD_CHAT_DISABLED_CODE, message: 'El chat de Discord no está activado en este servidor.' } }, 404);
+
+internalRoutes.post('/discord/interactions', async (c) => {
+  if (!discordChatEnabled()) return discordDisabled(c);
+  if (!bridgeAuthorized(c.req.header('authorization'))) return c.json({ error: 'forbidden' }, 403);
+  const parsed = InteractionEnvelopeSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: { code: 'VALIDATION_ERROR', message: 'interacción inválida' } }, 400);
+  if (parsed.data.guildId !== config.discord.guildId) return c.json({ error: 'forbidden' }, 403);
+  const envelope = parsed.data as unknown as DiscordInteractionEnvelope;
+  const logger = c.get('logger');
+  // Nunca se loguea el token ni el contenido: tipo, ruta y tiempos bastan para diagnosticar.
+  const log = (msg: string, extra?: Record<string, unknown>) => logger?.warn({ ...extra, interactionId: envelope.interaction.id }, msg);
+  try {
+    const t0 = Date.now();
+    const outcome = await routeInteraction(envelope, { log });
+    if (outcome.after) {
+      const after = outcome.after;
+      inBackground(after, (err) => log('discord: no se pudo completar la interacción', { route: outcome.route, err: err instanceof Error ? err.message : String(err) }));
+    }
+    logger?.info({ interactionId: envelope.interaction.id, route: outcome.route, ms: Date.now() - t0, callbackType: outcome.callback.type }, 'discord: interacción');
+    return c.json({ callback: outcome.callback });
+  } catch (err) {
+    logger?.error({ err: err instanceof Error ? err.message : String(err), interactionId: envelope.interaction.id }, 'discord: el router de interacciones falló');
+    // 200 con un callback de error: el usuario ve "algo falló" en vez de "la aplicación no respondió".
+    return c.json({ callback: failureCallback(envelope.interaction.type) });
+  }
+});
+
+// Registro idempotente de los comandos en el servidor (el puente lo llama al arrancar). ?force=1
+// registra aunque el hash coincida; ?dryRun=1 solo dice si cambiaría.
+internalRoutes.post('/discord/commands/sync', async (c) => {
+  if (!discordChatEnabled()) return discordDisabled(c);
+  if (!bridgeAuthorized(c.req.header('authorization'))) return c.json({ error: 'forbidden' }, 403);
+  try {
+    const result = await syncGuildCommands({ force: c.req.query('force') === '1', dryRun: c.req.query('dryRun') === '1' });
+    c.get('logger')?.info(result, 'discord: comandos sincronizados');
+    return c.json({ ok: true, ...result });
+  } catch (err) {
+    if (err instanceof AppError) return c.json({ error: { code: err.code, message: err.message } }, err.status as 500);
+    c.get('logger')?.error({ err: err instanceof Error ? err.message : String(err) }, 'discord: no se pudieron registrar los comandos');
+    return c.json({ error: { code: 'DISCORD_COMMANDS_SYNC_FAILED', message: 'no se pudieron registrar los comandos' } }, 502);
+  }
+});
+
+// Definición vigente (diagnóstico del puente / del compositor): hash + comandos.
+internalRoutes.get('/discord/commands', (c) => {
+  if (!discordChatEnabled()) return discordDisabled(c);
+  if (!bridgeAuthorized(c.req.header('authorization'))) return c.json({ error: 'forbidden' }, 403);
+  return c.json({ hash: definitionsHash(), commands: commandDefinitions() });
+});
+
 // Digest semanal por email: resumen de la semana con botón al dashboard. Lo dispara el cron
 // los viernes en la noche (vercel.json). Destinatarios y URL en config (DIGEST_RECIPIENTS,
 // DASHBOARD_URL).
+// Recordatorio diario de fechas: a cada dev, un push con lo que le vence hoy y lo ya vencido.
+// Días hábiles a las 15:00 UTC (9:00 en México). Idempotente por dev y día.
+internalRoutes.get('/task-reminders', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  const result = await notifyDueTasks();
+  c.get('logger')?.info(result, 'task reminders sent');
+  return c.json({ ok: true, ...result });
+});
+
 internalRoutes.get('/weekly-digest', async (c) => {
   if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
   // Digest de equipo (a fer/destinatarios) + digest personal por dev (resumen de su propio trabajo).

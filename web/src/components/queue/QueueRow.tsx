@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
   GitCommitHorizontal, GitCompareArrows, History, GitBranch, GitPullRequest, Eye, GitMerge,
-  FilePlus2, UserPlus, CircleCheck, NotebookPen, FolderGit2, Replace, BellRing, Bell, Layers, Sparkles,
+  FilePlus2, UserPlus, CircleCheck, NotebookPen, FolderGit2, Replace, BellRing, Bell, Layers, Bot,
   type LucideIcon,
 } from 'lucide-react';
-import { UserAvatar, LineDelta } from '@/components/bits';
+import { LineDelta } from '@/components/bits';
+import { GithubAvatar } from '@/components/brand';
 import { QUEUE_EVENT, QUEUE_FAMILY, QUEUE_FAMILY_FAILED, type QueueFamily } from '@/lib/labels';
 import { relative } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -21,7 +22,7 @@ const ICONS: Record<string, LucideIcon> = {
   'work_item.created': FilePlus2,
   'work_item.assigned': UserPlus,
   'work_item.done': CircleCheck,
-  'work_item.auto_assign': Sparkles,
+  'work_item.auto_assign': Bot,
   'change.documented': NotebookPen,
   'repo.detected': FolderGit2,
   'repo.renamed': Replace,
@@ -75,10 +76,10 @@ export function Ago({ iso, className }: { iso: string | null; className?: string
 }
 
 const RAIL: Record<string, string> = {
-  processing: 'bg-primary',
-  pending: 'bg-muted-foreground/30',
-  failed: 'bg-warning',
-  dead: 'bg-destructive',
+  processing: 'bg-orange',
+  pending: 'bg-toggle-off',
+  failed: 'bg-yellow',
+  dead: 'bg-red',
   done: 'bg-transparent',
 };
 
@@ -87,19 +88,19 @@ const RAIL: Record<string, string> = {
 function StatusPill({ ev }: { ev: QueueEvent }) {
   if (ev.status === 'done') return null;
 
-  const base = 'shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium tabular-nums';
+  const base = 'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 label-caps tabular-nums';
   if (ev.status === 'dead') {
-    return <span className={cn(base, 'bg-destructive/12 text-destructive')}>Muerto · {ev.attempts}/{ev.maxAttempts}</span>;
+    return <span className={cn(base, 'bg-red-soft text-red')}>Muerto · {ev.attempts}/{ev.maxAttempts}</span>;
   }
   if (ev.status === 'failed') {
     return (
-      <span className={cn(base, 'bg-warning/12 text-warning')}>
+      <span className={cn(base, 'bg-yellow-soft text-yellow-ink')}>
         Reintento {ev.attempts}/{ev.maxAttempts}
       </span>
     );
   }
-  if (ev.status === 'processing') return <span className={cn(base, 'bg-primary/12 text-primary')}>Procesando</span>;
-  return <span className={cn(base, 'bg-muted text-muted-foreground')}>En cola</span>;
+  if (ev.status === 'processing') return <span className={cn(base, 'bg-orange-soft text-orange-ink')}>Procesando</span>;
+  return <span className={cn(base, 'bg-panel text-muted-foreground')}>En cola</span>;
 }
 
 export function QueueRow({ ev, isNew }: { ev: QueueEvent; isNew?: boolean }) {
@@ -123,15 +124,16 @@ export function QueueRow({ ev, isNew }: { ev: QueueEvent; isNew?: boolean }) {
     ev.actor && ev.dev && (ev.actor.devId ?? ev.actor.login) !== (ev.dev.devId ?? ev.dev.login) ? ev.actor : null;
 
   return (
-    <div className={cn('flex items-stretch gap-3 px-4 py-2.5', inflight && 'bg-muted/30', isNew && 'animate-fade-in-up')}>
-      <span className={cn('w-0.5 shrink-0 rounded-full transition-colors duration-500 ease-spring', RAIL[ev.status] ?? 'bg-transparent')} />
+    <div className={cn('flex items-stretch gap-3 px-4 py-2.5', inflight && 'bg-sidebar', isNew && 'animate-fade-in-up')}>
+      <span className={cn('w-[3px] shrink-0 rounded-full transition-colors duration-500 ease-spring', RAIL[ev.status] ?? 'bg-transparent')} />
 
       {person ? (
-        <UserAvatar
+        <GithubAvatar
+          login={person.login}
+          id={person.devId}
           url={person.avatarUrl}
           name={person.name}
-          className={cn('size-7 shrink-0', inflight && 'shimmer rounded-full')}
-          title={person.name}
+          className={cn('size-7', inflight && 'shimmer')}
         />
       ) : (
         <span className={cn('grid size-7 shrink-0 place-items-center rounded-md', QUEUE_FAMILY[family])}>
@@ -147,7 +149,7 @@ export function QueueRow({ ev, isNew }: { ev: QueueEvent; isNew?: boolean }) {
             {ev.subject && <span className="text-muted-foreground"> · {ev.subject}</span>}
           </span>
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
           {ev.repo && (
             <span className="font-mono" title={ev.repo}>{shortRepo(ev.repo)}</span>
           )}
@@ -162,12 +164,12 @@ export function QueueRow({ ev, isNew }: { ev: QueueEvent; isNew?: boolean }) {
           {reattributed && <span className="truncate">· lo empujó {reattributed.name}</span>}
         </div>
         {ev.phase === 'failed' && ev.error && (
-          <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-destructive">{ev.error}</p>
+          <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-red">{ev.error}</p>
         )}
       </div>
 
       <div className="flex shrink-0 flex-col items-end gap-1">
-        <Ago iso={ev.resolvedAt ?? ev.createdAt} className="text-[11px] tabular-nums text-muted-foreground" />
+        <Ago iso={ev.resolvedAt ?? ev.createdAt} className="text-[10.5px] tabular-nums text-faint" />
         <StatusPill ev={ev} />
       </div>
     </div>

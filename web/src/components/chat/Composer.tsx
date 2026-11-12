@@ -13,6 +13,9 @@ import {
 } from '@/lib/chat';
 import { cn } from '@/lib/utils';
 
+/** Tecla en la ayuda del compositor: cajita mono gris, como las etiquetas del mock. */
+const KBD = 'rounded-sm bg-panel px-1 py-px font-sans text-[10px] font-semibold text-muted-foreground';
+
 interface Upload {
   key: string;
   file: File;
@@ -38,6 +41,7 @@ interface Suggestion {
   id: string;
   name: string;
   avatarUrl: string | null;
+  email?: string | null;
   hint?: string;
 }
 
@@ -120,7 +124,7 @@ export function Composer({
       .filter((d) => !q || fold(d.name).split(/\s+/).some((w) => w.startsWith(q)) || fold(d.name).startsWith(q))
       .sort((a, b) => Number(members.has(b.id)) - Number(members.has(a.id)) || a.name.localeCompare(b.name))
       .slice(0, 7)
-      .map((d) => ({ id: d.id, name: d.name, avatarUrl: d.avatarUrl, hint: members.has(d.id) ? undefined : 'no está en la conversación' }));
+      .map((d) => ({ id: d.id, name: d.name, avatarUrl: d.avatarUrl, email: d.email, hint: members.has(d.id) ? undefined : 'no está en la conversación' }));
     const canal = 'canal'.startsWith(q) ? [{ id: '__canal', name: 'canal', avatarUrl: null, hint: 'avisa a todos los miembros' }] : [];
     const tarea = 'tarea'.startsWith(q) ? [{ id: '__tarea', name: 'tarea', avatarUrl: null, hint: 'citar una tarea' }] : [];
     return [...canal, ...tarea, ...people];
@@ -373,10 +377,10 @@ export function Composer({
       onDrop={onDrop}
     >
       {taskQuery && (
-        <div className="absolute bottom-full left-4 right-4 z-20 mb-1 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg md:left-5 md:right-auto md:w-[28rem]">
-          <div className="flex items-center gap-2 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="absolute bottom-full left-4 right-4 z-20 mb-1.5 overflow-hidden rounded-lg border bg-popover p-1 shadow-md md:left-5 md:right-auto md:w-[28rem]">
+          <div className="flex items-center gap-2 px-2 py-1.5 label-caps text-faint">
             Citar tarea
-            <span className="truncate font-normal normal-case tracking-normal">· persona y/o palabras, p. ej. @tarea @Fer login</span>
+            <span className="truncate font-sans text-[11px] font-normal normal-case tracking-normal">· persona y/o palabras, p. ej. @tarea @Fer login</span>
             {taskLoading && <Loader2 className="ml-auto size-3 animate-spin" />}
           </div>
           {taskResults.length === 0 ? (
@@ -392,7 +396,7 @@ export function Composer({
               const people = t.assigneeDevIds
                 .map((id) => devOf(id))
                 .filter((d): d is NonNullable<typeof d> => !!d)
-                .map((d) => ({ name: d.name, avatarUrl: d.avatarUrl }));
+                .map((d) => ({ name: d.name, avatarUrl: d.avatarUrl, id: d.id, email: d.email }));
               return (
                 <button
                   key={t.id}
@@ -402,10 +406,10 @@ export function Composer({
                     pickTask(t);
                   }}
                   onMouseEnter={() => setActive(i)}
-                  className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm', i === active && 'bg-accent')}
+                  className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm', i === active && 'bg-orange-soft')}
                 >
                   <StatusIcon state={t.status} className="size-4" />
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">{t.identifier}</span>
+                  <span className="shrink-0 font-mono text-[11px] font-medium text-faint">{t.identifier}</span>
                   <span className="min-w-0 flex-1 truncate">{t.name}</span>
                   {t.projectName && <span className="hidden max-w-[7rem] truncate text-xs text-muted-foreground sm:inline">{t.projectName}</span>}
                   <AvatarStack people={people} size="size-5" max={2} />
@@ -417,28 +421,28 @@ export function Composer({
       )}
 
       {showSlash && (
-        <div className="absolute bottom-full left-4 right-4 z-20 mb-1 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg md:left-5 md:right-auto md:w-96">
-          <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Comandos</div>
+        <div className="absolute bottom-full left-4 right-4 z-20 mb-1.5 overflow-hidden rounded-lg border bg-popover p-1 shadow-md md:left-5 md:right-auto md:w-96">
+          <div className="px-2 py-1.5 label-caps text-faint">Comandos</div>
           <button
             type="button"
             onMouseDown={(e) => {
               e.preventDefault();
               openTicket('');
             }}
-            className="flex w-full items-center gap-2 rounded-md bg-accent px-2 py-1.5 text-left text-sm"
+            className="flex w-full items-center gap-2 rounded-md bg-orange-soft px-2 py-1.5 text-left text-sm"
           >
-            <span className="grid size-6 place-items-center rounded-md bg-primary/10 text-primary">
+            <span className="grid size-6 place-items-center rounded-md bg-orange text-primary-foreground">
               <TicketPlus className="size-3.5" />
             </span>
-            <span className="font-medium">/ticket</span>
+            <span className="font-mono text-[12.5px] font-semibold">/ticket</span>
             <span className="ml-auto truncate text-xs text-muted-foreground">Crear un ticket: roz lo asigna y avisa</span>
           </button>
         </div>
       )}
 
       {mention && suggestions.length > 0 && (
-        <div className="absolute bottom-full left-4 right-4 z-20 mb-1 overflow-hidden rounded-lg border bg-popover p-1 shadow-lg md:left-5 md:right-auto md:w-80">
-          <div className="px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Mencionar</div>
+        <div className="absolute bottom-full left-4 right-4 z-20 mb-1.5 overflow-hidden rounded-lg border bg-popover p-1 shadow-md md:left-5 md:right-auto md:w-80">
+          <div className="px-2 py-1.5 label-caps text-faint">Mencionar</div>
           {suggestions.map((s, i) => (
             <button
               key={s.id}
@@ -448,14 +452,14 @@ export function Composer({
                 pick(s);
               }}
               onMouseEnter={() => setActive(i)}
-              className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm', i === active && 'bg-accent')}
+              className={cn('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm', i === active && 'bg-orange-soft')}
             >
               {s.id === '__canal' || s.id === '__tarea' ? (
-                <span className="grid size-6 place-items-center rounded-md bg-primary/10 text-xs font-bold text-primary">
+                <span className="grid size-6 place-items-center rounded-full bg-panel text-xs font-bold text-foreground tabular-nums">
                   {s.id === '__tarea' ? '#' : '@'}
                 </span>
               ) : (
-                <UserAvatar url={s.avatarUrl} name={s.name} className="size-6" />
+                <UserAvatar url={s.avatarUrl} email={s.email} id={s.id} name={s.name} className="size-6" />
               )}
               <span className="font-medium">{s.id.startsWith('__') ? `@${s.name}` : s.name}</span>
               {s.hint && <span className="ml-auto truncate text-xs text-muted-foreground">{s.hint}</span>}
@@ -466,14 +470,14 @@ export function Composer({
 
       <div
         className={cn(
-          'rounded-xl border bg-card shadow-sm transition-colors focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/30',
-          dragging && 'border-primary ring-2 ring-primary/30',
+          'rounded-lg border bg-card shadow-sm transition-colors focus-within:border-ring focus-within:ring-1 focus-within:ring-ring/30',
+          dragging && 'border-dashed border-orange bg-orange-soft/40 ring-2 ring-orange/25',
         )}
       >
         {uploads.length > 0 && (
           <div className="flex flex-wrap gap-2 border-b p-2">
             {uploads.map((u) => (
-              <div key={u.key} className={cn('relative flex items-center gap-2 rounded-lg border bg-background p-1.5 pr-7 text-xs', u.error && 'border-destructive/50')}>
+              <div key={u.key} className={cn('relative flex items-center gap-2 rounded-md border bg-sidebar p-1.5 pr-7 text-xs', u.error && 'border-red/50 bg-red-soft')}>
                 {u.preview && u.isVideo ? (
                   <span className="relative size-10 overflow-hidden rounded bg-black">
                     <video src={u.preview} muted playsInline preload="metadata" className="size-full object-cover" />
@@ -482,7 +486,7 @@ export function Composer({
                 ) : u.preview ? (
                   <img src={u.preview} alt="" className="size-10 rounded object-cover" />
                 ) : (
-                  <span className="grid size-10 place-items-center rounded bg-primary/10 text-primary">
+                  <span className="grid size-10 place-items-center rounded bg-panel text-muted-foreground">
                     <FileText className="size-5" />
                   </span>
                 )}
@@ -492,8 +496,8 @@ export function Composer({
                     {u.error ? `No se subió — ${u.error}` : u.attachment ? 'Listo' : `Subiendo… ${Math.round(u.progress * 100)}%`}
                   </span>
                   {!u.attachment && !u.error && (
-                    <span className="mt-1 block h-1 overflow-hidden rounded-full bg-muted">
-                      <span className="block h-full rounded-full bg-primary transition-[width]" style={{ width: `${Math.max(4, u.progress * 100)}%` }} />
+                    <span className="mt-1 block h-1 overflow-hidden rounded-full bg-panel">
+                      <span className="block h-full rounded-full bg-orange transition-[width]" style={{ width: `${Math.max(4, u.progress * 100)}%` }} />
                     </span>
                   )}
                 </span>
@@ -551,7 +555,7 @@ export function Composer({
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="rounded-full bg-muted text-muted-foreground hover:text-foreground"
+            className="size-7 rounded-btn bg-panel text-muted-foreground hover:bg-toggle-off/70 hover:text-foreground"
             onClick={() => fileRef.current?.click()}
             aria-label="Adjuntar archivo"
           >
@@ -563,28 +567,29 @@ export function Composer({
               type="button"
               variant="ghost"
               size="sm"
-              className="h-7 gap-1.5 rounded-full bg-muted px-2.5 text-xs text-muted-foreground hover:text-foreground"
+              className="h-7 gap-1.5 rounded-btn bg-panel px-2.5 label-caps text-muted-foreground hover:bg-toggle-off/70 hover:text-foreground"
               onClick={() => setStatusOpen(true)}
               aria-label="Compartir status"
             >
               <ClipboardList className="size-3.5" /> Status
             </Button>
           )}
-          <span className="ml-1 hidden text-[11px] text-muted-foreground md:inline">
-            <kbd className="font-sans">Shift + Enter</kbd> para salto de línea · <kbd className="font-sans">@</kbd> para mencionar
+          <span className="ml-1.5 hidden min-w-0 truncate text-[11px] text-faint md:block">
+            <kbd className={KBD}>Shift+Enter</kbd> salto de línea · <kbd className={KBD}>@</kbd> mencionar
             {' · '}
-            <kbd className="font-sans">@tarea</kbd> para citar una tarea · <kbd className="font-sans">/ticket</kbd> para crear un ticket
+            <kbd className={KBD}>@tarea</kbd> citar tarea · <kbd className={KBD}>/ticket</kbd> crear ticket
           </span>
           <div className="ml-auto flex items-center gap-2">
             {text.length > MAX_MESSAGE_LENGTH * 0.9 && (
-              <span className={cn('text-[11px]', text.length > MAX_MESSAGE_LENGTH ? 'text-destructive' : 'text-muted-foreground')}>
+              <span className={cn('text-[10.5px] tabular-nums', text.length > MAX_MESSAGE_LENGTH ? 'text-red' : 'text-faint')}>
                 {text.length}/{MAX_MESSAGE_LENGTH}
               </span>
             )}
             <Button
               type="button"
               size="icon-sm"
-              className={cn('rounded-lg transition-opacity', !canSend && 'opacity-40')}
+              variant="brand"
+              className={cn('transition-opacity', !canSend && 'opacity-40')}
               disabled={!canSend}
               onClick={send}
               aria-label="Enviar"

@@ -126,8 +126,8 @@ export function CalendarConnectCard() {
         </div>
 
         {(revoked || failing) && (
-          <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-3 text-sm">
-            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
+          <div className="flex items-start gap-2 rounded-lg border border-yellow/40 bg-yellow-soft px-3 py-3 text-sm">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-yellow-ink" />
             <div className="text-muted-foreground">
               <p className="font-medium text-foreground">
                 {revoked ? 'Se revocó el acceso' : 'No se pudo leer tu calendario'}

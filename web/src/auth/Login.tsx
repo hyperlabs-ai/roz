@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { ErrorCard } from '@/components/bits';
 import { RozLogo } from '@/components/RozLogo';
+import { Eyebrow } from '@/components/brand';
 
 // Dominios permitidos (coma-separados) vía VITE_ALLOWED_EMAIL_DOMAINS. Vacío = sin pre-filtro
 // en el cliente; el backend igual valida el dominio (DASHBOARD_ALLOWED_DOMAINS).
@@ -35,21 +36,22 @@ export default function Login() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-5">
-      {/* Fondo sutil: un resplandor de marca difuso, coherente en light y dark */}
-      <div className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[36rem] w-[36rem] -translate-x-1/2 -translate-y-1/3 rounded-full bg-primary/10 blur-3xl" aria-hidden />
+    <div className="flex min-h-screen items-center justify-center bg-background p-5">
       <div className="animate-scale-in w-full max-w-sm">
-        <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <RozLogo className="size-11 rounded-xl ring-1 ring-border" />
+        <div className="mb-5 flex items-center gap-2.5">
+          <RozLogo className="size-9 rounded-lg ring-1 ring-border" />
           <div className="leading-tight">
-            <div className="text-lg font-extrabold tracking-wide">ROZ</div>
-            <div className="text-xs text-muted-foreground">Desarrollo</div>
+            <div className="title-tight text-lg">roz</div>
+            <div className="label-caps text-faint">Plano de control</div>
           </div>
         </div>
-        <Card className="shadow-lg">
-          <CardContent className="p-7">
-            <h1 className="text-xl font-semibold tracking-tight">Inicia sesión</h1>
-            <p className="mb-6 mt-1 text-sm text-muted-foreground">Con tu cuenta del equipo.</p>
+        <Card>
+          <div className="border-b px-7 pb-5 pt-6">
+            <Eyebrow>Acceso · equipo</Eyebrow>
+            <h1 className="title-tight mt-3 text-2xl">Inicia sesión</h1>
+            <p className="mt-1 text-sm text-muted-foreground">Con tu cuenta del equipo.</p>
+          </div>
+          <CardContent className="p-7 pt-5">
             <form onSubmit={onSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="email">Correo</Label>

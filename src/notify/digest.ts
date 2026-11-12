@@ -8,6 +8,7 @@ import { db } from '../db/supabase.js';
 import { sendEmail } from '../adapters/email.js';
 import { pushToDev, pushToEmail } from './push.js';
 import { emailAllowed, emailEnabled } from './switches.js';
+import { devDigestNotice, emailFooter, emailHeader, rangeLabel as fmtRange, teamDigestNotice, toPush } from './copy.js';
 import { getOverview, getDeveloper, listInfra, previousPeriod, type Metric, type Period } from '../dashboard/queries.js';
 
 export interface DigestResult {
@@ -17,7 +18,7 @@ export interface DigestResult {
 }
 
 /** Últimos 7 días, terminando ahora (one-shot desde cron → usar la hora real es seguro). */
-function lastWeekPeriod(): Period {
+export function lastWeekPeriod(): Period {
   const to = new Date();
   const from = new Date(to.getTime() - 7 * 24 * 3600 * 1000);
   return { from: from.toISOString(), to: to.toISOString() };
@@ -30,7 +31,7 @@ function fmtNum(n: number): string {
 /** Chip de variación vs. semana pasada (verde sube / rojo baja). invert: menos es mejor. */
 function deltaChip(m: Metric, invert = false): string {
   if (m.direction === 'none' || m.changePct === null || m.direction === 'flat') {
-    return `<span style="color:#9ca3af;font-size:12px">—</span>`;
+    return `<span style="color:#9ca3af;font-size:12px">sin cambio</span>`;
   }
   const good = invert ? m.direction === 'down' : m.direction === 'up';
   const color = good ? '#16a34a' : '#dc2626';
@@ -92,7 +93,7 @@ function renderInfraBlock(infra: Awaited<ReturnType<typeof listInfra>>): { html:
   return { html, text };
 }
 
-function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>; infra: Awaited<ReturnType<typeof listInfra>>; url: string; rangeLabel: string }): { html: string; text: string } {
+export function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>; infra: Awaited<ReturnType<typeof listInfra>>; url: string; rangeLabel: string }): { html: string; text: string } {
   const { overview: o, infra, url, rangeLabel } = opts;
   const k = o.kpis;
   const topProjects = o.byProject.slice(0, 5);
@@ -108,15 +109,12 @@ function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>;
         .join('')
     : `<tr><td style="padding:8px 0;color:#9ca3af;font-size:13px">Sin actividad registrada esta semana</td></tr>`;
 
-  const button = `<a href="${url}/" style="display:inline-block;background:#2853ff;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver el resumen completo →</a>`;
+  const button = `<a href="${url}/" style="display:inline-block;background:#ff5b23;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver el resumen completo</a>`;
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
     <table role="presentation" width="540" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e8eb">
-      <tr><td style="background:#0d0d12;padding:20px 28px">
-        <span style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:3px">ROZ</span>
-        <span style="color:#8b8f9a;font-size:13px;margin-left:8px">Resumen semanal</span>
-      </td></tr>
+      ${emailHeader('default', url, 'el resumen semanal del equipo')}
       <tr><td style="padding:28px 28px 8px">
         <p style="margin:0 0 4px;color:#111827;font-size:18px;font-weight:700">Lo que se trabajó esta semana</p>
         <p style="margin:0 0 20px;color:#6b7280;font-size:13px">${rangeLabel} · comparado con la semana anterior</p>
@@ -126,7 +124,7 @@ function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>;
           ${kpiCell('Activos', fmtNum(k.activeContributors.value), k.activeContributors)}
         </tr><tr style="height:6px"></tr><tr>
           ${kpiCell('Líneas', fmtNum(k.linesChanged.value), k.linesChanged)}
-          ${kpiCell('Cycle time', k.avgCycleTimeHours.value ? `${k.avgCycleTimeHours.value}h` : '—', k.avgCycleTimeHours, true)}
+          ${kpiCell('Cycle time', k.avgCycleTimeHours.value ? `${k.avgCycleTimeHours.value}h` : 'n/d', k.avgCycleTimeHours, true)}
           <td style="border:1px solid #ffffff"></td>
         </tr></table>
       </td></tr>
@@ -136,29 +134,27 @@ function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>;
       </td></tr>
       ${infraBlock.html}
       <tr><td style="padding:20px 28px 28px" align="center">${button}</td></tr>
-      <tr><td style="padding:16px 28px;border-top:1px solid #eef0f2">
-        <span style="color:#9ca3af;font-size:12px">Enviado por ROZ · siempre observando el progreso 👁️</span>
-      </td></tr>
+      ${emailFooter()}
     </table>
   </td></tr></table>
 </body></html>`;
 
   const text =
-    `ROZ · Resumen semanal (${rangeLabel})\n\n` +
+    `La semana del equipo, ${rangeLabel}\n\n` +
     `Commits: ${k.commits.value}\nTickets resueltos: ${k.ticketsResolved.value}\n` +
     `Contribuidores activos: ${k.activeContributors.value}\nLíneas cambiadas: ${k.linesChanged.value}\n` +
     `Cycle time: ${k.avgCycleTimeHours.value}h\n` +
     `${infraBlock.text}\n\n` +
-    `Ver el resumen completo: ${url}/\n\n— ROZ`;
+    `Ver el resumen completo: ${url}/\n\nRoz`;
 
   return { html, text };
 }
 
 const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-function label(p: Period): string {
+export function label(p: Period): string {
   const f = new Date(p.from);
   const t = new Date(p.to);
-  return `${f.getDate()} ${MONTHS[f.getMonth()]} – ${t.getDate()} ${MONTHS[t.getMonth()]}`;
+  return fmtRange(f.toISOString(), t.toISOString());
 }
 
 // ---- Digest personal por dev ----
@@ -167,7 +163,7 @@ function firstName(name: string | null): string {
   return (name ?? '').trim().split(/\s+/)[0] || '';
 }
 
-function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof getDeveloper>>>; url: string; rangeLabel: string }): { html: string; text: string } {
+export function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof getDeveloper>>>; url: string; rangeLabel: string }): { html: string; text: string } {
   const { profile: p, url, rangeLabel } = opts;
   const k = p.kpis;
   const greeting = p.dev.name ? `Hola ${firstName(p.dev.name)},` : 'Hola,';
@@ -194,24 +190,21 @@ function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof 
         .join('')
     : `<tr><td style="padding:6px 0;color:#9ca3af;font-size:13px">Sin tickets cerrados esta semana</td></tr>`;
 
-  const button = `<a href="${url}/app/developers/${p.dev.id}" style="display:inline-block;background:#2853ff;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver tu perfil completo →</a>`;
+  const button = `<a href="${url}/app/developers/${p.dev.id}" style="display:inline-block;background:#ff5b23;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver tu perfil completo</a>`;
 
   const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
     <table role="presentation" width="540" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e8eb">
-      <tr><td style="background:#0d0d12;padding:20px 28px">
-        <span style="color:#ffffff;font-size:20px;font-weight:800;letter-spacing:3px">ROZ</span>
-        <span style="color:#8b8f9a;font-size:13px;margin-left:8px">Tu semana</span>
-      </td></tr>
+      ${emailHeader('happy', url, 'tu semana en números')}
       <tr><td style="padding:28px 28px 8px">
         <p style="margin:0 0 4px;color:#111827;font-size:18px;font-weight:700">${greeting}</p>
-        <p style="margin:0 0 20px;color:#6b7280;font-size:13px">Esto fue tu trabajo · ${rangeLabel} · vs. la semana anterior</p>
+        <p style="margin:0 0 20px;color:#6b7280;font-size:13px">Revisé tu trabajo del ${rangeLabel} y lo comparé con la semana anterior.</p>
         <table role="presentation" width="100%" cellpadding="0" cellspacing="6" style="border-collapse:separate"><tr>
           ${kpiCell('Commits', fmtNum(k.commits.value), k.commits)}
           ${kpiCell('Tickets', fmtNum(k.ticketsResolved.value), k.ticketsResolved)}
         </tr><tr style="height:6px"></tr><tr>
           ${kpiCell('Líneas', fmtNum(k.linesChanged.value), k.linesChanged)}
-          ${kpiCell('Cycle time', k.avgCycleTimeHours.value ? `${k.avgCycleTimeHours.value}h` : '—', k.avgCycleTimeHours, true)}
+          ${kpiCell('Cycle time', k.avgCycleTimeHours.value ? `${k.avgCycleTimeHours.value}h` : 'n/d', k.avgCycleTimeHours, true)}
         </tr></table>
       </td></tr>
       <tr><td style="padding:12px 28px 4px">
@@ -223,20 +216,18 @@ function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof 
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${resolvedRows}</table>
       </td></tr>
       <tr><td style="padding:20px 28px 28px" align="center">${button}</td></tr>
-      <tr><td style="padding:16px 28px;border-top:1px solid #eef0f2">
-        <span style="color:#9ca3af;font-size:12px">Enviado por ROZ · siempre observando el progreso 👁️</span>
-      </td></tr>
+      ${emailFooter()}
     </table>
   </td></tr></table>
 </body></html>`;
 
   const text =
-    `ROZ · Tu semana (${rangeLabel})\n\n${greeting}\n\n` +
+    `${greeting} Este es el resumen de tu semana, ${rangeLabel}.\n\n` +
     `Commits: ${k.commits.value}\nTickets resueltos: ${k.ticketsResolved.value}\n` +
     `Líneas cambiadas: ${k.linesChanged.value}\nCycle time: ${k.avgCycleTimeHours.value}h\n\n` +
     `En qué trabajaste:\n${projects.map((pr) => `- ${pr.name}: ${pr.commits} commits`).join('\n') || '- Sin commits esta semana'}\n\n` +
     `Tickets que cerraste:\n${resolved.map((t) => `- ${t.identifier}: ${t.name}`).join('\n') || '- Ninguno'}\n\n` +
-    `Tu perfil: ${url}/app/developers/${p.dev.id}\n\n— ROZ`;
+    `Tu perfil: ${url}/app/developers/${p.dev.id}\n\nRoz`;
 
   return { html, text };
 }
@@ -253,7 +244,6 @@ export async function sendDevWeeklyDigests(): Promise<DigestResult> {
   const period = lastWeekPeriod();
   const cmp = previousPeriod(period);
   const rangeLabel = label(period);
-  const subject = `ROZ · Tu semana (${rangeLabel})`;
   const supabase = db();
   const exclude = new Set(config.digest.recipients.map((e) => e.toLowerCase()));
 
@@ -271,15 +261,19 @@ export async function sendDevWeeklyDigests(): Promise<DigestResult> {
     if (profile.kpis.commits.value === 0 && profile.kpis.ticketsResolved.value === 0) continue;
 
     const { html, text } = renderDevDigest({ profile, url: config.dashboard.url, rangeLabel });
+    const k = profile.kpis;
+    const notice = devDigestNotice({
+      seed: `dev-digest:${dev.id}:${period.to.slice(0, 10)}`,
+      recipient: dev.name,
+      range: rangeLabel,
+      stats: { commits: k.commits.value, tickets: k.ticketsResolved.value, lines: k.linesChanged.value, commitsChangePct: k.commits.changePct },
+      topProject: profile.projects[0]?.name ?? null,
+    });
+    const subject = notice.subject;
     try {
       const res = await sendEmail({ to: dev.email, subject, html, text });
       await supabase.from('notification').insert({ channel: 'email', to_dev_id: dev.id, to_address: dev.email, template: 'dev_weekly_digest', body: text, status: 'sent', provider_id: res.id });
-      await pushToDev(dev.id, dev.email, {
-        title: `Tu semana (${rangeLabel})`,
-        body: `${profile.kpis.commits.value} commits · ${profile.kpis.ticketsResolved.value} tickets · ${profile.kpis.linesChanged.value} líneas`,
-        url: `${config.dashboard.url}/app/developers/${dev.id}`,
-        tag: 'dev-weekly-digest',
-      }, 'dev_weekly_digest');
+      await pushToDev(dev.id, dev.email, toPush(notice, { url: `${config.dashboard.url}/app/developers/${dev.id}`, tag: 'dev-weekly-digest' }), 'dev_weekly_digest');
       sent++;
     } catch (err) {
       await supabase.from('notification').insert({ channel: 'email', to_dev_id: dev.id, to_address: dev.email, template: 'dev_weekly_digest', body: text, status: 'failed', error: String(err) });
@@ -298,9 +292,14 @@ export async function sendWeeklyDigest(): Promise<DigestResult> {
   const period = lastWeekPeriod();
   const [overview, infra] = await Promise.all([getOverview(period, previousPeriod(period)), listInfra()]);
   const { html, text } = renderDigest({ overview, infra, url: config.dashboard.url, rangeLabel: label(period) });
-  const subject = `ROZ · Resumen semanal (${label(period)})`;
-
-  const pushBody = `${overview.kpis.commits.value} commits · ${overview.kpis.ticketsResolved.value} tickets resueltos · ${overview.kpis.activeContributors.value} contribuidores`;
+  const tk = overview.kpis;
+  const notice = teamDigestNotice({
+    seed: `team-digest:${period.to.slice(0, 10)}`,
+    range: label(period),
+    stats: { commits: tk.commits.value, tickets: tk.ticketsResolved.value, lines: tk.linesChanged.value, contributors: tk.activeContributors.value },
+    topProject: overview.byProject[0]?.name ?? null,
+  });
+  const subject = notice.subject;
 
   const supabase = db();
   let sent = 0;
@@ -309,12 +308,7 @@ export async function sendWeeklyDigest(): Promise<DigestResult> {
     try {
       const res = await sendEmail({ to, subject, html, text });
       await supabase.from('notification').insert({ channel: 'email', to_address: to, template: 'weekly_digest', body: text, status: 'sent', provider_id: res.id });
-      await pushToEmail(to, {
-        title: `Resumen semanal (${label(period)})`,
-        body: pushBody,
-        url: `${config.dashboard.url}/app`,
-        tag: 'weekly-digest',
-      }, 'weekly_digest');
+      await pushToEmail(to, toPush(notice, { url: `${config.dashboard.url}/app`, tag: 'weekly-digest' }), 'weekly_digest');
       sent++;
     } catch (err) {
       await supabase.from('notification').insert({ channel: 'email', to_address: to, template: 'weekly_digest', body: text, status: 'failed', error: String(err) });

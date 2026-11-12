@@ -39,7 +39,8 @@ export interface SeriesDef {
 const STROKE = 2.5;
 const CAPS = { strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
 const GRID = { vertical: false, stroke: 'hsl(var(--border))', strokeDasharray: '2 2' } as const;
-const AXIS = { fontSize: 11, fill: 'hsl(var(--muted-foreground))' } as const;
+// Ejes en mono y tinta 3 (`.recharts-cartesian-axis-tick` en styles.css pone la familia).
+const AXIS = { fontSize: 10.5, fill: 'hsl(var(--faint))' } as const;
 const AXIS_OFF = { tickLine: false, axisLine: false } as const;
 
 const DEFAULT_COLOR = 'hsl(var(--chart-1))';
@@ -78,7 +79,7 @@ export function ChartTooltip({
   const head = labelFormat && label != null ? labelFormat(String(label)) : label != null ? String(label) : null;
   return (
     <div className="rounded-lg border bg-popover/95 px-3 py-2 text-xs shadow-md backdrop-blur-sm">
-      {head && <div className="mb-1.5 border-b pb-1 font-medium text-foreground">{head}</div>}
+      {head && <div className="mb-1.5 border-b pb-1 label-caps text-faint">{head}</div>}
       <div className="flex flex-col gap-1">
         {payload.map((p: any, i: number) => {
           const color = p.color || p.fill || p.payload?.color || DEFAULT_COLOR;
@@ -137,7 +138,7 @@ function ChartLegend({
             <span className="size-2 shrink-0 rounded-full" style={{ background: d.color }} />
             <span className="truncate">{d.label}</span>
           </span>
-          <span className="shrink-0 font-mono tabular-nums text-foreground">
+          <span className="shrink-0 tabular-nums text-foreground">
             {valueFormat(d.value)}
             {total ? <span className="ml-1 font-sans font-normal text-muted-foreground">{Math.round((d.value / total) * 100)}%</span> : null}
           </span>
@@ -157,6 +158,8 @@ export interface ColumnDatum {
   color?: string;
   /** Si está presente (aunque valga `null`), la etiqueta del eje se dibuja como avatar + nombre. */
   avatarUrl?: string | null;
+  /** id del dev: semilla del avatar generado cuando no hay foto. */
+  avatarSeed?: string | null;
   /** Línea extra bajo la etiqueta (p.ej. "completados"). */
   sub?: string;
 }
@@ -235,7 +238,7 @@ export function Columns({
       <div className={cn('relative', fill && 'min-h-0 flex-1')} style={fill ? { minHeight: height } : { height }}>
         {ticks.map((t) => (
           <div key={t} className="absolute inset-x-0 flex items-center gap-2" style={{ bottom: `${(t / scale) * 100}%` }}>
-            <span className="w-8 shrink-0 text-right font-mono text-[10px] leading-none tabular-nums text-muted-foreground">
+            <span className="w-8 shrink-0 text-right text-[10px] leading-none tabular-nums text-muted-foreground">
               {valueFormat(t)}
             </span>
             <span className="flex-1 border-t border-dashed border-border" />
@@ -268,7 +271,7 @@ export function Columns({
                   // existir.
                   style={{ height: `${Math.max(pct, 2)}%`, minHeight: 6, background: d.color ?? color }}
                 >
-                  <span className="absolute -top-[18px] left-1/2 -translate-x-1/2 font-mono text-[11px] font-medium leading-none tabular-nums">
+                  <span className="absolute -top-[18px] left-1/2 -translate-x-1/2 text-[11px] font-medium leading-none tabular-nums">
                     {valueFormat(d.value)}
                   </span>
                 </div>
@@ -282,7 +285,7 @@ export function Columns({
       <div className="mt-2 flex gap-1.5 pl-10 sm:gap-2.5">
         {shown.map((d) => (
           <div key={d.label} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-            {hasAvatars && <UserAvatar url={d.avatarUrl ?? null} name={d.label} className="size-6" />}
+            {hasAvatars && <UserAvatar url={d.avatarUrl ?? null} id={d.avatarSeed} name={d.label} className="size-6" />}
             {/* Dos líneas y no `truncate`: con `truncate` "Hyperflow" y "Hyperdigital" quedaban
                 los dos como "Hype…" en una tarjeta angosta, o sea dos categorías distintas con la
                 misma etiqueta. En dos renglones caben, y el `title` da el nombre completo. */}
@@ -310,7 +313,7 @@ export function Columns({
               {rest.map((d) => (
                 <div key={d.label} className="flex items-baseline justify-between gap-2 text-xs">
                   <span className="min-w-0 truncate text-muted-foreground">{d.label}</span>
-                  <span className="shrink-0 font-mono tabular-nums">{valueFormat(d.value)}</span>
+                  <span className="shrink-0 tabular-nums">{valueFormat(d.value)}</span>
                 </div>
               ))}
             </div>

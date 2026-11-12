@@ -27,7 +27,7 @@ function authApi() {
   return authClient;
 }
 
-interface DevRow { id: string; name: string; active: boolean }
+interface DevRow { id: string; name: string; active: boolean; github_login?: string | null }
 
 /** Valida el JWT del header Authorization, restringe por dominio y carga rol/nombre. */
 export const requireDashboardAuth: MiddlewareHandler<RozContext> = async (c, next) => {
@@ -73,7 +73,7 @@ export const requireDashboardAuth: MiddlewareHandler<RozContext> = async (c, nex
   try {
     const { data: byOps } = await db()
       .from('dev')
-      .select('id, name, active')
+      .select('id, name, active, github_login')
       .eq('ops_user_id', data.user.id)
       .maybeSingle();
     dev = (byOps as DevRow | null) ?? null;
@@ -81,7 +81,7 @@ export const requireDashboardAuth: MiddlewareHandler<RozContext> = async (c, nex
     if (!dev) {
       const { data: byEmail } = await db()
         .from('dev')
-        .select('id, name, active')
+        .select('id, name, active, github_login')
         .ilike('email', email)
         .maybeSingle();
       dev = (byEmail as DevRow | null) ?? null;
@@ -106,6 +106,7 @@ export const requireDashboardAuth: MiddlewareHandler<RozContext> = async (c, nex
     devId: dev.id,
     devName: dev.name,
     devActive: dev.active,
+    githubLogin: dev.github_login ?? null,
   });
   await next();
 };

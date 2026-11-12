@@ -49,14 +49,14 @@ function Attachments({ items }: { items: ChatAttachment[] }) {
           href={a.url ?? undefined}
           target="_blank"
           rel="noreferrer noopener"
-          className="flex w-full max-w-sm items-center gap-3 rounded-lg border bg-card px-3 py-2 shadow-sm transition-colors hover:bg-accent"
+          className="flex w-full max-w-sm items-center gap-3 rounded-lg border bg-card px-3 py-2 transition-colors hover:bg-sidebar"
         >
-          <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
-            <FileText className="size-5" />
+          <span className="grid size-9 shrink-0 place-items-center rounded-md bg-panel text-muted-foreground">
+            <FileText className="size-[18px]" />
           </span>
           <span className="min-w-0">
             <span className="block truncate text-sm font-medium">{a.name}</span>
-            <span className="block text-xs text-muted-foreground">{formatBytes(a.size) || 'Archivo'}</span>
+            <span className="block label-caps text-faint">{formatBytes(a.size) || 'Archivo'}</span>
           </span>
         </a>
       ))}
@@ -104,7 +104,7 @@ function EditBox({ message, onDone }: { message: ChatMessage; onDone: () => void
   }
 
   return (
-    <div className="mt-1 rounded-lg border bg-background p-2 focus-within:ring-1 focus-within:ring-ring">
+    <div className="mt-1 rounded-md border bg-card p-2 focus-within:border-ring focus-within:ring-1 focus-within:ring-ring">
       <textarea
         ref={ref}
         value={text}
@@ -122,8 +122,8 @@ function EditBox({ message, onDone }: { message: ChatMessage; onDone: () => void
         className="w-full resize-none bg-transparent text-sm outline-none"
       />
       <div className="mt-1.5 flex items-center justify-end gap-2">
-        <span className="mr-auto text-[11px] text-muted-foreground">Esc para cancelar · Enter para guardar</span>
-        <Button size="sm" variant="ghost" onClick={onDone} disabled={busy}>Cancelar</Button>
+        <span className="mr-auto text-[10.5px] text-faint tabular-nums">Esc cancela · Enter guarda</span>
+        <Button size="sm" variant="secondary" onClick={onDone} disabled={busy}>Cancelar</Button>
         <Button size="sm" onClick={() => void save()} disabled={busy}>
           {busy && <Loader2 className="animate-spin" />} Guardar
         </Button>
@@ -219,28 +219,29 @@ export const MessageItem = memo(function MessageItem({
       className={cn(
         'group/msg relative flex gap-3 px-4 transition-colors md:px-5',
         grouped ? 'py-0.5' : 'pt-2 pb-0.5',
-        highlight ? 'bg-warning/5 shadow-[inset_2px_0_0_hsl(var(--warning))]' : 'hover:bg-accent/50',
+        // Mención a mí: amarillo (lo humano) con filo a la izquierda, como `.now` del mock.
+        highlight ? 'bg-yellow-soft/60 shadow-[inset_3px_0_0_hsl(var(--yellow))]' : 'hover:bg-sidebar',
         isRoot && 'pb-2',
       )}
     >
       {/* Gutter: avatar en el primer mensaje del grupo; la hora al pasar el mouse en los demás. */}
       <div className="w-9 shrink-0">
         {grouped ? (
-          <span className="block pt-1 text-right text-[10px] leading-5 text-muted-foreground opacity-0 group-hover/msg:opacity-100">
+          <span className="block pt-1 text-right text-[9.5px] leading-5 text-faint opacity-0 group-hover/msg:opacity-100 tabular-nums">
             {timeLabel(m.createdAt)}
           </span>
         ) : (
-          <UserAvatar url={author?.avatarUrl ?? null} name={authorName} className="size-9 rounded-lg" />
+          <UserAvatar url={author?.avatarUrl ?? null} email={author?.email} id={author?.id} name={authorName} className="size-9 rounded-full" />
         )}
       </div>
 
       <div className={cn('min-w-0 flex-1', local && m.pending && 'opacity-60')}>
         {!grouped && (
           <div className="flex items-baseline gap-2">
-            <span className="truncate text-sm font-semibold">{authorName}</span>
+            <span className="truncate text-sm font-semibold tracking-[-0.01em]">{authorName}</span>
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className="shrink-0 text-xs text-muted-foreground">{timeLabel(m.createdAt)}</span>
+                <span className="shrink-0 text-[10.5px] text-faint tabular-nums">{timeLabel(m.createdAt)}</span>
               </TooltipTrigger>
               <TooltipContent>{new Date(m.createdAt).toLocaleString('es-MX')}</TooltipContent>
             </Tooltip>
@@ -256,7 +257,7 @@ export const MessageItem = memo(function MessageItem({
             {m.body && (
               <div className="flex flex-wrap items-baseline gap-x-1.5">
                 <MessageBody body={m.body} citedTasks={m.citedTasks} className="min-w-0" />
-                {m.editedAt && <span className="text-[11px] text-muted-foreground">(editado)</span>}
+                {m.editedAt && <span className="text-[10px] text-faint tabular-nums">(editado)</span>}
               </div>
             )}
             {(m.meta as { type?: string } | null)?.type === 'status' && <StatusBlock message={m} />}
@@ -268,7 +269,7 @@ export const MessageItem = memo(function MessageItem({
         {!deleted && <MessageTasks message={m} />}
 
         {m.failed && (
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-destructive">
+          <div className="mt-1 flex w-fit flex-wrap items-center gap-2 rounded-md bg-red-soft px-2 py-1 text-xs text-red">
             <AlertCircle className="size-3.5" /> No se envió.
             <button type="button" className="inline-flex items-center gap-1 font-medium hover:underline" onClick={() => onRetry?.(m)}>
               <RotateCw className="size-3" /> Reintentar
@@ -283,13 +284,13 @@ export const MessageItem = memo(function MessageItem({
           <button
             type="button"
             onClick={() => onOpenThread(m.id)}
-            className="-ml-1 mt-1 flex items-center gap-2 rounded-md px-1 py-0.5 text-xs transition-colors hover:bg-card hover:shadow-sm"
+            className="-ml-1 mt-1 flex items-center gap-2 rounded-md border border-transparent px-1.5 py-1 text-xs transition-colors hover:border-border hover:bg-card"
           >
             <AvatarStack people={repliers} size="size-5" max={3} />
-            <span className="font-semibold text-primary">
+            <span className="label-caps text-orange-ink">
               {m.replyCount === 1 ? '1 respuesta' : `${m.replyCount} respuestas`}
             </span>
-            {m.lastReplyAt && <span className="text-muted-foreground">Última respuesta {relative(m.lastReplyAt)}</span>}
+            {m.lastReplyAt && <span className="text-faint">Última {relative(m.lastReplyAt)}</span>}
           </button>
         )}
       </div>
@@ -297,7 +298,7 @@ export const MessageItem = memo(function MessageItem({
       {/* Acciones: barra flotante al pasar el mouse (desktop) y menú siempre a mano en táctil. */}
       {!local && !deleted && !editing && (
         <>
-          <div className="absolute -top-3 right-3 z-10 hidden items-center rounded-lg border bg-popover p-0.5 shadow-md group-hover/msg:flex has-[[data-state=open]]:flex [@media(hover:none)]:!hidden">
+          <div className="absolute -top-3 right-3 z-10 hidden items-center gap-px rounded-md border bg-card p-0.5 shadow-md group-hover/msg:flex has-[[data-state=open]]:flex [@media(hover:none)]:!hidden">
             {canReply && onOpenThread && (
               <Tooltip>
                 <TooltipTrigger asChild>

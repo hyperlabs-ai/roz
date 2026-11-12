@@ -1,513 +1,284 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
-import {
-  Bell, BellOff, Sun, Moon, Monitor, LogOut, TriangleAlert, Smartphone, Check, Mail, Power, Users,
-  Volume2, VolumeX, Send, Laptop, CircleCheck, CircleX,
-} from 'lucide-react';
-import { playSound, setSoundsEnabled, soundsEnabled, subscribeSounds } from '@/lib/sound';
-import { sendTestPush, type TestPushResult } from '@/lib/push';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Bell, Check, LogOut, Monitor, Moon, Palette, Sun, UserRound } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { useAuth } from '@/auth/AuthContext';
 import { useTheme } from '@/components/theme';
-import { usePush } from '@/push/PushContext';
 import { CalendarConnectCard } from '@/components/CalendarConnectCard';
-import { UserAvatar } from '@/components/bits';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { DiscordSettings, useDiscordStatus } from '@/components/discord/DiscordSettings';
+import { RunnersCard } from '@/components/plans/RunnersCard';
+import { useRozV2 } from '@/components/pulse/roz-v2';
+import { CapsLabel, IntegrationIcon, type IntegrationName } from '@/components/brand';
+import { MeAvatar } from '@/components/avatars';
+import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
+import { NotificationSettings, SWITCHES_KEY, fetchSwitches } from '@/components/settings/NotificationSettings';
+import { Row, RowsCard, SettingsHeader } from '@/components/settings/parts';
 import { cn } from '@/lib/utils';
 import { useApi } from '@/lib/useApi';
-import { useAction } from '@/lib/useAction';
-import { apiGet, apiSend, type NotificationSwitch, type NotificationSwitches, type SwitchPatch } from '@/lib/api';
-import { relative } from '@/lib/format';
+import { apiGet, type CalendarConnection } from '@/lib/api';
 
-// iPhone/iPad y si la app corre instalada (standalone). En iOS el push SOLO funciona con la PWA
-// añadida a la pantalla de inicio, así que si no está instalada lo indicamos.
-const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-const isStandalone =
-  window.matchMedia('(display-mode: standalone)').matches ||
-  (navigator as unknown as { standalone?: boolean }).standalone === true;
+type SectionId = 'notifications' | 'calendar' | 'discord' | 'runner' | 'appearance' | 'account';
+
+/** Punto de estado junto a cada sección del menú (ok / aviso / problema). */
+type Status = 'ok' | 'warn' | 'bad' | null;
+const STATUS_DOT: Record<Exclude<Status, null>, string> = { ok: 'bg-green', warn: 'bg-yellow', bad: 'bg-red' };
 
 const THEMES = [
-  { key: 'light' as const, label: 'Claro', icon: Sun },
-  { key: 'dark' as const, label: 'Oscuro', icon: Moon },
-  { key: 'system' as const, label: 'Sistema', icon: Monitor },
+  { key: 'light' as const, label: 'Claro', hint: 'Fondo hueso', icon: Sun },
+  { key: 'dark' as const, label: 'Oscuro', hint: 'Negro cálido', icon: Moon },
+  { key: 'system' as const, label: 'Sistema', hint: 'Sigue a tu equipo', icon: Monitor },
 ];
 
-/** Interruptor. Sin dependencia nueva: un botón con role="switch" (accesible por teclado). */
-function Toggle({
-  checked,
-  onChange,
-  disabled,
-  label,
-}: {
-  checked: boolean;
-  onChange: (next: boolean) => void;
-  disabled?: boolean;
-  label: string;
-}) {
+const ALL: SectionId[] = ['notifications', 'calendar', 'discord', 'runner', 'appearance', 'account'];
+
+/** Sección inicial: la del hash (`#discord`) o la que pide el regreso de un OAuth (`?discord=ok`). */
+function initialSection(): SectionId {
+  const hash = window.location.hash.slice(1) as SectionId;
+  if (ALL.includes(hash)) return hash;
+  const p = new URLSearchParams(window.location.search);
+  if (p.has('discord')) return 'discord';
+  if (p.has('calendar')) return 'calendar';
+  return 'notifications';
+}
+
+/** Bloque de terminal oscuro: cómo se conecta un equipo a roz-runner. */
+function RunnerTerminal() {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        't-toggle press relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-        'disabled:pointer-events-none disabled:opacity-50',
-        checked ? 'border-primary bg-primary' : 'border-input bg-muted',
-      )}
-    >
-      {/* El recorrido y la curva los pone la receta `27-toggle` desde `aria-checked`, que este
-          botón ya expone por accesibilidad: no hace falta un segundo estado en las clases. */}
-      <span className="t-toggle-thumb size-3.5 rounded-full bg-background shadow-sm" />
-    </button>
+    <Card className="grid gap-4 p-4 sm:p-5 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] md:items-center">
+      <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-terminal px-3.5 py-3 font-mono text-[11.5px] leading-relaxed text-terminal-foreground">
+        <span className="text-terminal-muted">$</span> npx roz-runner login{'\n'}
+        <span className="text-green">✓</span> pega la URL de roz y tu token{'\n'}
+        <span className="text-terminal-muted">$</span> roz-runner start --max 2 --horario 9-19{'\n'}
+        <span className="text-orange">●</span> esperando trabajo…
+      </pre>
+      <div className="grid gap-2">
+        <span className="flex items-center gap-2 text-sm font-semibold">
+          <IntegrationIcon name="claude" size="sm" /> En la PC de cada dev
+        </span>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Hace polling hacia roz, sin abrir puertos. Cada trabajo corre en un git worktree aislado con{' '}
+          <span className="font-mono text-foreground">claude -p</span>, el MCP de roz y una lista blanca de herramientas.
+        </p>
+      </div>
+    </Card>
   );
 }
 
-/** Fila título + descripción + interruptor. */
-function SwitchRow({
-  icon: Icon,
-  title,
-  hint,
-  checked,
-  disabled,
-  onChange,
-}: {
-  icon: typeof Mail;
-  title: string;
-  hint: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (next: boolean) => void;
-}) {
+/** Vista previa de lo que el equipo ve de ti según tu calendario (los tres estados posibles). */
+function PresencePreview() {
+  const states = [
+    { dot: 'bg-green', label: 'Disponible', hint: 'Sin eventos en curso' },
+    { dot: 'bg-yellow', label: 'En junta', hint: '«Daily» · hasta 10:30' },
+    { dot: 'bg-toggle-off', label: 'Sin calendario', hint: 'Tu estado no aparece' },
+  ];
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-      <div className="flex min-w-0 items-start gap-2.5">
-        <Icon className={cn('mt-0.5 size-4 shrink-0', checked ? 'text-foreground' : 'text-muted-foreground')} />
-        <div className="min-w-0">
-          <div className="text-sm font-medium">{title}</div>
-          <div className="text-xs text-muted-foreground">{hint}</div>
+    <RowsCard title="Qué ve el equipo">
+      {states.map((s) => (
+        <div key={s.label} className="flex min-h-[56px] items-center gap-3 px-4 py-2.5 sm:px-5">
+          <span className="relative shrink-0">
+            <MeAvatar className="size-8" />
+            <span className={cn('absolute -bottom-px -right-px size-2.5 rounded-full ring-2 ring-card', s.dot)} />
+          </span>
+          <div className="grid min-w-0">
+            <span className="text-[13px] font-semibold">{s.label}</span>
+            <span className="truncate text-xs text-muted-foreground">{s.hint}</span>
+          </div>
         </div>
-      </div>
-      <Toggle checked={checked} onChange={onChange} disabled={disabled} label={title} />
-    </div>
-  );
-}
-
-const BLOCKED_REASON: Record<NonNullable<TestPushResult['blocked']>, string> = {
-  vapid: 'El servidor no tiene configuradas las llaves VAPID.',
-  global: 'El push del equipo está apagado (abajo, en Notificaciones del equipo).',
-  muted: 'Tienes los avisos push silenciados (interruptor de arriba).',
-};
-
-/** Resultado de la prueba: a qué dispositivos salió. Los que no aparecen no están suscritos. */
-function TestResult({ result }: { result: TestPushResult }) {
-  if (result.blocked) {
-    return <div className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">{BLOCKED_REASON[result.blocked]}</div>;
-  }
-  if (!result.devices.length) {
-    return (
-      <div className="rounded-lg border px-3 py-2 text-xs text-muted-foreground">
-        No tienes dispositivos suscritos. Pulsa <span className="font-medium text-foreground">Activar</span> en cada uno (teléfono y computadora).
-      </div>
-    );
-  }
-  return (
-    <ul className="space-y-1.5 rounded-lg border px-3 py-2.5 text-xs">
-      {result.devices.map((d, i) => {
-        const Icon = /android|iphone|ipad/i.test(d.label) ? Smartphone : Laptop;
-        return (
-          <li key={i} className="flex items-center gap-2">
-            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate">{d.label}</span>
-            {d.ok ? (
-              <span className="flex items-center gap-1 text-success"><CircleCheck className="size-3.5" /> Enviada</span>
-            ) : (
-              <span className="flex items-center gap-1 text-destructive">
-                <CircleX className="size-3.5" /> {d.gone ? 'Caducada — vuelve a activar ahí' : 'Falló'}
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ul>
+      ))}
+    </RowsCard>
   );
 }
 
 export default function Settings() {
   const { user, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
-  const push = usePush();
-  const sounds = useSyncExternalStore(subscribeSounds, soundsEnabled);
-  const [test, setTest] = useState<TestPushResult | null>(null);
-  const testAction = useAction();
+  // roz-runner solo existe con Linear como fuente de verdad (sus endpoints responden 409 sin él).
+  const v2 = useRozV2();
+  const discord = useDiscordStatus();
+  // Misma clave que sus tarjetas: la caché se comparte y el menú no agrega peticiones.
+  const calendar = useApi<CalendarConnection>(() => apiGet('/calendar/status'), [], { key: '/calendar/status', ttl: 60_000 });
+  const switches = useApi(fetchSwitches, [], { key: SWITCHES_KEY, ttl: 60_000 });
 
-  const iosNeedsInstall = isIOS && !isStandalone;
-  const blocked = push.permission === 'denied';
+  const [section, setSection] = useState<SectionId>(initialSection);
 
-  // Interruptores de notificaciones: los míos y el killswitch del equipo.
-  const switches = useApi(() => apiGet<NotificationSwitches>('/notifications/switches'), [], {
-    key: '/notifications/switches',
-    ttl: 60_000,
-  });
-  // Espejo local para el update optimista: el interruptor tiene que responder al instante y
-  // revertirse solo si el backend rechaza el cambio.
-  const [state, setState] = useState<NotificationSwitches | null>(null);
-  // `busy` POR INTERRUPTOR: antes era un solo flag para los cuatro, así que mover "mis correos"
-  // bloqueaba visualmente también los del equipo.
-  const action = useAction();
+  const g = switches.data?.global;
+  const me = switches.data?.me;
+  const cal = calendar.data;
+  const dl = discord.data;
+
+  const nav: { id: SectionId; label: string; icon: ReactNode; status: Status; hidden?: boolean }[] = [
+    {
+      id: 'notifications',
+      label: 'Notificaciones',
+      icon: <Bell className="size-4" />,
+      status: !g ? null : !g.emailEnabled || !g.pushEnabled ? 'warn' : me && (!me.emailEnabled || !me.pushEnabled) ? null : 'ok',
+    },
+    {
+      id: 'calendar',
+      label: 'Calendario',
+      icon: <NavLogo name="googlecalendar" />,
+      status: !cal?.connected ? null : cal.status === 'revoked' || cal.status === 'error' ? 'bad' : 'ok',
+      hidden: !!cal && !cal.available,
+    },
+    {
+      id: 'discord',
+      label: 'Discord',
+      icon: <NavLogo name="discord" />,
+      status: !dl?.link ? null : dl.unavailable ? 'warn' : 'ok',
+      hidden: !dl?.enabled,
+    },
+    { id: 'runner', label: 'roz-runner', icon: <NavLogo name="claude" />, status: null, hidden: !v2.linearSourceOfTruth },
+    { id: 'appearance', label: 'Apariencia', icon: <Palette className="size-4" />, status: null },
+    { id: 'account', label: 'Cuenta', icon: <UserRound className="size-4" />, status: null },
+  ];
+  const visible = nav.filter((n) => !n.hidden);
+  // Si la sección elegida se oculta (flag apagado, deploy sin Google), cae a la primera.
+  const current = visible.some((n) => n.id === section) ? section : visible[0].id;
 
   useEffect(() => {
-    if (switches.data) setState(switches.data);
-  }, [switches.data]);
-
-  /** Clave del candado: un interruptor concreto (`me:email`, `global:push`…). */
-  const switchKey = (scope: 'me' | 'global', body: SwitchPatch) =>
-    `${scope}:${body.emailEnabled !== undefined ? 'email' : 'push'}`;
-
-  async function patch(scope: 'me' | 'global', body: SwitchPatch, note?: { title: string; description?: string }) {
-    if (!state) return;
-    const previous = state;
-    setState(
-      scope === 'global'
-        ? { ...state, global: { ...state.global, ...body } }
-        : { ...state, me: { ...state.me, ...body } },
-    );
-    const ok = await action.run(switchKey(scope, body), async () => {
-      const res = await apiSend<{ global?: NotificationSwitch; me?: NotificationSwitch }>(
-        'PATCH',
-        `/notifications/switches/${scope}`,
-        body,
-      );
-      // El backend devuelve la fila real (incluye quién y cuándo movió el interruptor global).
-      setState((s) =>
-        !s
-          ? s
-          : {
-              ...s,
-              global: res.global ?? s.global,
-              me: res.me ? { emailEnabled: res.me.emailEnabled, pushEnabled: res.me.pushEnabled } : s.me,
-            },
-      );
-      // Revalidar SIEMPRE, también el global: el estado optimista vive solo en este componente y la
-      // caché seguía con el valor viejo, así que al volver a Configuración (dentro del TTL) el
-      // interruptor recién encendido aparecía apagado. De paso refresca el contador de silenciados.
-      // useApi conserva los datos mientras revalida, así que no parpadea.
-      switches.reload();
-      return true;
-    }, {
-      success: note ? { title: note.title, description: note.description } : false,
-      error: 'No se pudo cambiar el interruptor',
-    });
-    if (!ok) setState(previous);
-  }
-
-  const global = state?.global;
-  const me = state?.me;
-  const allOff = !!global && !global.emailEnabled && !global.pushEnabled;
-  const anyOff = !!global && (!global.emailEnabled || !global.pushEnabled);
+    // El hash recuerda la sección al recargar sin pasar por el router (no re-renderiza nada).
+    const url = `${window.location.pathname}${window.location.search}#${current}`;
+    window.history.replaceState(window.history.state, '', url);
+  }, [current]);
 
   return (
-    <Layout title="Configuración" subtitle="Notificaciones, calendario, apariencia y cuenta">
-      <div className="mx-auto max-w-2xl space-y-4">
-        {/* Notificaciones — mis avisos */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Bell className="size-4" /> Mis notificaciones</CardTitle>
-            <CardDescription>Recibe un aviso cuando un servicio se cae, te asignan una tarea, se documenta tu trabajo y más.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {!push.supported ? (
-              <div className="flex items-start gap-2 rounded-lg border px-3 py-3 text-sm text-muted-foreground">
-                <TriangleAlert className="mt-0.5 size-4 shrink-0" />
-                <span>Este navegador no soporta notificaciones push.</span>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">Notificaciones en este dispositivo</div>
-                    <div className="text-xs text-muted-foreground">
-                      {push.enabled ? 'Activadas — recibirás los avisos aquí.' : 'Desactivadas.'}
-                    </div>
-                  </div>
-                  <Button
-                    variant={push.enabled ? 'outline' : 'default'}
-                    size="sm"
-                    onClick={push.toggle}
-                    disabled={push.busy || (iosNeedsInstall && !push.enabled) || (blocked && !push.enabled)}
-                    className="shrink-0"
-                  >
-                    {push.enabled ? <BellOff /> : <Bell />}
-                    {push.busy ? '…' : push.enabled ? 'Desactivar' : 'Activar'}
-                  </Button>
-                </div>
-
-                {iosNeedsInstall && (
-                  <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-3 text-sm">
-                    <Smartphone className="mt-0.5 size-4 shrink-0 text-primary" />
-                    <div className="text-muted-foreground">
-                      <p className="font-medium text-foreground">Instala la app primero</p>
-                      En iPhone/iPad las notificaciones solo funcionan con la app instalada. Toca{' '}
-                      <span className="font-medium text-foreground">Compartir</span> →{' '}
-                      <span className="font-medium text-foreground">Añadir a inicio</span>, ábrela desde el ícono y vuelve aquí.
-                    </div>
-                  </div>
-                )}
-
-                {blocked && !push.enabled && (
-                  <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-3 text-sm">
-                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
-                    <div className="text-muted-foreground">
-                      <p className="font-medium text-foreground">Notificaciones bloqueadas</p>
-                      Las bloqueaste en el navegador. Actívalas desde los ajustes del sitio (permisos → notificaciones) y recarga.
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* Mis interruptores: valen para TODOS mis dispositivos y para mi correo, a diferencia
-                del control de arriba, que es solo de este navegador. */}
-            {switches.loading && !me ? (
-              <>
-                <Skeleton className="h-[58px] w-full rounded-lg" />
-                <Skeleton className="h-[58px] w-full rounded-lg" />
-              </>
-            ) : me ? (
-              <>
-                <SwitchRow
-                  icon={Mail}
-                  title="Avisos por correo"
-                  hint={
-                    global && !global.emailEnabled
-                      ? 'El correo del equipo está apagado, así que no llegará ninguno.'
-                      : me.emailEnabled
-                        ? 'roz te escribe a tu correo.'
-                        : 'Silenciado — no recibirás correos de roz.'
-                  }
-                  checked={me.emailEnabled}
-                  disabled={action.busy('me:email')}
-                  onChange={(next) =>
-                    patch('me', { emailEnabled: next }, {
-                      title: next ? 'Correos activados' : 'Correos silenciados',
-                      description: next ? undefined : 'No recibirás correos de roz (el resto del equipo sí).',
-                    })
-                  }
-                />
-                <SwitchRow
-                  icon={Bell}
-                  title="Avisos push"
-                  hint={
-                    me.pushEnabled
-                      ? 'Válido para todos tus dispositivos suscritos.'
-                      : 'Silenciado en todos tus dispositivos.'
-                  }
-                  checked={me.pushEnabled}
-                  disabled={action.busy('me:push')}
-                  onChange={(next) =>
-                    patch('me', { pushEnabled: next }, {
-                      title: next ? 'Push activado' : 'Push silenciado',
-                      description: next ? undefined : 'No recibirás push en ningún dispositivo.',
-                    })
-                  }
-                />
-              </>
-            ) : (
-              switches.error && <div className="text-xs text-muted-foreground">No se pudieron cargar tus interruptores.</div>
-            )}
-
-            {/* Sonidos: de ESTE dispositivo (localStorage), como el toggle de push de arriba. */}
-            <SwitchRow
-              icon={sounds ? Volume2 : VolumeX}
-              title="Sonidos"
-              hint={
-                sounds
-                  ? 'Suenan los avisos, las menciones, las acciones y los errores en este dispositivo.'
-                  : 'Silenciados en este dispositivo.'
-              }
-              checked={sounds}
-              onChange={(next) => {
-                setSoundsEnabled(next);
-                if (next) void playSound('notification');
-              }}
-            />
-
-            {/* Prueba de punta a punta: llega a TODOS mis dispositivos suscritos (teléfono y compu). */}
-            {push.supported && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">Probar en mis dispositivos</div>
-                    <div className="text-xs text-muted-foreground">Envía un aviso a tu teléfono y a tu computadora para comprobar que llegan.</div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                    disabled={testAction.busy('test')}
-                    onClick={() =>
-                      testAction.run('test', sendTestPush, {
-                        error: 'No se pudo enviar la prueba',
-                        onDone: setTest,
-                      })
-                    }
-                  >
-                    <Send />
-                    {testAction.busy('test') ? '…' : 'Probar'}
-                  </Button>
-                </div>
-                {test && <TestResult result={test} />}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Notificaciones del equipo — killswitch */}
-        <Card className={cn(anyOff && 'border-warning/40')}>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="size-4" /> Notificaciones del equipo
-              {anyOff && <Badge variant="warning">{allOff ? 'Todo apagado' : 'Parcialmente apagado'}</Badge>}
-            </CardTitle>
-            <CardDescription>
-              Killswitch de todo el entorno: apaga los avisos de roz para <span className="font-medium text-foreground">todas</span>{' '}
-              las personas. Útil si el proveedor de correo falla o se agota la cuota — con el interruptor abajo, los avisos se omiten
-              en silencio en lugar de reintentarse hasta morir en la cola.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {switches.loading && !global ? (
-              <>
-                <Skeleton className="h-[58px] w-full rounded-lg" />
-                <Skeleton className="h-[58px] w-full rounded-lg" />
-              </>
-            ) : global ? (
-              <>
-                <SwitchRow
-                  icon={Mail}
-                  title="Correo (Resend)"
-                  hint={global.emailEnabled ? 'Encendido — roz envía correos.' : 'Apagado — nadie recibe correos de roz.'}
-                  checked={global.emailEnabled}
-                  disabled={action.busy('global:email')}
-                  onChange={(next) =>
-                    patch('global', { emailEnabled: next }, {
-                      title: next ? 'Correo del equipo encendido' : 'Correo del equipo apagado',
-                      description: next
-                        ? 'roz vuelve a enviar correos a todo el equipo.'
-                        : 'Ningún correo saldrá de roz hasta que lo reenciendas.',
-                    })
-                  }
-                />
-                <SwitchRow
-                  icon={Bell}
-                  title="Push"
-                  hint={global.pushEnabled ? 'Encendido — roz envía push.' : 'Apagado — nadie recibe push de roz.'}
-                  checked={global.pushEnabled}
-                  disabled={action.busy('global:push')}
-                  onChange={(next) =>
-                    patch('global', { pushEnabled: next }, {
-                      title: next ? 'Push del equipo encendido' : 'Push del equipo apagado',
-                      description: next ? undefined : 'Ningún push saldrá de roz hasta que lo reenciendas.',
-                    })
-                  }
-                />
-
-                {anyOff && (
-                  <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-3 text-sm">
-                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
-                    <div className="text-muted-foreground">
-                      <p className="font-medium text-foreground">Los avisos apagados no se guardan para después</p>
-                      Mientras esté apagado, roz omite el aviso y cierra el evento: al reencenderlo no se envía lo que quedó atrás
-                      (los cambios documentados sí, en cuanto haya un push nuevo).
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-xs text-muted-foreground">
-                  <Power className="size-3.5" />
-                  {global.updatedAt ? (
-                    <span>
-                      Último cambio {relative(global.updatedAt)}
-                      {global.updatedBy ? ` · ${global.updatedBy}` : ''}
-                    </span>
-                  ) : (
-                    <span>Nadie ha movido estos interruptores.</span>
-                  )}
-                  {!!state?.mutedDevs && (
-                    <span>
-                      · {state.mutedDevs} {state.mutedDevs === 1 ? 'persona silenció sus avisos' : 'personas silenciaron sus avisos'}
-                    </span>
-                  )}
-                </div>
-              </>
-            ) : (
-              switches.error && (
-                <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                  <span>No se pudieron cargar los interruptores del equipo.</span>
-                  <Button variant="outline" size="sm" onClick={switches.reload}>Reintentar</Button>
-                </div>
-              )
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Google Calendar */}
-        <CalendarConnectCard />
-
-        {/* Apariencia */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Apariencia</CardTitle>
-            <CardDescription>Tema de la interfaz.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-3 gap-2">
-              {THEMES.map(({ key, label, icon: Icon }) => {
-                const active = theme === key;
-                return (
+    <Layout title="Configuración">
+      <div className="grid items-start gap-5 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-8">
+        {/* Menú de secciones: columna fija en escritorio, carril horizontal en móvil. */}
+        <nav aria-label="Secciones de configuración" className="lg:sticky lg:top-4">
+          <ul className="scroll-none -mx-4 flex gap-1 overflow-x-auto px-4 lg:mx-0 lg:grid lg:overflow-visible lg:px-0">
+            {visible.map((n) => {
+              const active = n.id === current;
+              return (
+                <li key={n.id} className="shrink-0">
                   <button
-                    key={key}
-                    onClick={() => setTheme(key)}
+                    type="button"
+                    onClick={() => setSection(n.id)}
+                    aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'press flex flex-col items-center gap-2 rounded-xl border p-4 text-sm transition-colors',
-                      active ? 'border-primary bg-primary/5 text-foreground' : 'text-muted-foreground hover:bg-accent',
+                      'flex h-9 w-full items-center gap-2.5 whitespace-nowrap rounded-md px-3 text-[13.5px] transition-colors',
+                      active ? 'bg-orange-soft font-semibold text-orange-ink' : 'text-muted-foreground hover:bg-sidebar hover:text-foreground',
                     )}
                   >
-                    <Icon className="size-5" />
-                    {label}
-                    {active && <Check className="size-3.5 text-primary" />}
+                    <span className={cn('grid size-4 place-items-center', !active && 'opacity-80')}>{n.icon}</span>
+                    <span className="flex-1 text-left">{n.label}</span>
+                    {n.status && <span className={cn('size-1.5 rounded-full', STATUS_DOT[n.status])} />}
                   </button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
 
-        {/* Cuenta */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Cuenta</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center gap-3">
-              <UserAvatar url={null} name={user?.name ?? user?.email ?? '?'} className="size-11" />
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium">{user?.name ?? user?.email}</div>
-                <div className="truncate text-xs text-muted-foreground">{user?.email}</div>
-                {user?.role && <div className="truncate text-xs capitalize text-muted-foreground">{user.role}</div>}
+        <div key={current} className="grid min-w-0 gap-5">
+          {current === 'notifications' && (
+            <>
+              <SettingsHeader
+                eyebrow="Avisos"
+                title="Notificaciones"
+                lede="Un aviso cuando un servicio se cae, te asignan una tarea o se documenta tu trabajo."
+              />
+              <NotificationSettings />
+            </>
+          )}
+
+          {current === 'calendar' && (
+            <>
+              <SettingsHeader
+                eyebrow="Fuentes"
+                color="yellow"
+                title="Calendario"
+                lede="Tu disponibilidad alimenta la presencia del equipo y la capacidad de la semana."
+              />
+              <div className="grid items-stretch gap-3.5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+                <CalendarConnectCard />
+                <PresencePreview />
               </div>
-            </div>
-            <Button variant="outline" onClick={signOut} className="w-full text-destructive hover:text-destructive sm:w-auto">
-              <LogOut /> Cerrar sesión
-            </Button>
-          </CardContent>
-        </Card>
+            </>
+          )}
+
+          {current === 'discord' && (
+            <>
+              <SettingsHeader
+                eyebrow="Fuentes"
+                color="blue"
+                title="Discord"
+                lede="El chat del equipo son los canales del servidor de Discord. Liga tu cuenta para ver los que tienes permitidos."
+              />
+              <DiscordSettings />
+            </>
+          )}
+
+          {current === 'runner' && (
+            <>
+              <SettingsHeader
+                eyebrow="Agentes"
+                color="purple-deep"
+                title="roz-runner"
+                lede="Un token por equipo, revocable. El runner toma los planes de tu cola y los corre en tu PC con tu cuenta de Claude."
+              />
+              <RunnerTerminal />
+              <RunnersCard />
+            </>
+          )}
+
+          {current === 'appearance' && (
+            <>
+              <SettingsHeader eyebrow="Tú" color="ink" title="Apariencia" lede="El botón del encabezado alterna claro y oscuro; aquí también puedes seguir al sistema." />
+              <RowsCard title="Tema de la interfaz">
+                <div className="grid grid-cols-3 gap-2.5 p-4 sm:p-5">
+                  {THEMES.map(({ key, label, hint, icon: Icon }) => {
+                    const active = theme === key;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setTheme(key)}
+                        aria-pressed={active}
+                        className={cn(
+                          'press relative grid justify-items-center gap-1.5 rounded-lg border-[1.5px] px-3 py-5 text-sm transition-colors',
+                          active ? 'border-orange bg-orange-soft text-orange-ink' : 'border-border text-muted-foreground hover:bg-sidebar',
+                        )}
+                      >
+                        <Icon className="size-5" />
+                        <span className="font-semibold">{label}</span>
+                        <span className={cn('hidden text-[11.5px] sm:block', active ? 'text-orange-ink/80' : 'text-faint')}>{hint}</span>
+                        {active && <Check className="absolute right-2 top-2 size-3.5" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </RowsCard>
+            </>
+          )}
+
+          {current === 'account' && (
+            <>
+              <SettingsHeader eyebrow="Tú" color="ink" title="Cuenta" />
+              <RowsCard title="Perfil">
+                <div className="flex min-h-[72px] items-center gap-3.5 px-4 py-3.5 sm:px-5">
+                  <MeAvatar className="size-12" />
+                  <div className="grid min-w-0 gap-0.5">
+                    <span className="truncate text-[15px] font-semibold">{user?.name ?? user?.email}</span>
+                    <span className="truncate text-xs text-muted-foreground">{user?.email}</span>
+                    {user?.role && <CapsLabel>{user.role}</CapsLabel>}
+                  </div>
+                </div>
+                <Row icon={LogOut} title="Cerrar sesión" hint="Sales de roz en este navegador.">
+                  <Button variant="secondary" size="sm" onClick={signOut} className="text-red">
+                    <LogOut /> Cerrar sesión
+                  </Button>
+                </Row>
+              </RowsCard>
+            </>
+          )}
+
+        </div>
       </div>
     </Layout>
   );
+}
+
+function NavLogo({ name }: { name: IntegrationName }) {
+  return <IntegrationIcon name={name} size="sm" title="" />;
 }

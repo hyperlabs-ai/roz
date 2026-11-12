@@ -48,6 +48,21 @@ export const OVERRIDE_CATEGORIES = [
 export type OverrideCategory = (typeof OVERRIDE_CATEGORIES)[number]['value'];
 export const OVERRIDE_CATEGORY_VALUES = OVERRIDE_CATEGORIES.map((c) => c.value) as [OverrideCategory, ...OverrideCategory[]];
 
+/**
+ * Categoría que escribe roz, no una persona: un dev RECLAMÓ el plan del agente de otro (roz v2,
+ * src/plans). No está en OVERRIDE_CATEGORIES a propósito: no se elige en el selector de corrección —
+ * la registra la acción de reclamar— y validateOverride la rechaza si alguien la manda a mano.
+ */
+export const CLAIM_OVERRIDE_CATEGORY = 'reclamado' as const;
+export const CLAIM_OVERRIDE_LABEL = 'Reclamado por otra persona';
+
+/** Todo lo que puede quedar guardado en override_category (espejo del check de la migración 0036). */
+export type StoredOverrideCategory = OverrideCategory | typeof CLAIM_OVERRIDE_CATEGORY;
+export const STORED_OVERRIDE_CATEGORY_VALUES: readonly StoredOverrideCategory[] = [
+  ...OVERRIDE_CATEGORY_VALUES,
+  CLAIM_OVERRIDE_CATEGORY,
+];
+
 export interface LatestDecisionLite {
   outcome: DecisionOutcome;
   chosenDevId: string | null;

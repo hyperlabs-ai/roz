@@ -1,0 +1,28 @@
+{
+  "name": "roz-runner",
+  "version": "0.1.0",
+  "description": "roz-runner — corre en la PC de cada dev: toma planes de la cola de roz, los planea e implementa con Claude Code headless en un git worktree aislado y abre la PR.",
+  "type": "module",
+  "bin": {
+    "roz-runner": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "start": "node dist/cli.js start"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

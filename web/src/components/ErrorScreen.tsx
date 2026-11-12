@@ -1,6 +1,7 @@
 import { Component, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Eyebrow } from '@/components/brand';
 
 /** Convierte cualquier excepción de render en un mensaje visible (en vez de página en blanco). */
 export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -22,11 +23,14 @@ export function ErrorScreen({ title, detail }: { title: string; detail: string }
     <div className="flex min-h-screen items-center justify-center bg-background p-5">
       <Card className="w-full max-w-md">
         <CardContent className="p-6">
-          <div className="mb-3 flex items-center gap-2 text-destructive">
-            <AlertTriangle className="size-5" />
-            <span className="text-base font-semibold">{title}</span>
+          <Eyebrow color="red">Error</Eyebrow>
+          <div className="mt-3 flex items-center gap-2">
+            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-red-soft text-red">
+              <AlertTriangle className="size-4" />
+            </span>
+            <span className="title-tight text-lg">{title}</span>
           </div>
-          <p className="whitespace-pre-wrap text-sm text-muted-foreground">{detail}</p>
+          <p className="mt-3 whitespace-pre-wrap rounded-md bg-panel p-3 font-mono text-xs text-muted-foreground">{detail}</p>
         </CardContent>
       </Card>
     </div>

@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import { sendPush, pushEnabled, type PushPayload, type PushSendOptions } from '../adapters/web-push.js';
 import { pushAllowed, pushEnabledGlobally } from './switches.js';
 import { renderServicePush, type ServiceTransition } from '../infra/alerts.js';
+import { botIcon, testNotice } from './copy.js';
 
 interface SubRow {
   id: string;
@@ -80,7 +81,7 @@ async function deliver(subs: SubRow[], payload: PushPayload, template: string, o
   for (const sub of subs) if (await pushAllowed(sub.dev_id)) targets.push(sub);
 
   const supabase = db();
-  const logBody = `${payload.title} — ${payload.body}`;
+  const logBody = `${payload.title} · ${payload.body}`;
   let sent = 0;
   let failed = 0;
   for (const s of targets) {
@@ -209,9 +210,14 @@ export async function sendTestPush(input: { authUserId: string; devId: string | 
   const rows = (await Promise.all(queries)).flatMap((r) => (r.data ?? []) as Row[]);
   const subs = dedupe(rows) as Row[];
 
+  let recipient: string | null = null;
+  if (input.devId) {
+    const { data: me } = await supabase.from('dev').select('name').eq('id', input.devId).maybeSingle();
+    recipient = (me as { name: string | null } | null)?.name ?? null;
+  }
   const payload: PushPayload = {
-    title: 'Prueba de roz',
-    body: 'Si ves esto, las notificaciones llegan a este dispositivo.',
+    ...testNotice(recipient),
+    icon: botIcon('happy'),
     url: `${config.dashboard.url}/app/settings`,
     tag: 'push-test',
     data: { kind: 'test' },
@@ -246,10 +252,12 @@ export async function notifyServiceTransitionsPush(
   let failed = 0;
   for (const t of transitions) {
     const { title, body } = renderServicePush(t);
-    const template = t.kind === 'down' ? 'infra_service_down' : 'infra_service_up';
+    const template =
+      t.kind === 'down' ? 'infra_service_down' : t.kind === 'deploy_failed' ? 'infra_deploy_failed' : 'infra_service_up';
+    const icon = botIcon(t.kind === 'up' ? 'happy' : 'alert');
     const r = await deliver(
       subs,
-      { title, body, url: `${base}/app/infra`, tag: `infra:${t.externalRef}`, requireInteraction: t.kind === 'down' },
+      { title, body, icon, url: `${base}/app/infra`, tag: `infra:${t.externalRef}`, requireInteraction: t.kind === 'down' },
       template,
       { urgency: t.kind === 'down' ? 'high' : 'normal' },
     );
