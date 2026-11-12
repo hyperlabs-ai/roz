@@ -1,4 +1,4 @@
-# Puente roz ↔ Discord. Railway construye con este Dockerfile (ver railway.json).
+# Puente roz ↔ Discord. Railway detecta este Dockerfile solo y construye con él.
 # Contexto de construcción: la carpeta discord-bridge/ (Root Directory del servicio en Railway).
 
 FROM node:22-alpine AS build

@@ -147,9 +147,12 @@ Antes: la migración `0038_discord_chat.sql` aplicada en Supabase y el schema `r
 
 1. Railway → **New Project** → **Deploy from GitHub repo** → este repo.
 2. En el servicio: **Settings → Source → Root Directory** = `discord-bridge`.
-   Railway toma `railway.json` (builder Dockerfile, healthcheck `/health`, reinicio ante fallos).
+   Railway detecta el `Dockerfile` de esa carpeta y construye con él. No hay `railway.json`: Railway
+   retiró Config as Code (los servicios nuevos ya no pueden usarlo), así que lo demás va en Settings.
 3. **Variables**: las de la tabla de arriba.
-4. **Settings → Deploy**: deja **1 réplica**. Dos instancias con el mismo token se pelearían la
+4. **Settings → Deploy**: **Healthcheck Path** = `/health` (timeout 120 s), **Restart Policy** =
+   On Failure (10 reintentos) y **1 réplica**. Dos instancias con el mismo token se pelearían la
+   sesión del gateway y duplicarían escrituras.
    sesión del gateway y duplicarían escrituras.
 5. Despliega. En los logs debe verse `conectando al gateway`, `estado del puente … backfilling` y
    `backfill terminado`. En roz, `GET /api/dashboard/discord/status` → `bridge.healthy: true`.
