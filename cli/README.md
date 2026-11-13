@@ -61,11 +61,13 @@ o te roban el equipo: revoca su llave desde el dashboard (zeus → Bóveda) y pi
 Requiere Node 20 o superior.
 
 ```bash
-cd cli
-npm install
-npm run build
-npm link        # deja el comando `zeus` en tu PATH
+npm i -g @hyperlabs-ai/zeus     # deja el comando `zeus` en tu PATH
+zeus --version
 ```
+
+Para actualizar: `npm i -g @hyperlabs-ai/zeus@latest`.
+
+Desde el repo (para desarrollar el CLI): `cd cli && npm install && npm run build && npm link`.
 
 ## Primera vez
 
@@ -180,6 +182,17 @@ Límites: nombres `^[A-Za-z_][A-Za-z0-9_]*$` de hasta 128 caracteres; valores de
 ```bash
 npm run typecheck
 npm test          # vitest: cifrado, .env, y los comandos contra un zeus en memoria que solo guarda texto cifrado
+```
+
+### Publicar en npm
+
+La versión vive solo en `package.json` (`src/version.ts` la lee de ahí). `prepublishOnly` corre
+typecheck, tests y build, así que no se puede publicar algo roto ni un `dist/` viejo.
+
+```bash
+cd cli
+npm version patch --no-git-tag-version   # o minor / major; el commit lo haces tú
+npm publish              # público por publishConfig; pide el OTP si la cuenta tiene 2FA
 ```
 
 - `src/crypto.ts`: el formato de la bóveda, funciones puras. `test/zeus-vault-crypto.test.ts` en la raíz

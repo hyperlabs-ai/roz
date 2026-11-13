@@ -240,6 +240,9 @@ export function CopyButton({ text, label = 'Copiar', className }: { text: string
   );
 }
 
+/** Instalador del CLI de zeus (paquete público en npm, código en `cli/` del repo). Requiere Node 20+. */
+export const CLI_INSTALL = 'npm i -g @hyperlabs-ai/zeus';
+
 /** Bloque de terminal (oscuro en ambos temas) con su botón de copiar. */
 export function CommandBlock({ command, label, className }: { command: string; label?: ReactNode; className?: string }) {
   return (

@@ -23,7 +23,7 @@ import { useZeusOrg } from './hooks';
 import { VaultDiagram } from './VaultDiagram';
 import { VaultEnvDialog, VaultMatrix, type VaultProject } from './VaultMatrix';
 import { CmdLine, Step, StepNote, Steps, type StepState } from './zeus-steps';
-import { ago, dateTime } from './zeus-ui';
+import { CLI_INSTALL, ago, dateTime } from './zeus-ui';
 import './vault.css';
 
 const VAULT_KEY = '/zeus/vault';
@@ -116,7 +116,8 @@ export function VaultTab({ me }: { me: ZeusMe | null }) {
           <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-3.5">
             <Steps>
               <Step n={1} state={stepState(0)} title="Registra tu llave" stateLabel={myKey ? `Hecho · ${myKey.name}` : undefined}>
-                <StepNote>Crea tu par de llaves en esta PC y sube solo la parte pública. Una vez por máquina.</StepNote>
+                <StepNote>Crea tu par de llaves en esta PC y sube solo la parte pública. Una vez por máquina. Sin el CLI, instálalo primero (Node 20+).</StepNote>
+                <CmdLine command={CLI_INSTALL} />
                 <CmdLine command="zeus key init" />
               </Step>
               <Step n={2} state={stepState(1)} title="Sube un entorno">

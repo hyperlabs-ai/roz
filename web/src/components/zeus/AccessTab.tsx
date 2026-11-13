@@ -26,7 +26,7 @@ import { zeusApi, type ZeusMe, type ZeusSource, type ZeusTokenSummary } from '@/
 import { GRAPH_KEY, NODES_KEY } from './hooks';
 import { SourceMosaic } from './SourceMosaic';
 import { CmdLine, Step, StepNote, Steps, type StepState } from './zeus-steps';
-import { CommandBlock, CopyButton, ago, dateTime } from './zeus-ui';
+import { CLI_INSTALL, CommandBlock, CopyButton, ago, dateTime } from './zeus-ui';
 import './access.css';
 
 const TOKENS_KEY = '/zeus/tokens';
@@ -35,7 +35,6 @@ const SOURCES_KEY = '/zeus/sources';
 export const mcpCommand = (mcpUrl: string, token: string): string =>
   `claude mcp add --transport http zeus ${mcpUrl} --header "Authorization: Bearer ${token}"`;
 export const cliCommand = (apiUrl: string, token: string): string => `zeus login --url ${apiUrl} --token ${token}`;
-
 /**
  * Crear un token y mostrarlo UNA vez. El secreto vive solo en el estado de este diálogo: no se
  * cachea ni se guarda, y al cerrarlo ya no hay forma de volver a verlo (el back solo guarda su hash).
@@ -119,8 +118,9 @@ function CreateTokenDialog({ open, me, onClose }: { open: boolean; me: ZeusMe | 
 
             <div className="grid gap-1.5">
               <span className="text-[12.5px] font-medium text-foreground/80">Iniciar sesión en el CLI</span>
+              <CommandBlock label="Instálalo (Node 20+)" command={CLI_INSTALL} />
               {me?.apiUrl ? (
-                <CommandBlock label="CLI de zeus" command={cliCommand(me.apiUrl, created.token)} />
+                <CommandBlock label="Y entra con tu token" command={cliCommand(me.apiUrl, created.token)} />
               ) : (
                 <p className="text-xs text-muted-foreground">No se pudo leer la URL de zeus para el CLI.</p>
               )}
@@ -280,7 +280,9 @@ export function AccessTab({ me }: { me: ZeusMe | null }) {
                   <StepNote>{me ? 'No se pudo leer la URL del MCP de zeus; recarga la página.' : 'Leyendo la URL del MCP de zeus…'}</StepNote>
                 )}
               </Step>
-              <Step n={3} state={next} title="Inicia sesión en el CLI" stateLabel={hasToken ? 'Con tu token' : undefined} last>
+              <Step n={3} state={next} title="Instala el CLI e inicia sesión" stateLabel={hasToken ? 'Con tu token' : undefined} last>
+                <StepNote>Una vez por máquina. Requiere Node 20 o superior.</StepNote>
+                <CmdLine wrap command={CLI_INSTALL} />
                 {me?.apiUrl ? (
                   <CmdLine wrap command={cliCommand(me.apiUrl, '<token>')} />
                 ) : (
