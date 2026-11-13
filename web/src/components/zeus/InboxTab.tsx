@@ -380,7 +380,7 @@ export function InboxTab({ me }: { me: ZeusMe | null }) {
 
   return (
     <div className="flex flex-col gap-3 lg:h-[calc(100dvh-var(--shell-top,196px)-var(--shell-pad-b,0px))] lg:min-h-[660px]">
-      <section className="dark zeus-stage grid shrink-0 gap-x-6 gap-y-4 rounded-lg border bg-background p-4 text-foreground lg:grid-cols-[minmax(0,1fr)_316px] xl:gap-x-8 2xl:grid-cols-[minmax(0,1fr)_376px]">
+      <section className="zeus-stage grid shrink-0 gap-x-6 gap-y-4 rounded-lg border bg-background p-4 text-foreground lg:grid-cols-[minmax(0,1fr)_316px] xl:gap-x-8 2xl:grid-cols-[minmax(0,1fr)_376px]">
         <div className="grid min-w-0 content-start gap-3">
           <RailTitle meta={<span className="truncate text-[11.5px] text-faint">{focus ? focus.title : 'Pasa por una solicitud para ver hasta dónde llegó'}</span>}>
             Recorrido de una solicitud

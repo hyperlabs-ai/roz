@@ -172,3 +172,21 @@
 .zeus-sibling { color: hsl(var(--muted-foreground)); transition: background-color var(--duration-quick) var(--ease-out), color var(--duration-quick) var(--ease-out) }
 .zeus-sibling:hover { background: hsl(var(--c) / .16); color: hsl(var(--foreground)) }
 .zeus-sibling[data-on] { background: hsl(var(--c) / .22); color: hsl(var(--foreground)); box-shadow: 0 0 0 1px hsl(var(--c) / .6), 0 0 16px -4px hsl(var(--c) / .8) }
+
+/* ---------------------------------------------------------------- maqueta 3D */
+
+/* Escenario de la maqueta: sigue el tema (hueso en claro, negro en oscuro) con un resplandor bajo
+   el núcleo. El suelo 3D solo pinta sombras, así que este fondo es el piso. */
+.zeus-stage-maqueta { background: radial-gradient(ellipse 58% 48% at 50% 56%, hsl(var(--orange) / .07), transparent 70%), hsl(var(--background)) }
+/* Rótulo de zona: una línea compacta sobre vidrio, para no tapar las torres. */
+.zeus-mq-label { background: hsl(var(--card) / .8); color: hsl(var(--foreground)); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px) }
+.zeus-mq-label:hover { background: hsl(var(--card)); box-shadow: 0 0 0 1px hsl(var(--border)) }
+/* Rótulo del núcleo: invertido (tinta en claro, hueso en oscuro). */
+.zeus-mq-core { background: hsl(var(--foreground)); color: hsl(var(--background)) }
+
+/* En claro el vidrio del tablero pierde la sombra pesada pensada para el fondo negro. */
+html:not(.dark) .zeus-board:not(.dark) .zeus-glass {
+  background: linear-gradient(180deg, hsl(var(--card) / .92), hsl(var(--card) / .8));
+  box-shadow: 0 1px 0 hsl(var(--card)) inset, 0 16px 34px -20px hsl(var(--foreground) / .35);
+}
+

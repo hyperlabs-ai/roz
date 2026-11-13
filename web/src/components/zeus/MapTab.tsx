@@ -4,9 +4,9 @@
 // "por proyecto"). Al elegir una entrada, los rieles ceden su lugar al lector, adjunto al mapa.
 //
 // Toda la vista vive en la URL (`?lente=&k=&p=&nodo=&leer=`) para poder compartir "mira este ADR".
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Box, ChevronRight, CircleDot, Network, Plus, Radio, Search, X } from 'lucide-react';
+import { ChevronRight, FolderGit2, History, Layers, Link2, Network, PenLine, Pin, Plus, Radio, Search, ShieldCheck, Wifi, X } from 'lucide-react';
 import { EmptyState, ErrorCard, RefreshButton } from '@/components/bits';
 import { Segmented } from '@/components/pulse/roz-v2';
 import { fold } from '@/components/projects/project-ui';
@@ -21,10 +21,11 @@ import { zeusApi, type ZeusActivityEvent, type ZeusGraphNode, type ZeusNodeKind 
 import { useZeusGraph } from './hooks';
 import { KIND_ORDER, zoneLayout, type LayoutNode, type ZoneGroup } from './layout';
 import { IsoCanvas } from './IsoCanvas';
-import { HudCard, LeaderRow, Mix, Neon, Pips, Skyline, Timeline, TimelineItem, Waffle, toneVar } from './MapHud';
+import { supportsWebGL } from './webgl';
+import { HudCard, IconHolder, LeaderRow, Metric, Mix, Pips, Skyline, Timeline, TimelineItem, Waffle, toneVar } from './MapHud';
 import { NodeDialog } from './NodeDialogs';
 import { Reader } from './Reader';
-import { ZoneCanvas, type ZoneCanvasHandle, type ZoneInfo } from './ZoneCanvas';
+import type { ZoneCanvasHandle, ZoneInfo } from './ZoneCanvas';
 import { STATUS_META, TONES, ago, describeActivity, kindMeta, zoneTone, type Tone } from './zeus-ui';
 
 type Lens = 'tipo' | 'proyecto';
@@ -34,6 +35,10 @@ const LIST_CAP = 120;
 const STAGE_H = 'lg:h-[calc(100dvh-var(--shell-top,196px)-var(--shell-pad-b,0px))] lg:min-h-[640px]';
 /** Lo que tapan los instrumentos flotantes a cada lado: el lienzo encuadra en el hueco que dejan. */
 const HUD_INSET = { left: 308, right: 312 };
+
+// La maqueta trae three.js: se carga solo cuando alguien abre el Mapa en esa vista.
+const MaquetteCanvas = lazy(() => import('./MaquetteCanvas'));
+type MapView = 'maqueta' | 'iso';
 const MAX_ZONES = 12;
 const OTHERS = '__otros__';
 /** Acciones que cambian el grafo: al verlas pasar, el mapa se vuelve a pedir. */
@@ -118,8 +123,9 @@ export function MapTab() {
   /** Dentro de la zona "Otros": la cola larga de proyectos chicos. */
   const more = params.get('mas') === '1';
   const reading = params.get('leer') === '1';
-  /** Isométrico por defecto; `?vista=plano` deja el radial visto desde arriba. */
-  const flat = params.get('vista') === 'plano';
+  /** El mapa es la maqueta 3D. Sin WebGL no puede dibujarse y queda el isométrico como respaldo. */
+  const webgl = useMemo(supportsWebGL, []);
+  const view: MapView = webgl ? 'maqueta' : 'iso';
   // Cambiar de nivel, de lente o de documento es NAVEGAR: entra al historial, así el botón Atrás del
   // navegador deshace el último paso dentro del mapa en vez de sacarte de él. Solo los ajustes de vista
   // (isométrico/plano, leer a lo ancho) reemplazan la entrada actual.
@@ -404,8 +410,8 @@ export function MapTab() {
   }, []);
 
   const hasNodes = entries.length > 0;
-  const Canvas = flat ? ZoneCanvas : IsoCanvas;
-  const fitKey = `${flat ? 'p' : 'i'}|${lens}|${vk ?? ''}|${vp ?? ''}|${more ? 1 : 0}|${hasNodes ? 1 : 0}|${selected ? 1 : 0}|${reading ? 1 : 0}`;
+  const Canvas = view === 'iso' ? IsoCanvas : MaquetteCanvas;
+  const fitKey = `${view}|${lens}|${vk ?? ''}|${vp ?? ''}|${more ? 1 : 0}|${hasNodes ? 1 : 0}|${selected ? 1 : 0}|${reading ? 1 : 0}`;
 
   if (loading) {
     return (
@@ -439,75 +445,81 @@ export function MapTab() {
   const list = results ?? (leaf ? [...scope].sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.title.localeCompare(b.title, 'es')) : null);
 
   const leftHud = (
-    <aside className="flex min-h-0 flex-col gap-2.5 lg:absolute lg:bottom-3 lg:left-3 lg:top-3 lg:w-[296px]" aria-label="Nivel del mapa">
+    <aside className="flex min-h-0 flex-col gap-2 lg:absolute lg:bottom-3 lg:left-3 lg:top-3 lg:w-[296px]" aria-label="Nivel del mapa">
       {/* Módulo 1 — dónde estoy y cuánto hay aquí. */}
-      <div className="zeus-glass zeus-hud-card zeus-hud-head relative grid shrink-0 gap-3 overflow-hidden rounded-xl p-4">
-        <nav className="flex min-h-5 flex-wrap items-center gap-1" aria-label="Ruta dentro del mapa">
-          {crumbs.map((c, i) => {
-            const lastCrumb = i === crumbs.length - 1;
-            return (
-              <span key={i} className="flex min-w-0 items-center gap-1">
-                {i > 0 && <ChevronRight className="size-3 shrink-0 text-faint" />}
-                <button
-                  type="button"
-                  disabled={lastCrumb}
-                  onClick={() => patch(i === 0 ? { k: null, p: null, mas: null } : c.clear)}
-                  className={cn('label-caps max-w-[130px] truncate rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', lastCrumb ? 'text-orange' : 'text-muted-foreground hover:text-foreground')}
-                >
-                  {c.label}
-                </button>
-              </span>
-            );
-          })}
-        </nav>
-        <div className="flex items-end justify-between gap-3">
-          <div className="grid min-w-0 gap-1">
-            <span className="zeus-numeral zeus-numeral-accent text-[46px] font-semibold leading-[0.9] tracking-[-0.05em] tabular-nums">{scope.length}</span>
-            <span className="truncate text-[13px] text-muted-foreground">
-              {leaf ? 'entradas' : <>entradas en <b className="font-semibold text-foreground">{zones.length}</b> zonas</>}
-            </span>
+      <section className="shrink-0 rounded-[18px] border bg-panel p-1 shadow-sm">
+        <div className="grid gap-3 rounded-2xl border bg-card p-4 shadow-sm">
+          <nav className="flex min-h-5 flex-wrap items-center gap-1" aria-label="Ruta dentro del mapa">
+            {crumbs.map((c, i) => {
+              const lastCrumb = i === crumbs.length - 1;
+              return (
+                <span key={i} className="flex min-w-0 items-center gap-1">
+                  {i > 0 && <ChevronRight className="size-3 shrink-0 text-faint" />}
+                  <button
+                    type="button"
+                    disabled={lastCrumb}
+                    onClick={() => patch(i === 0 ? { k: null, p: null, mas: null } : c.clear)}
+                    className={cn('max-w-[130px] truncate rounded-sm text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', lastCrumb ? 'text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                  >
+                    {c.label}
+                  </button>
+                </span>
+              );
+            })}
+          </nav>
+          <div className="flex items-end justify-between gap-3">
+            <div className="grid min-w-0 gap-1">
+              <span className="text-[40px] font-bold leading-none tracking-[-0.045em] tabular-nums">{scope.length}</span>
+              <span className="truncate text-xs text-muted-foreground">{leaf ? 'entradas' : <>entradas en <b className="font-semibold text-foreground">{zones.length}</b> zonas</>}</span>
+            </div>
+            <IconHolder className="size-10 rounded-2xl bg-orange-soft text-orange [&_svg]:size-5"><Network /></IconHolder>
           </div>
-          <Button variant="brand" size="sm" className="shrink-0" onClick={() => setCreating(true)}><Plus /> Nueva</Button>
         </div>
-      </div>
+        <div className="flex items-center justify-between gap-2 px-3 pb-0.5 pt-1.5">
+          <span className="text-xs text-muted-foreground">{lens === 'tipo' ? 'Agrupado por tipo' : 'Agrupado por proyecto'}</span>
+          <Button variant="brand" size="sm" onClick={() => setCreating(true)}><Plus /> Nueva</Button>
+        </div>
+      </section>
 
       {/* Módulo 2 — cómo lo miro y qué busco. */}
-      <div className="zeus-glass zeus-hud-card grid shrink-0 gap-2.5 rounded-xl p-3">
-        <Segmented
-          value={lens}
-          onChange={(v: Lens) => patch({ lente: v === 'tipo' ? null : v, k: null, p: null, mas: null })}
-          options={[
-            { value: 'tipo', label: 'Por tipo' },
-            { value: 'proyecto', label: 'Por proyecto' },
-          ]}
-        />
-        <Input
-          ref={searchRef}
-          fieldSize="sm"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') {
-              setQ('');
-              e.currentTarget.blur();
+      <section className="shrink-0 rounded-[18px] border bg-panel p-1 shadow-sm">
+        <div className="grid gap-2.5 rounded-2xl border bg-card p-2.5 shadow-sm">
+          <Segmented
+            value={lens}
+            onChange={(v: Lens) => patch({ lente: v === 'tipo' ? null : v, k: null, p: null, mas: null })}
+            options={[
+              { value: 'tipo', label: 'Por tipo' },
+              { value: 'proyecto', label: 'Por proyecto' },
+            ]}
+          />
+          <Input
+            ref={searchRef}
+            fieldSize="sm"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setQ('');
+                e.currentTarget.blur();
+              }
+            }}
+            placeholder="Buscar en zeus…"
+            aria-label="Buscar en zeus"
+            leading={<Search />}
+            trailing={
+              q ? (
+                <button type="button" onClick={() => setQ('')} aria-label="Limpiar búsqueda" className="grid size-6 place-items-center rounded-sm text-faint hover:text-foreground"><X className="size-3.5" /></button>
+              ) : (
+                <kbd className="rounded-sm border px-1 text-[10.5px] text-faint">/</kbd>
+              )
             }
-          }}
-          placeholder="Buscar en zeus…"
-          aria-label="Buscar en zeus"
-          leading={<Search />}
-          trailing={
-            q ? (
-              <button type="button" onClick={() => setQ('')} aria-label="Limpiar búsqueda" className="grid size-6 place-items-center rounded-sm text-faint hover:text-foreground"><X className="size-3.5" /></button>
-            ) : (
-              <kbd className="rounded-sm border px-1 text-[10.5px] text-faint">/</kbd>
-            )
-          }
-        />
-      </div>
+          />
+        </div>
+      </section>
 
       {list ? (
         /* Módulo 3 (fondo del mapa o búsqueda) — las entradas. */
-        <HudCard title={results ? `${results.length} coincidencias` : levelName} className="flex min-h-[180px] flex-1 flex-col overflow-hidden !px-2">
+        <HudCard title={results ? `${results.length} coincidencias` : levelName} sub={results ? 'Toca una para abrirla' : 'Entradas de esta zona'} icon={<Search />} className="min-h-[180px] flex-1 overflow-hidden" bodyClassName="p-1.5">
           {list.length === 0 ? (
             <p className="px-2 py-6 text-center text-xs text-muted-foreground">Nada coincide con esa búsqueda.</p>
           ) : (
@@ -530,18 +542,18 @@ export function MapTab() {
         </HudCard>
       ) : (
         <>
-          {/* Módulo 3 — el nivel de frente: una columna por zona. */}
-          <HudCard title={groupBy === 'p' ? 'Tamaño por proyecto' : 'Tamaño por tipo'} className="shrink-0">
+          {/* Módulo 3 — el nivel de frente: una columna por zona. En la maqueta sobra: las losas ya lo dicen. */}
+          {view !== 'maqueta' && <HudCard title={groupBy === 'p' ? 'Tamaño por proyecto' : 'Tamaño por tipo'} icon={<Layers />} className="shrink-0">
             <Skyline
               items={zones.map((z) => ({ id: z.id, label: z.info.label, count: z.nodes.length, tone: z.info.tone }))}
               hot={hotZone}
               onHover={setHotZone}
               onOpen={openZone}
             />
-          </HudCard>
+          </HudCard>}
 
           {/* Módulo 4 — el índice de zonas. */}
-          <HudCard title="Zonas" meta={<span className="label-caps tabular-nums">{zones.length}</span>} className="flex min-h-[140px] flex-1 flex-col overflow-hidden !px-2 [&>header]:px-1.5">
+          <HudCard title="Zonas" sub={`${zones.length} en este nivel · clic para entrar`} icon={<Layers />} className="min-h-[140px] flex-1 overflow-hidden" bodyClassName="p-1.5">
             <ul className="scroll-thin grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] content-start overflow-y-auto">
               {zones.map((z) => (
                 <LeaderRow
@@ -560,7 +572,7 @@ export function MapTab() {
 
           {/* Módulo 5 — lo último que cambió en este nivel. */}
           {recent.length > 0 && (
-            <HudCard title="Lo último que cambió" className="flex max-h-[30%] min-h-[128px] shrink-0 flex-col overflow-hidden">
+            <HudCard title="Lo último que cambió" icon={<History />} className="max-h-[32%] min-h-[150px] shrink-0 overflow-hidden">
               <Timeline className="scroll-thin -mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
                 {recent.map((n) => (
                   <TimelineItem key={n.ref} token={toneVar(kindMeta(n.kind).tone)}>
@@ -579,17 +591,15 @@ export function MapTab() {
   );
 
   const rightHud = (
-    <aside className="scroll-none flex min-h-0 flex-col gap-2.5 lg:absolute lg:bottom-3 lg:right-3 lg:top-[52px] lg:w-[300px] lg:overflow-y-auto" aria-label="Estado del contexto">
-      <HudCard className="shrink-0">
-        <div className="zeus-hud-quad grid grid-cols-2">
-          <Neon value={stats.edges} label="Conexiones" />
-          <Neon value={stats.pinned} label="Fijadas" accent />
-          <Neon value={stats.manual} label="Escritas aquí" />
-          <Neon value={stats.online} label="En línea" />
-        </div>
-      </HudCard>
+    <aside className="scroll-none flex min-h-0 flex-col gap-2 lg:absolute lg:bottom-3 lg:right-3 lg:top-[52px] lg:w-[300px] lg:overflow-y-auto" aria-label="Estado del contexto">
+      <div className="grid shrink-0 grid-cols-2 gap-2">
+        <Metric label="Conexiones" value={stats.edges} icon={<Link2 />} />
+        <Metric label="Fijadas" value={stats.pinned} icon={<Pin />} accent />
+        <Metric label="Escritas aquí" value={stats.manual} icon={<PenLine />} />
+        <Metric label="En línea" value={stats.online} icon={<Wifi />} />
+      </div>
 
-      <HudCard title="Vigencia" className="shrink-0">
+      <HudCard title="Vigencia" sub="Estado de cada entrada" icon={<ShieldCheck />} className="shrink-0">
         <Mix
           parts={[
             { label: STATUS_META.active.label, value: stats.status.active ?? 0, token: '--green' },
@@ -600,7 +610,7 @@ export function MapTab() {
         />
       </HudCard>
 
-      <HudCard title="De quién es" className="shrink-0">
+      <HudCard title="De quién es" sub="Proyecto u organización" icon={<FolderGit2 />} className="shrink-0">
         <Waffle
           a={{ label: 'de un proyecto', value: stats.ofProject, token: '--blue' }}
           b={{ label: 'de la organización', value: stats.ofOrg, token: '--orange' }}
@@ -608,7 +618,7 @@ export function MapTab() {
       </HudCard>
 
       {stats.hubs.length > 0 && (
-        <HudCard title="Más conectadas" className="shrink-0">
+        <HudCard title="Más conectadas" sub="Las que más enlaces tienen" icon={<Link2 />} className="shrink-0" bodyClassName="p-1.5">
           <ol className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
             {stats.hubs.map((h, i) => (
               <li key={h.node.ref} className="min-w-0">
@@ -625,8 +635,9 @@ export function MapTab() {
 
       <HudCard
         title="Actividad en vivo"
-        meta={<Radio className={cn('size-3.5', live.down ? 'text-faint' : 'animate-pulse text-orange')} />}
-        className="flex min-h-[150px] flex-1 flex-col overflow-hidden"
+        sub={live.down ? 'Sin conexión con zeus' : 'Lo que pasa en zeus ahora'}
+        icon={<Radio className={cn(live.down ? 'text-faint' : 'animate-pulse text-orange')} />}
+        className="min-h-[170px] flex-1 overflow-hidden"
       >
         {live.events.length === 0 ? (
           <p className="text-xs leading-relaxed text-muted-foreground" aria-live="polite">
@@ -687,20 +698,14 @@ export function MapTab() {
       className="max-lg:h-[62dvh] max-lg:min-h-[420px] max-lg:rounded-xl lg:absolute lg:inset-0"
     />
   );
+  const canvasSlot = view === 'maqueta' ? <Suspense fallback={<Skeleton className="max-lg:h-[62dvh] max-lg:min-h-[420px] lg:absolute lg:inset-0" />}>{canvasEl}</Suspense> : canvasEl;
 
   const stage = (
-    <div className={cn('dark zeus-board relative grid gap-3 overflow-hidden rounded-xl bg-background text-foreground lg:border', STAGE_H)}>
-      {canvasEl}
-      {/* Barra del lienzo: vista y refresco. */}
+    // La maqueta sigue el tema de roz; el isométrico y el plano están dibujados para fondo negro.
+    <div className={cn(view !== 'maqueta' && 'dark', 'zeus-board relative grid gap-3 overflow-hidden rounded-xl bg-background text-foreground lg:border', STAGE_H)}>
+      {canvasSlot}
+      {/* Barra del lienzo: refresco. */}
       <div className={cn('absolute top-3 z-10 flex items-center gap-2 max-lg:right-3', solo ? 'right-3' : 'lg:right-3')}>
-        <Segmented
-          value={flat ? 'plano' : 'iso'}
-          onChange={(v: 'iso' | 'plano') => patch({ vista: v === 'plano' ? 'plano' : null })}
-          options={[
-            { value: 'iso', label: 'Isométrico', icon: <Box /> },
-            { value: 'plano', label: 'Plano', icon: <CircleDot /> },
-          ]}
-        />
         <RefreshButton busy={refetching} onClick={reload} />
       </div>
       {/* Zonas hermanas: salto lateral sin subir de nivel. */}
@@ -735,12 +740,20 @@ export function MapTab() {
         className="pointer-events-none absolute bottom-3 z-10 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground max-lg:hidden"
         style={{ left: solo ? 12 : HUD_INSET.left + 8, right: solo ? 130 : HUD_INSET.right + 122 }}
       >
-        <span>{flat ? 'Rueda para acercar' : 'Arrastra para girar · rueda para acercar'} · {!leaf ? 'clic en una zona para entrar' : 'clic en el centro para subir'}{siblings.length > 1 && ' · ← → cambian de zona'}</span>
+        <span>Arrastra para girar · rueda para acercar · {!leaf ? 'clic en una zona para entrar' : 'clic en el centro para subir'}{siblings.length > 1 && ' · ← → cambian de zona'}</span>
+        {view === 'maqueta' ? (
+          <span className="ml-auto flex shrink-0 items-center gap-3">
+            <span className="flex items-center gap-1.5"><span className="h-2.5 w-1.5 rounded-[1px] bg-foreground/70" /> altura = conexiones</span>
+            <span className="flex items-center gap-1.5"><span className="size-2 rounded-[1px] bg-orange" /> fijada</span>
+            <span className="flex items-center gap-1.5"><span className="size-2 rounded-[1px] bg-foreground/25" /> borrador</span>
+          </span>
+        ) : (
         <span className="ml-auto flex shrink-0 items-center gap-3">
           <span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-foreground/70" /> entrada</span>
           <span className="flex items-center gap-1.5"><span className="size-2 rotate-45 rounded-[1px] bg-foreground/70" /> fijada</span>
           <span className="flex items-center gap-1.5"><span className="size-2 rounded-full border border-foreground/70" /> borrador</span>
         </span>
+        )}
       </div>
       {!solo && leftHud}
       {!solo && rightHud}
