@@ -403,7 +403,7 @@ export default function Projects() {
                         draggable={canDrag}
                         busy={projects.isBusy(p.projectId)}
                         menu={menu(p)}
-                        onOpen={() => nav(`/app/projects/${p.projectId}`)}
+                        onOpen={() => nav(`/proyectos/${p.projectId}`)}
                       />
                     </Fresh>
                   </div>
@@ -412,7 +412,7 @@ export default function Projects() {
             </Revalidating>
           ) : (
             <Revalidating active={refetching}>
-              <ProjectTable rows={visible} isFresh={projects.isFresh} isBusy={projects.isBusy} menu={menu} onOpen={(p) => nav(`/app/projects/${p.projectId}`)} />
+              <ProjectTable rows={visible} isFresh={projects.isFresh} isBusy={projects.isBusy} menu={menu} onOpen={(p) => nav(`/proyectos/${p.projectId}`)} />
             </Revalidating>
           )}
         </div>

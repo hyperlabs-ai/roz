@@ -1,6 +1,7 @@
 // Planes del agente (roz v2): encolar (outbox 'plan.enqueue'), listar, las acciones de personas
 // (aprobar, pedir cambios, reclamar, jalar, soltar, cancelar), el watchdog y el aviso de reclamable.
 // Cada cambio de estado pasa por transitionPlan (store.ts): update condicional + agent_plan_event.
+import { buildContextPack } from '../zeus/nodes.js';
 import { db } from '../db/supabase.js';
 import { emit, type EmitOptions, type OutboxEventType } from '../events/outbox.js';
 import { latestDecision, updateDecision } from '../assign/decisions.js';
@@ -182,6 +183,15 @@ export async function enqueuePlan(p: PlanEnqueuePayload): Promise<EnqueueResult>
     throw insErr;
   }
   const planId = (ins as { id: string }).id;
+  // Paquete de contexto de zeus: las referencias que el agente necesita para ESTA tarea, elegidas
+  // una vez al encolar. Best-effort: un plan sin paquete sigue siendo un plan (el agente puede
+  // buscar por su cuenta); un plan que no se encola por culpa de zeus, no.
+  try {
+    const pack = await buildContextPack(item.project_id ?? null, `${item.name} ${item.description ?? ''}`);
+    if (pack.items.length) await supabase.from('agent_plan').update({ context_pack: pack }).eq('id', planId);
+  } catch {
+    /* sin paquete */
+  }
   await insertPlanEvent({
     planId,
     kind: 'enqueued',

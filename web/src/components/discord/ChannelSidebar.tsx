@@ -97,7 +97,7 @@ function ThreadRow({ t }: { t: DiscordThreadView }) {
   const u = unread(t.id);
   return (
     <NavLink
-      to={`/app/chat/${t.id}`}
+      to={`/chat/${t.id}`}
       className={({ isActive }) =>
         cn(
           'relative ml-[1.15rem] flex h-7 items-center gap-2 rounded-md pl-4 pr-2 text-[13px] transition-colors',
@@ -141,7 +141,7 @@ function ChannelRow({ c }: { c: DiscordChannelView }) {
   return (
     <>
       <NavLink
-        to={`/app/chat/${c.id}`}
+        to={`/chat/${c.id}`}
         className={({ isActive }) =>
           cn(
             ROW,

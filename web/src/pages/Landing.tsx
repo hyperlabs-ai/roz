@@ -201,7 +201,7 @@ function Header() {
         <div className="ml-auto flex items-center gap-2">
           <ThemeToggle />
           <Button asChild variant="secondary" className="hidden sm:inline-flex">
-            <Link to="/app">
+            <Link to="/">
               <LayoutDashboard /> Dashboard
             </Link>
           </Button>
@@ -672,7 +672,7 @@ function Visibility() {
               </p>
             </div>
             <Button asChild variant="outline" className="justify-self-start border-transparent">
-              <Link to="/app">
+              <Link to="/">
                 Abrir el pulso <ArrowRight />
               </Link>
             </Button>
@@ -1079,7 +1079,7 @@ function Footer() {
               <CapsLabel>Más</CapsLabel>
               <FooterLink href={REPO}>Código fuente</FooterLink>
               <FooterLink href={`mailto:${SUPPORT_EMAIL}`}>Soporte</FooterLink>
-              <Link to="/app" className="block text-muted-foreground transition-colors hover:text-foreground">Dashboard</Link>
+              <Link to="/" className="block text-muted-foreground transition-colors hover:text-foreground">Dashboard</Link>
             </div>
           </div>
         </div>

@@ -3,8 +3,10 @@
    y abrir la app en la vista correcta al tocar la notificación. Archivo vanilla: Vite lo copia
    tal cual desde web/public → dist (no pasa por el bundler). */
 
-const CACHE = 'roz-shell-v3';
-const SHELL = ['/app', '/', '/icon-192.png', '/manifest.webmanifest'];
+// La app vive en la raíz (antes bajo /app): el shell cacheado es '/'. Subir la versión borra la
+// caché vieja en el `activate`.
+const CACHE = 'roz-shell-v4';
+const SHELL = ['/', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -33,10 +35,10 @@ self.addEventListener('fetch', (event) => {
       try {
         const fresh = await fetch(request);
         const cache = await caches.open(CACHE);
-        cache.put('/app', fresh.clone()).catch(() => {});
+        cache.put('/', fresh.clone()).catch(() => {});
         return fresh;
       } catch {
-        return (await caches.match('/app')) || (await caches.match('/')) || Response.error();
+        return (await caches.match('/')) || Response.error();
       }
     })());
   }
@@ -56,7 +58,7 @@ async function chatAlreadyVisible(info) {
   for (const client of all) {
     try {
       const url = new URL(client.url);
-      if (client.focused && client.visibilityState === 'visible' && url.pathname === '/app/chat/' + info.conversationId) {
+      if (client.focused && client.visibilityState === 'visible' && url.pathname.replace(/^\/app(?=\/)/, '') === '/chat/' + info.conversationId) {
         visible = true;
         client.postMessage({ type: 'chat-push', conversationId: info.conversationId, threadId: info.threadId || null });
       }
@@ -117,7 +119,7 @@ self.addEventListener('push', (event) => {
       requireInteraction: !!data.requireInteraction,
       timestamp: Date.now(),
       silent,
-      data: { url: data.url || '/app/infra' },
+      data: { url: data.url || '/infra' },
     };
     // Vibración tipo mensaje en Android. Una notificación silenciosa no puede llevarla (lanza).
     if (!silent) options.vibrate = [120, 60, 120];
@@ -127,7 +129,7 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || '/app/infra';
+  const target = (event.notification.data && event.notification.data.url) || '/infra';
   event.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const client of all) {

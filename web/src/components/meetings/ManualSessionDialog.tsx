@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { Check, ClipboardPaste, FileText, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DateTimeField } from '@/components/ui/date-field';
 import { Input } from '@/components/ui/input';
+import { NumberField } from '@/components/ui/number-field';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Eyebrow, IntegrationIcon } from '@/components/brand';
@@ -236,17 +238,18 @@ export function ManualSessionDialog({
               <div className="grid gap-1.5">
                 <FieldLabel htmlFor="ms-date">Fecha y duración</FieldLabel>
                 <div className="flex gap-2">
-                  <Input id="ms-date" type="datetime-local" value={heldAt} onChange={(e) => setHeldAt(e.target.value)} className="min-w-0 flex-1" />
-                  <Input
+                  <DateTimeField id="ms-date" value={heldAt} onChange={(e) => setHeldAt(e.target.value)} className="min-w-0 flex-1" />
+                  <NumberField
                     id="ms-dur"
-                    type="number"
                     min={1}
                     max={1440}
-                    value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                    placeholder="min"
+                    nullable
+                    value={duration && Number.isFinite(Number(duration)) ? Number(duration) : null}
+                    onCommit={(v) => setDuration(v == null ? '' : String(v))}
+                    unit="min"
                     aria-label="Duración en minutos"
-                    className={cn('w-[84px] shrink-0', badDuration && 'border-destructive')}
+                    invalid={badDuration}
+                    className="w-[84px]"
                   />
                 </div>
               </div>

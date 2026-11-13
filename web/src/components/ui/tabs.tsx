@@ -56,7 +56,7 @@ const TabsList = React.forwardRef<
     <TabsPrimitive.List
       ref={setRefs}
       className={cn(
-        'relative inline-flex h-9 items-center justify-center rounded-md bg-panel p-[3px] text-muted-foreground',
+        'relative inline-flex h-9 items-center justify-center rounded-md bg-panel p-[3px] text-muted-foreground shadow-[inset_0_0_0_1px_hsl(var(--foreground)/0.04)]',
         className,
       )}
       {...props}
@@ -67,7 +67,7 @@ const TabsList = React.forwardRef<
         // en `useLayoutEffect`), así que no se ve viajar desde el borde izquierdo al montar.
         <span
           aria-hidden
-          className="absolute bottom-[3px] top-[3px] rounded-sm bg-card shadow-sm transition-[left,width] duration-fast ease-spring"
+          className="surface absolute bottom-[3px] top-[3px] rounded-sm bg-card ring-1 ring-foreground/[0.06] transition-[left,width] duration-fast ease-spring"
           style={{ left: pill.left, width: pill.width }}
         />
       )}

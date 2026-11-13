@@ -74,7 +74,7 @@ export function CandidateCard({
 
       {meeting && (
         <Link
-          to={`/app/meetings?m=${meeting.id}&c=${c.id}`}
+          to={`/juntas?m=${meeting.id}&c=${c.id}`}
           className="-mt-1.5 min-w-0 truncate text-[11.5px] text-muted-foreground hover:text-foreground hover:underline"
         >
           {meeting.title} · {shortDate(meeting.heldAt)}

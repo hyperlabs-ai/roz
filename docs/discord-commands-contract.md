@@ -15,14 +15,14 @@ proyecto ↔ canal). Si algo de aquí cambia, cambia también el código citado 
 | Router (tipo, subcomando, identidad, servidor, presupuesto de 3 s) | `src/discord/commands/router.ts` | hecho |
 | Respuestas (efímero, diferido, modal, componentes, completar con el token) | `src/discord/commands/respond.ts` | hecho |
 | Fichas con la identidad de roz (Components V2, §7.1) | `src/discord/commands/{embeds,v2,emojis}.ts`, `links.ts` | hecho |
-| Emojis de aplicación (íconos de proveedores y Roz-bot) | `scripts/discord-emojis.ts` (`npm run discord:emojis`), `discord-bridge/assets/emojis/` | hecho |
+| Emojis de aplicación (íconos de proveedores y Roz-bot) | `scripts/discord-emojis.ts` (`npm run discord:emojis`), `assets/discord/emojis/` | hecho |
 | Registro de handlers | `src/discord/commands/registry.ts` | hecho |
 | Registro de comandos en el servidor | `src/discord/commands/register.ts`, `scripts/discord-commands.ts` (`npm run discord:commands`) | hecho |
 | REST de interacciones y comandos de servidor | `src/adapters/discord.ts` | hecho |
 | Rutas `/v1/internal/discord/{interactions,commands,commands/sync}` | `src/routes/internal.ts` | hecho |
 | Handlers tarea, ticket, status, crear tarea, citar | `src/discord/commands/handlers/{tarea,ticket,status,mensaje-crear-tarea,mensaje-citar}.ts` | hecho |
 | Handlers plan, pulso, infra, junta, decisión | `src/discord/commands/handlers/{plan,pulso,infra,junta,mensaje-decision}.ts` | hecho |
-| Reenvío de INTERACTION_CREATE + callback + sync al arrancar | `discord-bridge/src/{interactions,commands,register-commands}.ts` | hecho |
+| Reenvío de INTERACTION_CREATE + callback + sync al arrancar | `src/bridge/{interactions,commands,register-commands}.ts` | hecho |
 | Paridad del compositor de roz | `src/discord/commands/from-roz.ts`, `src/routes/discord.ts`, `web/src/components/discord/{DiscordComposer,CommandDialog}.tsx`, `web/src/discord/commands.ts` (§9) | hecho |
 
 Tests: `test/discord-commands-{definitions,custom-id,router}.test.ts`, `test/discord-v2.test.ts` (formato).
@@ -90,7 +90,7 @@ componente, 8 autocompletado, 9 modal). Nunca lleva el token.
 - 4 (autocompletado) → `{ type: 8, data: { choices: [] } }`;
 - 2, 3, 5 → `{ type: 4, data: { content: "roz no respondió a tiempo. Intenta de nuevo en un momento.", flags: 64, allowed_mentions: { parse: [] } } }`.
 
-El texto cambia según la causa (constantes en `discord-bridge/src/interactions.ts`):
+El texto cambia según la causa (constantes en `src/bridge/interactions.ts`):
 - timeout (> presupuesto) → "roz no respondió a tiempo. Intenta de nuevo en un momento.";
 - red caída, 5xx, 403, 400 o un 200 sin `callback` → "roz no está disponible. Intenta de nuevo en un momento.";
 - 404 (flag apagado) → "roz no tiene activado Discord.".
@@ -402,7 +402,7 @@ Por comando:
 
 **Emojis de aplicación** (íconos dentro del texto): `roz_vercel`, `roz_railway`, `roz_supabase`,
 `roz_github`, `roz_linear`, `roz_bot`. Los sube `npm run discord:emojis` (`-- --check` para ver qué
-falta; idempotente, nunca borra) desde los PNG 128×128 de `discord-bridge/assets/emojis/` (generados
+falta; idempotente, nunca borra) desde los PNG 128×128 de `assets/discord/emojis/` (generados
 de `web/public/integrations/*.svg` — Vercel, Railway y GitHub en blanco para el fondo oscuro — y de
 `web/public/brand/roz-bot.svg`). En runtime `emojis.ts` los lee con `GET /applications/{app}/emojis`
 (token del bot), cacheados 10 min (1 min si falló) y con ≤ 700 ms de espera; si falta uno, ese ícono
@@ -485,7 +485,7 @@ Construido así (`src/discord/commands/from-roz.ts`, rutas en `src/routes/discor
 - `discord-v2`: formato (§7.1): flag y cuerpo V2 (crear/editar), topes y `fitV2`, colapso de infra y
   pulso, daily agrupado, plan, emojis de la app con caché y el aplanado para el espejo. Ayudas para
   leer mensajes V2 en las pruebas: `test/discord-v2-helpers.ts`.
-- Puente: `discord-bridge/test/{interactions,commands}.test.ts` (+ casos en `bridge.test.ts` y
+- Puente: `test/bridge/{interactions,commands}.test.ts` (+ casos en `bridge.test.ts` y
   `config-log.test.ts`).
 - Los handlers llenos deben probarse con la base falsa (`test/discord-fixture.ts`) y `fetch` simulado;
   nunca contra Discord real ni la base del `.env` (apunta a producción).

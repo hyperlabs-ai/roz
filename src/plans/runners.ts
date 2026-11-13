@@ -411,6 +411,7 @@ export async function runnerNextJob(auth: AuthedRunner, now: Date = new Date()):
       branch,
       planMd: taken.plan_md,
       feedback: taken.feedback,
+      contextPack: taken.context_pack ?? null,
     }),
     allowedTools: [...(taken.phase === 'implementar' ? RUNNER_ALLOWED_TOOLS_IMPLEMENT : RUNNER_ALLOWED_TOOLS_PLAN)],
     maxTurns: MAX_TURNS[taken.phase],

@@ -38,7 +38,7 @@ export function projectColor(p: { color: string | null; key: string; name: strin
   return p.color || `hsl(${projectHue(p.key || p.name)} 52% 48%)`;
 }
 
-/** HSL → hex, para previsualizar en el `<input type="color">` el color automático. */
+/** HSL → hex, para previsualizar en el `ColorField` el color automático. */
 export function hslToHex(h: number, s: number, l: number): string {
   s /= 100;
   l /= 100;

@@ -9,7 +9,7 @@ de aquí cambia, cambia también `src/types/discord.ts` y el espejo a mano de `w
 
 | Pieza | Dónde | Dueño de |
 |---|---|---|
-| Puente | `discord-bridge/` (paquete nuevo, Node + discord.js, Railway) | gateway, espejo en Supabase, backfill, reconciliación, avisos a roz, `/health` |
+| Puente | `src/bridge/` (discord.js, dentro del proceso de zeus; antes un servicio aparte) | gateway, espejo en Supabase, backfill, reconciliación, avisos a roz, `/health` |
 | API de roz | `src/discord/*`, `src/routes/discord.ts`, `src/routes/discord-oauth.ts`, `src/routes/internal.ts` | lectura con permisos, envío por webhook, OAuth, tiempo real, `/ticket`, issue desde mensaje |
 | Front | `web/src/pages/Chat.tsx`, `web/src/discord/*`, `web/src/components/chat/*`, `web/src/lib/api.ts` | UI con el diseño de roz (DESIGN.md / brand.tsx), Configuración → ligar cuenta |
 

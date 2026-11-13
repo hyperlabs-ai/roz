@@ -248,6 +248,6 @@ function objectSchema(obj: z.ZodObject<z.ZodRawShape>): Record<string, unknown> 
   return { type: 'object', properties, ...(required.length ? { required } : {}) };
 }
 
-export function toInputSchema(tool: McpTool): Record<string, unknown> {
+export function toInputSchema(tool: Pick<McpTool, 'schema'>): Record<string, unknown> {
   return objectSchema(tool.schema);
 }

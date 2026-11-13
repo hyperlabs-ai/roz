@@ -42,9 +42,11 @@ revisión*, un merge a *completado*. El trabajo es la fuente de verdad; roz lo i
 
 ## Stack
 
-**TypeScript + Hono** sobre **Vercel serverless** · **Supabase Postgres + pgvector** · cola async =
-**outbox en Postgres drenado por Vercel Cron** (sin servicio externo) · **Claude** (razonamiento) ·
-**OpenAI** (embeddings) · **GitHub / Resend** (email) · **dashboard** React (SPA en `web/`).
+Dos despliegues: **roz** (el front, SPA React en `web/`, estático en Vercel) y **zeus** (el back, un
+proceso **TypeScript + Hono** en Railway con el API, el MCP, el planificador, el gateway de Discord y
+el contexto unificado del equipo) · **Supabase Postgres + pgvector** · cola async = **outbox en
+Postgres drenado por el planificador de zeus** (sin servicio externo) · **Claude** (razonamiento) ·
+**OpenAI** (embeddings) · **GitHub / Resend** (email).
 
 Arquitectura completa: [`ARCHITECTURE.es.md`](ARCHITECTURE.es.md).
 
@@ -58,7 +60,8 @@ roz es open source bajo [MIT](LICENSE). **No hay servicio hospedado** — despli
 | Servicio | Para qué |
 |---|---|
 | **Supabase** | Postgres + pgvector (la base de datos de roz) |
-| **Vercel** | runtime serverless + cron |
+| **Vercel** | hosting del front (estático) |
+| **Railway** (o cualquier host de Docker) | zeus: el back, un proceso de larga vida |
 | **GitHub** | un PAT fine-grained — ver [`docs/GITHUB-SETUP.md`](docs/GITHUB-SETUP.md) |
 | **Anthropic** | Claude (razonamiento) |
 | **OpenAI** | embeddings (`text-embedding-3-large`, 3072 dims) |
@@ -91,11 +94,17 @@ npm run dev                 # GET /health -> { "status": "ok" }
    `0011_pr_attribution.sql`) en tu proyecto Supabase (SQL editor o `supabase db push`). El schema
    vive aislado en `roz`; asegúrate de que `roz` esté en los *exposed schemas* de la API
    (Supabase → Settings → API), o todo falla con `PGRST106`.
-2. **Despliega** a Vercel. `vercel.json` define los crons (drain del outbox cada minuto, infra-poll
-   cada 15 min, brain-sweep diario, digest semanal los viernes). Setea `CRON_SECRET` en producción o
-   los crons responden `403`.
-3. **Conecta GitHub.** Sigue [`docs/GITHUB-SETUP.md`](docs/GITHUB-SETUP.md) (scopes del PAT + webhook).
-4. **Siembra.** Corre `npx tsx scripts/backfill-embeddings.ts` para los embeddings de skills.
+2. **Despliega zeus** (el back) en Railway: un servicio desde este repo; detecta el `Dockerfile` de
+   la raíz. Ponle TODAS las variables de `.env.example` (aquí viven los secretos), con
+   `ROZ_ENV=production`. Healthcheck: `GET /health`. **Una sola réplica** (el gateway de Discord y el
+   planificador no admiten dos). Setea `CRON_SECRET` o ningún job corre.
+3. **Despliega roz** (el front) en Vercel con **Root Directory = `web`**. Variables: solo
+   `ZEUS_API_ORIGIN` (el dominio público de zeus, con `https://`), `SUPABASE_URL` y
+   `SUPABASE_ANON_KEY`. `web/vercel.ts` reescribe `/api/*` hacia zeus. Apunta `DASHBOARD_URL` (en
+   zeus) al dominio del front, y los webhooks de GitHub y los redirect URI de OAuth al dominio que
+   corresponda (webhooks → zeus; callbacks de OAuth → el front, que los reenvía por `/api`).
+4. **Conecta GitHub.** Sigue [`docs/GITHUB-SETUP.md`](docs/GITHUB-SETUP.md) (scopes del PAT + webhook).
+5. **Siembra.** Corre `npx tsx scripts/backfill-embeddings.ts` para los embeddings de skills.
    Opcional: `npx tsx scripts/backfill-commits.ts` para commits históricos. Crea tus proyectos y
    tareas de forma nativa desde el dashboard.
 
@@ -110,7 +119,9 @@ La **landing** pública se sirve en `/`; el **dashboard** de operación vive det
 | Ruta | Quién llama | Qué hace |
 |---|---|---|
 | `GET /health` | — | healthcheck |
-| `POST /mcp` | Claude (bearer `ROZ_MCP_TOKEN`) | tools de intake, devs y contexto |
+| `POST /mcp` | Claude (token personal `zeus_…`; también `ROZ_MCP_TOKEN` y tokens de runner) | contexto de zeus (índice, búsqueda, documentos, mensajes, solicitudes, planes) + tools de intake y devs |
+| `/v1/zeus/*` | CLI `zeus` (token personal) | bóveda de llaves: llaves de equipo, entornos, subir/bajar secretos cifrados |
+| `/api/dashboard/zeus/*` | SPA del dashboard | grafo de contexto, documentos, bandeja, organización, bóveda, tokens |
 | `POST /webhooks/github` | GitHub | push/commits (reconciliación), ciclo de vida de PRs (estado de tareas) y detección de repos; HMAC verificado |
 | `POST /v1/intake` | Apps de clientes (bearer `ROZ_INGEST_TOKEN`) | ingesta auto-documentada y auto-asignada; `autoAssign` en la respuesta dice cómo (`assigned` / `escalated` / `pending` / `failed` / `legacy`) |
 | `POST /api/dashboard/ticket/preview` | SPA del dashboard | ticket inteligente: Jev lo lee, roz completa tipo/skills/puntos/urgencia y propone responsable (sin crear la tarea) |
@@ -120,11 +131,12 @@ La **landing** pública se sirve en `/`; el **dashboard** de operación vive det
 | `POST /api/dashboard/tickets/:id/auto-assign` | SPA del dashboard | corre la asignación automática sobre una tarea abierta sin responsable |
 | `GET /api/dashboard/tickets/:id/assignment` | SPA del dashboard | por qué roz eligió (o no): clasificación, candidatos con motivos, payload exacto enviado a Jev |
 | `GET /api/dashboard/*` | SPA del dashboard (auth Supabase + dominio) | métricas de ingeniería + salud de infra |
-| `GET /v1/internal/drain` | Vercel Cron (cada min) | drena el outbox (idempotente, con reintentos) |
-| `GET /v1/internal/infra-poll` | Vercel Cron (cada 15 min) | sondea Vercel/Railway/Supabase |
-| `GET /v1/internal/brain-sweep` | Vercel Cron (diario) | rellena embeddings faltantes |
-| `GET /v1/internal/weekly-digest` | Vercel Cron (viernes) | digest de equipo + por dev |
-| `GET *` | navegador | sirve la SPA del dashboard / la landing pública |
+| `GET /v1/internal/drain` | planificador de zeus (cada 15 s) | drena el outbox (idempotente, con reintentos) |
+| `GET /v1/internal/infra-poll` | planificador (cada 15 min) | sondea Vercel/Railway/Supabase |
+| `GET /v1/internal/brain-sweep` | planificador (diario) | rellena embeddings faltantes |
+| `GET /v1/internal/weekly-digest` | planificador (viernes) | digest de equipo + por dev |
+| `GET /v1/internal/zeus-sweep` | planificador (cada 10 min) | importa a zeus los ADR/OpenSpec nuevos de los repos con push (no pisa lo que ya está en el registro) |
+| `GET *` | navegador | en Vercel: la SPA del dashboard / la landing pública (zeus solo la sirve en self-host de una caja, si hay `web/dist`) |
 
 ## Estado
 

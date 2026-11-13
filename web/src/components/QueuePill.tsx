@@ -7,7 +7,7 @@ import { inflightPhrase } from '@/components/queue/QueueRow';
 import { cn } from '@/lib/utils';
 
 /** Ancla del historial de eventos dentro del Pulso (la página de Actividad se unificó con él). */
-export const EVENT_HISTORY_HREF = '/app/pulse#historial';
+export const EVENT_HISTORY_HREF = '/pulso#historial';
 
 /**
  * El pulso del pipeline, en el header de todas las pantallas. Discreto a propósito: un ícono, un

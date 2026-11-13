@@ -9,6 +9,7 @@ import { PushProvider } from '@/push/PushContext';
 import { ChatProvider } from '@/chat/ChatContext';
 import { ThemeProvider } from '@/components/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { HoverTips } from '@/components/ui/hover-tip';
 import { Toaster } from '@/components/ui/sonner';
 import { ErrorBoundary, ErrorScreen } from '@/components/ErrorScreen';
 import App from '@/App';
@@ -63,6 +64,7 @@ root.render(
               </AuthProvider>
             </BrowserRouter>
             <Toaster />
+            <HoverTips />
           </TooltipProvider>
         </ErrorBoundary>
       )}

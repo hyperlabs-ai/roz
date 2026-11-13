@@ -45,34 +45,59 @@ Cuatro patrones se repiten en TODOS los dominios de roz:
 
 | Capa | Tecnología |
 |---|---|
-| Runtime / deploy | **Vercel serverless functions** (un solo entry `api/index.ts`) |
+| Runtime / deploy | **zeus**: un proceso Node de larga vida (`src/index.ts`, Docker → Railway). El front (`web/`) va aparte, como estático en Vercel |
 | Framework HTTP | **Hono** |
 | Lenguaje | **TypeScript** (ESM, `strict`) |
 | Datos + vectores | **Supabase Postgres + pgvector** (service role, server-side) |
 | Razonamiento | **Claude** (Anthropic SDK, con prompt caching) — spec, clasificación, reconciliación |
 | Juicios | **TypeSafe Jev** (`fetch` directo, opcional) — preguntas tipadas sobre una tarea para la asignación automática |
 | Embeddings | **OpenAI** `text-embedding-3-large` (3072 dims) — vía API |
-| Cola async | **Outbox en Postgres drenado por Vercel Cron** — sin servicio externo |
+| Cola async | **Outbox en Postgres drenado por el planificador en proceso** (`src/jobs/scheduler.ts`) — sin servicio externo |
 | Cara interactiva | **Servidor MCP** sobre HTTP (JSON-RPC stateless propio) |
 | Integraciones | **GitHub** (verdad del código), **Resend** (email) |
 
-> **No hay worker persistente.** En serverless no existe un proceso de larga vida. El rol del
-> worker lo cumple el **outbox en Postgres + Vercel Cron**: cada efecto se escribe como
-> `outbox_event` y un cron (`/v1/internal/drain`, cada minuto) toma los pendientes y los ejecuta.
-> Reintentos con **backoff exponencial** (`attempts` + `next_attempt_at`) y **dead-letter** tras 5
-> intentos. Cero vendor extra; idempotencia vía `idempotency_key`.
+> **El outbox sigue siendo la cola.** Cada efecto se escribe como `outbox_event`; el planificador
+> de zeus llama a `/v1/internal/drain` cada 15 s (en memoria, sin salir a la red) y ejecuta los
+> pendientes. Reintentos con **backoff exponencial** (`attempts` + `next_attempt_at`) y
+> **dead-letter** tras 5 intentos. Cero vendor extra; idempotencia vía `idempotency_key`.
 
 ---
 
-## Por qué serverless cambia el diseño
+## Despliegue: front (roz) y back (zeus) separados
 
-Tres consecuencias directas de no tener proceso persistente:
+roz nació como una sola función serverless en Vercel que servía el API y el SPA. Ahora son dos
+despliegues:
 
-1. **El outbox se drena por poll (Vercel Cron).** Cada cambio de estado escribe un `OutboxEvent`
-   en la misma transacción que el dato (patrón outbox). Un cron (`/v1/internal/drain`, cada minuto)
-   toma los `pending`/`failed` vencidos, hace un claim optimista (`pending`→`processing`) y ejecuta
-   el efecto. Si falla, reprograma con backoff exponencial (`next_attempt_at`) hasta 5 intentos;
-   luego `dead`. Idempotencia vía `idempotency_key` hace que el reintento sea seguro.
+| Pieza | Dónde | Qué contiene |
+|---|---|---|
+| **roz** (front) | Vercel, Root Directory `web/` | El estático del SPA. `web/vercel.ts` reescribe `/api/*` hacia zeus. Sus únicas variables: `ZEUS_API_ORIGIN` y las dos públicas de Supabase |
+| **zeus** (back) | Railway (el `Dockerfile` de la raíz) | El API, el MCP, el planificador, el gateway de Discord y el módulo de contexto. Todos los secretos viven aquí |
+
+Por qué así:
+
+- **Los secretos salen de Vercel.** El proyecto del front ya no tiene service role, tokens ni llaves.
+- **El navegador ve un solo origen.** El rewrite de `/api` evita CORS y conserva la cookie del OAuth
+  de Discord y los redirects relativos de los callbacks. Webhooks, MCP, runners y el CLI le hablan
+  directo al dominio de zeus.
+- **El puente de Discord vive en el mismo proceso** (`src/bridge/`). Antes era un servicio aparte que
+  llamaba al API por HTTP con un secreto compartido y copiaba los tipos; ahora ese mismo contrato se
+  resuelve en memoria (`src/bridge/embedded.ts`) y el token del bot está en un solo lugar.
+- **Los crons de Vercel son un planificador en proceso** (`src/jobs/scheduler.ts`): mismos horarios,
+  mismas rutas `/v1/internal/*` (que siguen sirviendo para dispararlos a mano con `CRON_SECRET`).
+- **Una sola instancia.** El gateway de Discord no admite réplicas y el planificador correría doble.
+  Al redesplegar, zeus recibe SIGTERM, deja de aceptar tráfico, termina los jobs y el trabajo en
+  segundo plano (`src/utils/background.ts`) y cierra el gateway limpio.
+
+Para un self-host de una sola caja, zeus también sirve el SPA si encuentra un build en `web/dist`
+(`src/spa.ts`).
+
+Lo que se conserva del diseño original:
+
+1. **El outbox se drena por poll.** Cada cambio de estado escribe un `OutboxEvent`
+   en la misma transacción que el dato (patrón outbox). El planificador (`/v1/internal/drain`, cada
+   15 s) toma los `pending`/`failed` vencidos, hace un claim optimista (`pending`→`processing`) y
+   ejecuta el efecto. Si falla, reprograma con backoff exponencial (`next_attempt_at`) hasta 5
+   intentos; luego `dead`. Idempotencia vía `idempotency_key` hace que el reintento sea seguro.
 2. **Sin embeddings locales.** Los embeddings son una llamada a la API de OpenAI. Implica costo por
    uso y latencia de red → se **cachea** el vector por hash de contenido y solo se reindexa cuando el
    cuerpo del átomo cambia.
@@ -85,11 +110,14 @@ Tres consecuencias directas de no tener proceso persistente:
 
 ```
 roz/
-  api/
-    index.ts            # entry de Vercel: re-exporta el app de Hono
+  Dockerfile            # imagen de zeus (Railway)
   src/
-    index.ts            # server local (dev) con @hono/node-server
+    index.ts            # arranque de zeus: servidor, planificador, puente de Discord, apagado limpio
     app.ts              # Hono app: monta middleware + rutas
+    spa.ts              # sirve web/dist si existe (self-host de una caja)
+    jobs/scheduler.ts   # planificador en proceso (sustituye a los crons de Vercel)
+    bridge/             # gateway de Discord: espejo del servidor en Supabase, dentro del proceso
+    zeus/               # contexto unificado: grafo, ingesta de git, bandeja, bóveda, MCP
     config.ts           # settings (zod) desde env
     db/supabase.ts      # cliente Supabase (service role)
     types/              # tipos compartidos (Hono context, dominio)
@@ -109,7 +137,9 @@ roz/
     chat/               # chat del equipo: canales, MDs, hilos, adjuntos, tiempo real y push
     routes/             # health, mcp, webhooks (github), intake, dashboard (+ chat), internal
   migrations/           # schema completo (pgvector, outbox, idempotencia)
-  web/                  # SPA React: landing pública (/) + dashboard (/app)
+  web/                  # SPA React: landing pública (/) + dashboard (/app). Se despliega en Vercel
+  cli/                  # CLI `zeus` (PC de cada dev): bóveda de llaves, conexión del MCP
+  runner/               # roz-runner (PC de cada dev): toma planes y corre el agente
 ```
 
 ---
@@ -269,8 +299,9 @@ mensajes propios. La identidad es `roz.dev`, la misma de toda la app. El código
 Con el flag encendido el chat de `/app/chat` deja de ser el interno y muestra los canales reales del
 servidor de Discord de la empresa, con el diseño de roz. Con el flag apagado todo lo anterior queda
 idéntico. Contrato completo en `docs/discord-chat-contracts.md`; tablas `discord_*` en la migración 0038.
-- **Puente (`discord-bridge/`, Railway).** Servicio Node + discord.js aparte, porque el gateway de
-  Discord necesita una conexión persistente que Vercel no da. Espeja en Supabase el servidor completo
+- **Puente (`src/bridge/`, dentro de zeus).** Nació como servicio aparte porque el gateway de
+  Discord necesita una conexión persistente que Vercel no daba; con zeus como proceso de larga vida
+  corre en el mismo proceso (`src/bridge/embedded.ts`) y sus avisos al API se resuelven en memoria. Espeja en Supabase el servidor completo
   (categorías, canales, hilos, roles, miembros, emojis, mensajes, reacciones, ediciones y borrados
   suaves), hace backfill y se pone al día en cada `READY`, y después de escribir avisa a roz por
   `POST /v1/internal/discord/events` (Bearer `ROZ_BRIDGE_SECRET`; 404 con el flag apagado). Copia
@@ -351,15 +382,14 @@ crons nuevos se saltan y el webhook de Linear responde 200 sin emitir. Contratos
 
 ---
 
-## Núcleo de eventos (outbox + Vercel Cron)
+## Núcleo de eventos (outbox + planificador)
 
-Todo cambio de estado escribe un `OutboxEvent` en la **misma transacción** que el dato. El cron
-`/v1/internal/drain` (cada minuto) drena la cola: (1) claim optimista; (2) ejecuta el efecto
+Todo cambio de estado escribe un `OutboxEvent` en la **misma transacción** que el dato. El
+planificador llama a `/v1/internal/drain` (cada 15 s) y drena la cola: (1) claim optimista; (2) ejecuta el efecto
 chequeando `idempotency_key` (exactamente-una-vez a efectos prácticos); (3) éxito → `done`, fallo →
 `failed` con backoff exponencial, y tras 5 intentos → `dead`.
 
-> Latencia ~≤1 min. Para push instantáneo se puede añadir un *Database Webhook* de Supabase
-> (pg_net) que pegue al drain al insertar — sin cambiar el resto.
+> Latencia ~≤15 s (era ~1 min con el cron de Vercel, que no baja de un minuto).
 
 ---
 
@@ -446,14 +476,59 @@ disfrazado. A escala chica, KNN exacto basta.
 
 ## Seguridad / superficie pública
 
-- **MCP** (`/mcp`): bearer `ROZ_MCP_TOKEN`.
+- **MCP** (`/mcp`): token personal `zeus_…` (uno o varios por dev, se crean en Zeus → Acceso; en
+  la base solo vive su sha256). El agente actúa como esa persona y todo queda atribuido. Siguen
+  valiendo el token de runner (`rozr_…`, alcance reducido) y el `ROZ_MCP_TOKEN` compartido, que no
+  ve las herramientas de zeus porque no identifica a nadie.
+- **CLI de zeus** (`/v1/zeus`): el mismo token personal `zeus_…`.
+- **Bóveda de llaves**: conocimiento cero. zeus guarda texto cifrado y la llave de cada entorno
+  envuelta para la llave pública de cada equipo; cifrar y descifrar ocurre en la PC del dev
+  (`cli/`). Detalle y modelo de amenaza en `docs/zeus-contracts.md` §5 y `cli/README.md`.
 - **Intake de apps** (`/v1/intake`): bearer `ROZ_INGEST_TOKEN` (el proyecto se distingue por
   `projectKey`). Para escala conviene token por app + rate limiting.
 - **Webhooks**: firma de GitHub verificada por HMAC (`GITHUB_WEBHOOK_SECRET`).
-- **Internal/cron** (`/v1/internal/*`): protegido por `CRON_SECRET` (Vercel inyecta el bearer).
+- **Internal/jobs** (`/v1/internal/*`): protegido por `CRON_SECRET` (lo manda el planificador).
 - **Dashboard** (`/app`): Supabase Auth + filtro de dominio (`DASHBOARD_ALLOWED_DOMAINS`). El rol
   se resuelve best-effort; si la tabla de perfiles no existe, el dashboard queda de solo lectura.
 - roz usa la **service role key** de Supabase: corre server-side, sin sesión de usuario.
+
+---
+
+## zeus: contexto unificado (`src/zeus/`)
+
+El problema: cada dev (y su Claude) trabaja con un contexto distinto en su PC. zeus centraliza las
+decisiones (ADR), los specs (OpenSpec), las reglas, el design system, los recursos y la jerarquía del
+equipo, y los expone por MCP para que todos los agentes partan de lo mismo. Contratos completos en
+[`docs/zeus-contracts.md`](docs/zeus-contracts.md); esquema en `migrations/0040_zeus.sql`.
+
+**Decisiones de diseño**
+
+- **El registro central es la fuente de verdad; git solo importa.** Todo documento (ADR, spec,
+  regla, diseño, recurso) vive en la base de zeus y se edita ahí, por la web o por MCP, con historial
+  de revisiones. Los repos son el origen de una importación: un push a la rama por defecto marca el
+  repo y la barrida (`zeus-sweep`, cada 10 min) lee el árbol y da de alta los documentos que zeus
+  todavía no conoce (`ingest.ts`, `parse.ts`). Lo que ya tiene nodo no se pisa ni se archiva aunque el
+  archivo cambie o desaparezca, y lo archivado en zeus no vuelve. Git solo pisa un documento a
+  pedido: "traer la versión del repo" (`reimportNode`), que entra como una revisión más.
+- **El grafo es para navegar, no para recuperar.** No encontramos evidencia independiente de que un
+  grafo de memoria ahorre tokens frente a un índice corto + búsqueda. Así que la recuperación es:
+  `zeus_context_index` (una línea por documento vigente, lo fijado primero, con tope) →
+  `zeus_search` (texto completo en Postgres, español + inglés) → `zeus_get` (el documento, paginado).
+  Las aristas quedan para lo que sí aporta: reemplaza a, depende de, dueño. Personas, proyectos,
+  repos y equipos no se copian al grafo: se derivan de sus tablas.
+- **Todo atribuido.** Cada consulta o cambio queda en `roz.zeus_activity` con el dev y el canal. Es
+  lo que anima el mapa y, sobre todo, lo que permite medir si el contexto se usa de verdad.
+- **Solicitudes que se enrutan solas** (`inbox.ts`): dueño del recurso → quien lleva el proyecto →
+  jefe directo → admin de zeus; nunca a quien pide. Aprobar es una decisión registrada, no un cambio
+  de permisos: quien aprueba da el acceso en el sistema real.
+- **Planes con su contexto.** Al encolar un plan del agente se le adjunta un paquete de referencias
+  (lo fijado + lo que coincide con la tarea, `nodes.ts → buildContextPack`); el runner lo recibe en
+  el prompt y trae el texto con `zeus_get`.
+- **Bóveda de conocimiento cero** (`vault.ts` + `cli/`): ver Seguridad.
+
+**Lo que zeus NO hace:** no decide permisos en GitHub/Vercel/etc., no puede leer un secreto, no
+empuja planes a las PCs (cada runner pregunta; así funciona detrás de NAT y con equipos apagados) y
+no usa IA para recuperar contexto.
 
 ---
 

@@ -64,13 +64,13 @@ export function PersonCard({ p, spark, color }: { p: PulsePerson; spark?: number
           className="size-10"
         />
         <div className="grid min-w-0 flex-1 gap-0.5">
-          <Link to={`/app/developers/${p.devId}`} className="truncate text-[14.5px] font-semibold leading-tight tracking-[-0.01em] hover:underline">
+          <Link to={`/developers/${p.devId}`} className="truncate text-[14.5px] font-semibold leading-tight tracking-[-0.01em] hover:underline">
             {p.name}
           </Link>
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             {main ? (
               <Link
-                to={`/app/projects/${main.id}`}
+                to={`/proyectos/${main.id}`}
                 className="flex min-w-0 items-center gap-1.5 hover:text-foreground hover:underline"
                 title={p.projects.map((x) => x.name).join(', ')}
               >
@@ -214,7 +214,7 @@ export function IdlePeople({ people, title = 'Sin trabajo en curso' }: { people:
           return (
             <Link
               key={p.devId}
-              to={`/app/developers/${p.devId}`}
+              to={`/developers/${p.devId}`}
               title={[st.label, p.stateDetail, p.lastActivityAt ? `última actividad ${relative(p.lastActivityAt)}` : null].filter(Boolean).join(' · ')}
               className="flex h-full min-w-0 items-center gap-2.5 rounded-md bg-panel px-2.5 py-2 transition-colors hover:bg-sidebar"
             >
@@ -265,7 +265,7 @@ function AgentLine({ plan }: { plan: NonNullable<PulsePerson['agentPlan']> }) {
       : [PLAN_STATUS_LABEL[plan.status], step, pct].filter(Boolean).join(' · ');
   return (
     <Link
-      to={`/app/plans?plan=${plan.id}`}
+      to={`/planes?plan=${plan.id}`}
       className={cn('flex min-w-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-xs transition-opacity hover:opacity-80', tone.box)}
       title={[plan.identifier, text, plan.progress?.at ? `último avance ${relative(plan.progress.at)}` : null].filter(Boolean).join(' · ')}
     >

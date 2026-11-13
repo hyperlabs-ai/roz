@@ -1,6 +1,7 @@
 // El prompt que el runner le pasa a `claude -p`. Lo arma el SERVIDOR (no el runner) para poder
 // cambiar las instrucciones sin actualizar el CLI en la PC de cada dev. Puro: se prueba aparte.
 import type { PlanPhase, PlanRisk, RiskReason } from '../types/roz-v2.js';
+import type { ZeusContextPack } from '../types/zeus.js';
 
 export interface PromptInput {
   planId: string;
@@ -17,6 +18,8 @@ export interface PromptInput {
   branch: string;
   planMd: string | null;
   feedback: string | null;
+  /** Paquete de contexto de zeus (referencias, no texto). Null si el plan no trae. */
+  contextPack?: ZeusContextPack | null;
 }
 
 /** Turnos máximos de Claude Code por fase. */
@@ -43,6 +46,17 @@ export function buildRunnerPrompt(i: PromptInput): string {
   out.push(RISK_TEXT[i.risk]);
   for (const r of i.riskReasons) out.push(`- ${r.detail}`);
   out.push('');
+
+  if (i.contextPack?.items.length) {
+    out.push('## Contexto del equipo (zeus)');
+    out.push(
+      'Decisiones, reglas y specs que aplican a esta tarea. Trae el texto de las que necesites con zeus_get (por ref) ' +
+        'ANTES de planear; respétalas, y si tu plan contradice alguna, dilo en Riesgos.',
+    );
+    for (const it of i.contextPack.items) out.push(`- [${it.kind}] ${it.title} (${it.ref})${it.summary ? `: ${it.summary}` : ''}`);
+    out.push('Si falta algo, búscalo con zeus_search.');
+    out.push('');
+  }
 
   if (i.phase === 'planear') {
     out.push('## Tu tarea: escribir el plan');

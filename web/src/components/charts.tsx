@@ -10,7 +10,10 @@
 //   · trazos de 2.5px con puntas y uniones REDONDEADAS (leen como una línea dibujada, no un borde)
 //   · rellenos en degradado vertical que se desvanece a 0 (el área no compite con la línea)
 //   · barras con radio completo (píldora) y separación generosa
-//   · grid punteado 2-2 y solo horizontal (la referencia sin cuadricular la gráfica)
+//   · grid de PUNTOS (1-4) y solo horizontal (la referencia sin cuadricular la gráfica)
+//   · en oscuro, el trazo lleva un halo de su propio color (`Halo` + `.chart-halo`) y las columnas
+//     un resplandor; en claro no (sobre hueso un halo es una mancha). Las áreas y las columnas se
+//     apagan en degradado hacia la base en los dos temas
 //   · métrica al centro en todo lo circular (el hueco de una dona vacío es espacio desperdiciado)
 //   · un tooltip con separador, `tabular-nums` e indicador de color por serie
 //
@@ -19,7 +22,7 @@
 // número + barra fina que había antes (`RankedList` / `RankBars`) se eliminó de la app, igual que el
 // embudo y el radar. Si hace falta comparar magnitudes → `Columns`; composición → `Donut` /
 // `StackedBar`; tiempo → `AreaTrend`.
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   Area, AreaChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis,
   PolarAngleAxis, PieChart, Pie, RadialBar, RadialBarChart,
@@ -38,7 +41,24 @@ export interface SeriesDef {
 /** Receta mono compartida: lo que hace que todas las gráficas se vean de la misma familia. */
 const STROKE = 2.5;
 const CAPS = { strokeLinecap: 'round', strokeLinejoin: 'round' } as const;
-const GRID = { vertical: false, stroke: 'hsl(var(--border))', strokeDasharray: '2 2' } as const;
+const GRID = { vertical: false, stroke: 'hsl(var(--foreground) / 0.16)', strokeDasharray: '1 4' } as const;
+const CURSOR = { stroke: 'hsl(var(--foreground) / 0.28)', strokeDasharray: '3 3' } as const;
+
+/**
+ * Filtro de halo: una copia desenfocada del trazo debajo del trazo. Conserva el color de cada serie
+ * (por eso es un filtro SVG y no un `drop-shadow` de CSS, que necesitaría un color fijo). Se aplica
+ * desde CSS (`.chart-halo`, solo en oscuro) a través de la variable `--halo`.
+ */
+function Halo({ id, blur = 3.5 }: { id: string; blur?: number }) {
+  return (
+    <filter id={id} x="-10%" y="-60%" width="120%" height="220%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation={blur} result="blur" />
+      <feComponentTransfer in="blur" result="glow"><feFuncA type="linear" slope="0.75" /></feComponentTransfer>
+      <feMerge><feMergeNode in="glow" /><feMergeNode in="SourceGraphic" /></feMerge>
+    </filter>
+  );
+}
+const haloVar = (id: string) => ({ '--halo': `url(#${id})` }) as CSSProperties;
 // Ejes en mono y tinta 3 (`.recharts-cartesian-axis-tick` en styles.css pone la familia).
 const AXIS = { fontSize: 10.5, fill: 'hsl(var(--faint))' } as const;
 const AXIS_OFF = { tickLine: false, axisLine: false } as const;
@@ -78,8 +98,8 @@ export function ChartTooltip({
   if (!active || !payload?.length) return null;
   const head = labelFormat && label != null ? labelFormat(String(label)) : label != null ? String(label) : null;
   return (
-    <div className="rounded-lg border bg-popover/95 px-3 py-2 text-xs shadow-md backdrop-blur-sm">
-      {head && <div className="mb-1.5 border-b pb-1 label-caps text-faint">{head}</div>}
+    <div className="glass-pop rounded-lg px-3 py-2 text-xs">
+      {head && <div className="mb-1.5 border-b border-dashed pb-1 label-caps text-faint">{head}</div>}
       <div className="flex flex-col gap-1">
         {payload.map((p: any, i: number) => {
           const color = p.color || p.fill || p.payload?.color || DEFAULT_COLOR;
@@ -241,7 +261,7 @@ export function Columns({
             <span className="w-8 shrink-0 text-right text-[10px] leading-none tabular-nums text-muted-foreground">
               {valueFormat(t)}
             </span>
-            <span className="flex-1 border-t border-dashed border-border" />
+            <span className="connector flex-1" />
           </div>
         ))}
         {/* Línea base: da el suelo del que nacen las columnas. */}
@@ -262,14 +282,14 @@ export function Columns({
                     // —48px de ancho por 20 de alto— se redondea por completo y sale una PASTILLA
                     // HORIZONTAL flotando sobre el eje, que se lee como un error de render. Ocho
                     // píxeles es además el radio que fija la receta mono para barras verticales.
-                    'relative w-full max-w-10 rounded-lg transition-[height,filter] duration-slow ease-spring',
+                    'chart-col relative w-full max-w-10 rounded-lg transition-[height,filter] duration-slow ease-spring',
                     onPick && 'cursor-pointer hover:brightness-110',
                   )}
                   // Piso doble: 2% del alto y 6px absolutos. El porcentaje solo no basta — en una
                   // gráfica de 170px con un pico de 522, un valor de 21 daría 3px y no se vería
                   // como barra; y sin piso alguno, una categoría con actividad real parecería no
                   // existir.
-                  style={{ height: `${Math.max(pct, 2)}%`, minHeight: 6, background: d.color ?? color }}
+                  style={{ height: `${Math.max(pct, 2)}%`, minHeight: 6, '--bar': d.color ?? color } as CSSProperties}
                 >
                   <span className="absolute -top-[18px] left-1/2 -translate-x-1/2 text-[11px] font-medium leading-none tabular-nums">
                     {valueFormat(d.value)}
@@ -384,18 +404,19 @@ export function AreaTrend({
         <defs>
           {series.map((s) => (
             <linearGradient key={s.key} id={`${uid}-${s.key}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={s.color} stopOpacity={0.45} />
-              <stop offset="60%" stopColor={s.color} stopOpacity={0.12} />
+              <stop offset="0%" stopColor={s.color} stopOpacity={0.42} />
+              <stop offset="55%" stopColor={s.color} stopOpacity={0.1} />
               <stop offset="100%" stopColor={s.color} stopOpacity={0} />
             </linearGradient>
           ))}
+          <Halo id={`${uid}-halo`} />
         </defs>
         <CartesianGrid {...GRID} />
         <XAxis dataKey={xKey} tickFormatter={isDate ? shortDate : undefined} tick={AXIS} {...AXIS_OFF} minTickGap={24} />
         <YAxis tick={AXIS} {...AXIS_OFF} width={40} allowDecimals={false} tickFormatter={valueFormat} />
         <Tooltip
           content={<ChartTooltip labelFormat={isDate ? shortDate : undefined} valueFormat={valueFormat} />}
-          cursor={{ stroke: 'hsl(var(--border))' }}
+          cursor={CURSOR}
         />
         {series.map((s) => (
           <Area
@@ -407,7 +428,7 @@ export function AreaTrend({
             strokeWidth={STROKE}
             {...CAPS}
             fill={`url(#${uid}-${s.key})`}
-            activeDot={{ r: 4, strokeWidth: 0 }}
+            activeDot={{ r: 4, strokeWidth: 2, stroke: 'hsl(var(--card))' }}
             dot={false}
             {...anim}
           />
@@ -415,7 +436,9 @@ export function AreaTrend({
       </AreaChart>
     </ResponsiveContainer>
   );
-  return fill ? <div className="min-h-0 flex-1" style={{ minHeight: height }}>{chart}</div> : chart;
+  return fill
+    ? <div className="chart-halo min-h-0 flex-1" style={{ minHeight: height, ...haloVar(`${uid}-halo`) }}>{chart}</div>
+    : <div className="chart-halo w-full min-w-0" style={haloVar(`${uid}-halo`)}>{chart}</div>;
 }
 
 /**
@@ -436,6 +459,7 @@ export function Sparkline({
   const uid = useId().replace(/:/g, '');
   if (!data.length) return <div className="text-xs text-muted-foreground">—</div>;
   return (
+    <div className="chart-halo w-full min-w-0" style={haloVar(`${uid}-halo`)}>
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 4, right: 3, left: 0, bottom: 0 }}>
         <defs>
@@ -443,6 +467,7 @@ export function Sparkline({
             <stop offset="0%" stopColor={color} stopOpacity={0.4} />
             <stop offset="100%" stopColor={color} stopOpacity={0} />
           </linearGradient>
+          <Halo id={`${uid}-halo`} blur={2.2} />
         </defs>
         <Area
           type="monotone"
@@ -467,6 +492,7 @@ export function Sparkline({
         />
       </AreaChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -577,7 +603,7 @@ export function RadialGauge({
             angleAxisId={0}
             cornerRadius={999}
             fill={color}
-            background={{ fill: 'hsl(var(--muted))' }}
+            background={{ fill: 'hsl(var(--foreground) / 0.07)' }}
             {...anim}
           />
         </RadialBarChart>

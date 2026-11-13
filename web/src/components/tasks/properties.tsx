@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { CalendarClock, CalendarDays, Check, Plus } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { Input } from '@/components/ui/input';
+import { TimeField } from '@/components/ui/date-field';
 import { tokenColor } from '@/components/brand';
 import { localDateStr } from '@/lib/calendar';
 import { shortDate } from '@/lib/format';
@@ -501,11 +501,11 @@ export function ScheduleMenu({
         <div className="grid grid-cols-2 gap-2 border-t px-3 py-2.5">
           <label className="grid gap-1">
             <span className="label-caps">Inicio</span>
-            <Input type="time" value={s} onChange={(ev) => setS(ev.target.value)} className="h-8" />
+            <TimeField fieldSize="sm" value={s} onChange={(ev) => setS(ev.target.value)} aria-label="Inicio" />
           </label>
           <label className="grid gap-1">
             <span className="label-caps">Fin</span>
-            <Input type="time" value={e} onChange={(ev) => setE(ev.target.value)} className="h-8" />
+            <TimeField fieldSize="sm" value={e} onChange={(ev) => setE(ev.target.value)} aria-label="Fin" />
           </label>
         </div>
         {invalid && <p className="px-3 pb-1 text-[11.5px] text-red">La hora de fin debe ser después del inicio.</p>}

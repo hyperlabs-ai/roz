@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { MessageSquareQuote, CirclePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DateField } from '@/components/ui/date-field';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -185,7 +186,7 @@ export function AcceptDialog({
                 </div>
                 <div className="space-y-1.5 sm:col-span-2">
                   <FieldLabel htmlFor="ac-due">Fecha límite</FieldLabel>
-                  <Input id="ac-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="sm:w-48" />
+                  <DateField id="ac-due" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="sm:w-48" />
                 </div>
               </div>
             </div>

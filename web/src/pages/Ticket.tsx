@@ -7,9 +7,9 @@ import { apiGet, type TicketFilterOptions } from '@/lib/api';
 import { useApi } from '@/lib/useApi';
 
 /**
- * Ticket inteligente (/app/ticket). Cualquiera del equipo escribe nombre, proyecto y descripción;
+ * Ticket inteligente (/ticket). Cualquiera del equipo escribe nombre, proyecto y descripción;
  * roz deduce tipo de solución, skills, nivel, puntos y urgencia, propone responsable y —al crear—
- * le manda un DM desde tu perfil. (No confundir con /app/tickets, que es Reportes.)
+ * le manda un DM desde tu perfil. (No confundir con /reportes, que es Reportes.)
  *
  * Composición: el compositor a la izquierda y el panel de roz a la derecha (qué hace → leyendo →
  * cómo lo entendió), las dos columnas a la misma altura.
