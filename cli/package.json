@@ -1,5 +1,5 @@
 {
-  "name": "zeus-cli",
+  "name": "@hyperlabs-ai/zeus",
   "version": "0.1.0",
   "description": "zeus — CLI que corre en la PC de cada dev: sincroniza las variables de entorno de los proyectos con la bóveda de conocimiento cero de zeus y conecta el equipo a zeus.",
   "type": "module",
@@ -17,7 +17,28 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "start": "node dist/cli.js"
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hyperlabs-ai/roz.git",
+    "directory": "cli"
+  },
+  "homepage": "https://github.com/hyperlabs-ai/roz/tree/main/cli#readme",
+  "bugs": {
+    "url": "https://github.com/hyperlabs-ai/roz/issues"
+  },
+  "keywords": [
+    "zeus",
+    "roz",
+    "dotenv",
+    "secrets",
+    "vault",
+    "cli"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "license": "MIT",
   "devDependencies": {
