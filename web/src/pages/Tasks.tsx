@@ -635,6 +635,7 @@ export default function Tasks() {
   return (
     <Layout
       title="Tareas"
+      width="full"
       actions={
         <div className="flex items-center gap-2">
           {/* Lista / Tablero. La lista es la tabla densa agrupable; el tablero es el kanban por
@@ -711,7 +712,7 @@ export default function Tasks() {
             <span className="text-[13px] text-muted-foreground">
               <span className="font-medium text-foreground">Las tareas viven en Linear.</span>{' '}
               roz refleja lo que hay allá (webhook + reconciliación cada 30 min). Créalas o edítalas en Linear, o con{' '}
-              <Link to="/app/ticket" className="font-mono text-[12px] font-medium text-orange-ink hover:underline">/ticket</Link>; una fila abre su issue.
+              <Link to="/ticket" className="font-mono text-[12px] font-medium text-orange-ink hover:underline">/ticket</Link>; una fila abre su issue.
             </span>
           </div>
           <Button variant="dark" size="sm" asChild>
@@ -1031,7 +1032,7 @@ export default function Tasks() {
               })}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => copyText(ctxTask.identifier, 'ID')}><Copy className="size-3.5" /> Copiar ID</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => copyText(`${window.location.origin}/app/tasks?scope=team&task=${ctxTask.id}`, 'Enlace')}>
+              <DropdownMenuItem onClick={() => copyText(`${window.location.origin}/tareas?scope=team&task=${ctxTask.id}`, 'Enlace')}>
                 <Link2 className="size-3.5" /> Copiar enlace
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => duplicate(ctxTask)}><Copy className="size-3.5" /> Duplicar</DropdownMenuItem>
@@ -1345,11 +1346,14 @@ const TaskRow = memo(function TaskRow({
 function AutoAssignMark({ task }: { task: Ticket }) {
   const s = task.autoAssign?.state;
   if (!s || s === 'overridden') return null;
-  const common = 'ml-1.5 inline size-3.5 align-[-2px]';
-  if (s === 'pending') return <Loader2 className={cn(common, 'animate-spin text-muted-foreground')} aria-label="roz está eligiendo responsable" />;
-  if (s === 'assigned') return <Bot className={cn(common, 'text-purple-deep')} aria-label="Asignada automáticamente"><title>Asignada automáticamente</title></Bot>;
-  if (s === 'escalated') return <AlertTriangle className={cn(common, 'text-warning')} aria-label="Necesita decisión"><title>roz no encontró a quién asignarla: necesita decisión</title></AlertTriangle>;
-  return <XCircle className={cn(common, 'text-destructive')} aria-label="No se pudo asignar"><title>No se pudo asignar automáticamente</title></XCircle>;
+  // El texto de ayuda va en `data-tip` del contenedor (lo pinta el tooltip global de la app); un
+  // `<title>` dentro del SVG sacaría el tooltip del navegador.
+  const wrap = 'ml-1.5 inline-flex align-[-2px]';
+  const icon = 'size-3.5';
+  if (s === 'pending') return <span className={wrap} data-tip="roz está eligiendo responsable"><Loader2 className={cn(icon, 'animate-spin text-muted-foreground')} aria-label="roz está eligiendo responsable" /></span>;
+  if (s === 'assigned') return <span className={wrap} data-tip="Asignada automáticamente"><Bot className={cn(icon, 'text-purple-deep')} aria-label="Asignada automáticamente" /></span>;
+  if (s === 'escalated') return <span className={wrap} data-tip="roz no encontró a quién asignarla: necesita decisión"><AlertTriangle className={cn(icon, 'text-warning')} aria-label="Necesita decisión" /></span>;
+  return <span className={wrap} data-tip="No se pudo asignar automáticamente"><XCircle className={cn(icon, 'text-destructive')} aria-label="No se pudo asignar" /></span>;
 }
 
 /** El menú también se monta al primer clic: un DropdownMenu de Radix por fila × 300 filas pesa

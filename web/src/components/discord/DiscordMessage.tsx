@@ -244,7 +244,7 @@ export const DiscordMessage = memo(function DiscordMessage({
   }
 
   function copyLink() {
-    const url = `${window.location.origin}/app/chat/${m.channelId}?m=${m.id}`;
+    const url = `${window.location.origin}/chat/${m.channelId}?m=${m.id}`;
     void navigator.clipboard?.writeText(url).then(
       () => toast.success('Enlace copiado'),
       () => toast.error('No se pudo copiar'),

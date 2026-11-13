@@ -114,7 +114,7 @@ function Inline({ nodes, ctx }: { nodes: MdInline[]; ctx: Ctx }) {
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              if (c) navigate(`/app/chat/${n.id}`);
+              if (c) navigate(`/chat/${n.id}`);
             }}
             className={cn(PILL, 'inline-flex items-baseline gap-0.5 bg-blue-soft text-blue-ink', c ? 'hover:underline' : 'cursor-default')}
           >

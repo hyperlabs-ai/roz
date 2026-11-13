@@ -1,0 +1,27 @@
+/* Pestaña Llaves de zeus. Local a components/zeus; todos los colores salen de los tokens del tema. */
+
+/* Cable del diagrama: guiones que avanzan despacio en el sentido del viaje (ambiente, no aviso). */
+.vault-wire {
+  height: 2px;
+  border-radius: 1px;
+  background-image: repeating-linear-gradient(90deg, hsl(var(--foreground) / .5) 0 6px, transparent 6px 14px);
+  background-size: 14px 2px;
+  animation: vault-flow 1.8s var(--ease-linear) infinite;
+}
+@keyframes vault-flow { to { background-position: 14px 0 } }
+
+/* Nodo central: un halo naranja quieto que lo separa de las dos PCs. */
+.vault-core { box-shadow: 0 0 0 1px hsl(var(--orange) / .55), 0 0 0 6px hsl(var(--orange) / .07), 0 18px 60px -20px hsl(var(--orange) / .35) }
+
+/* Celda de la matriz de acceso. */
+.vault-cell { transition: background-color var(--duration-quick) var(--ease-out) }
+.vault-row:hover .vault-cell,
+.vault-row:focus-within .vault-cell { background-color: hsl(var(--panel) / .7) }
+.vault-dot { animation: vault-dot-in var(--duration-medium) var(--ease-bounce) backwards }
+@keyframes vault-dot-in { from { transform: scale(.3); opacity: 0 } to { transform: none; opacity: 1 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-wire,
+  .vault-dot { animation: none }
+  .vault-cell { transition: none }
+}

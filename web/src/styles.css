@@ -89,6 +89,25 @@
     --shadow-md: 0 1px 2px hsl(40 10% 20% / 0.04), 0 8px 24px -10px hsl(40 10% 20% / 0.14);
     --shadow-lg: 0 30px 80px -20px hsl(40 10% 10% / 0.35);
 
+    /* ── Lenguaje "instrumento" (vidrio, escenario, neón): ver DESIGN.md → "Lenguaje visual".
+       Aquí solo viven las INTENSIDADES; el color lo pone cada utilidad con un token (`--neon`,
+       `--glow`, `--line-color`). En claro todo es sobrio: sombra suave y borde, nada chillón. En
+       `.dark` las mismas utilidades suben a neón. */
+    --surface-sheen: linear-gradient(180deg, hsl(0 0% 100% / 0) 45%, hsl(45 25% 45% / 0.035));
+    --surface-shadow: 0 1px 2px hsl(40 10% 20% / 0.04), 0 1px 0 hsl(0 0% 100% / 0.9) inset;
+    --glass-top: 0.86;                 /* opacidad del vidrio arriba / abajo */
+    --glass-bottom: 0.7;
+    --glass-edge: 0.1;                 /* borde del vidrio (alfa de la tinta) */
+    --glass-shadow: 0 1px 0 hsl(0 0% 100% / 0.8) inset, 0 14px 34px -18px hsl(40 12% 20% / 0.3);
+    --pop-shadow: 0 1px 0 hsl(0 0% 100% / 0.8) inset, 0 16px 40px -14px hsl(40 12% 20% / 0.28);
+    --stage-dot: 0.13;                 /* rejilla de puntos */
+    --stage-glow: 0.07;                /* resplandor del escenario */
+    --neon-edge: 0.42;                 /* canto de color */
+    --neon-halo: 0.16;                 /* halo alrededor */
+    --neon-spread: 16px;
+    --neon-text: 0;                    /* el texto no brilla en claro */
+    --line: 0.3;                       /* conectores punteados */
+
     /* ── Escala de movimiento (transitions.dev) ────────────────────────────────────────────
        Vive aquí y no en un archivo aparte: roz tiene un único CSS y partirlo crearía dos
        fuentes de verdad para las duraciones. No se re-declara en `.dark` — el movimiento no
@@ -227,6 +246,21 @@
     --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
     --shadow-md: 0 1px 2px hsl(0 0% 0% / 0.3), 0 8px 24px -10px hsl(0 0% 0% / 0.5);
     --shadow-lg: 0 30px 80px -20px hsl(0 0% 0% / 0.7);
+
+    --surface-sheen: linear-gradient(180deg, hsl(0 0% 100% / 0.035), hsl(0 0% 100% / 0) 42%);
+    --surface-shadow: 0 1px 0 hsl(0 0% 100% / 0.045) inset;
+    --glass-top: 0.82;
+    --glass-bottom: 0.6;
+    --glass-edge: 0.14;
+    --glass-shadow: 0 1px 0 hsl(0 0% 100% / 0.07) inset, 0 18px 40px -18px hsl(0 0% 0% / 0.7);
+    --pop-shadow: 0 1px 0 hsl(0 0% 100% / 0.07) inset, 0 18px 44px -12px hsl(0 0% 0% / 0.75);
+    --stage-dot: 0.1;
+    --stage-glow: 0.11;
+    --neon-edge: 0.62;
+    --neon-halo: 0.5;
+    --neon-spread: 30px;
+    --neon-text: 0.55;
+    --line: 0.34;
   }
 }
 
@@ -255,8 +289,145 @@
     letter-spacing: -0.025em;
     text-wrap: balance;
   }
+  /* ── Sin controles por defecto del navegador (ver DESIGN.md → "Sin controles nativos") ──
+     Lo que el navegador pinta por su cuenta se apaga o se viste aquí, una sola vez. */
+
+  /* Foco de teclado: un aro del color de foco, igual en todos los navegadores. Los componentes que
+     dibujan su propio halo (`fieldSkin`, botones) ya ponen `outline: none` y no lo ven. */
   :focus-visible {
-    outline-color: hsl(var(--ring));
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+  :root {
+    accent-color: hsl(var(--primary));
+    caret-color: hsl(var(--foreground));
+  }
+  /* Autorrelleno de Chrome/Safari: sin el fondo amarillo/azul del navegador. El "fondo" se tapa
+     con una sombra interior (no hay otra forma) y la transición eterna evita el destello. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  textarea:-webkit-autofill,
+  select:-webkit-autofill {
+    -webkit-text-fill-color: hsl(var(--foreground));
+    caret-color: hsl(var(--foreground));
+    -webkit-box-shadow: 0 0 0 1000px hsl(var(--card)) inset;
+    box-shadow: 0 0 0 1000px hsl(var(--card)) inset;
+    transition: background-color 9999s ease-out 0s;
+  }
+  /* Número: sin las flechitas. Para subir y bajar está `NumberField`. */
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  /* Búsqueda y contraseña: sin la X, la lupa ni el ojo del navegador (los campos traen los suyos). */
+  input[type='search']::-webkit-search-cancel-button,
+  input[type='search']::-webkit-search-decoration,
+  input[type='search']::-webkit-search-results-button {
+    -webkit-appearance: none;
+    display: none;
+  }
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
+  /* Por si queda algún selector nativo de fecha/hora: sin su ícono. Usa `DateField`/`TimeField`. */
+  input::-webkit-calendar-picker-indicator {
+    display: none;
+  }
+  /* `<summary>`: sin el triángulo del navegador. Para plegar contenido usa `Disclosure`. */
+  summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  summary::-webkit-details-marker,
+  summary::marker {
+    display: none;
+    content: '';
+  }
+  /* Casillas y radios: dibujados aquí, con los tokens, en vez del control del sistema. Vale para
+     las pocas casillas sueltas de la app y para las listas de tareas del Markdown. */
+  input[type='checkbox'],
+  input[type='radio'] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: inline-grid;
+    place-content: center;
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    vertical-align: middle;
+    border: 1.5px solid hsl(var(--toggle-off));
+    border-radius: 4px;
+    background-color: hsl(var(--card));
+    cursor: pointer;
+    transition: background-color var(--duration-quick) var(--ease-out), border-color var(--duration-quick) var(--ease-out);
+  }
+  input[type='radio'] {
+    border-radius: 9999px;
+  }
+  input[type='checkbox']:hover,
+  input[type='radio']:hover {
+    border-color: hsl(var(--faint));
+  }
+  input[type='checkbox']::before {
+    content: '';
+    width: 0.625rem;
+    height: 0.625rem;
+    background-color: hsl(var(--primary-foreground));
+    clip-path: polygon(14% 52%, 6% 62%, 38% 90%, 96% 24%, 87% 15%, 37% 70%);
+    transform: scale(0);
+    transition: transform var(--duration-quick) var(--ease-bounce);
+  }
+  input[type='radio']::before {
+    content: '';
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 9999px;
+    background-color: hsl(var(--primary-foreground));
+    transform: scale(0);
+    transition: transform var(--duration-quick) var(--ease-bounce);
+  }
+  input[type='checkbox']:checked,
+  input[type='radio']:checked {
+    border-color: hsl(var(--primary));
+    background-color: hsl(var(--primary));
+  }
+  input[type='checkbox']:checked::before,
+  input[type='radio']:checked::before {
+    transform: scale(1);
+  }
+  input[type='checkbox']:indeterminate {
+    border-color: hsl(var(--primary));
+    background-color: hsl(var(--primary));
+  }
+  input[type='checkbox']:indeterminate::before {
+    clip-path: inset(40% 10% 40% 10% round 1px);
+    transform: scale(1);
+  }
+  input[type='checkbox']:disabled,
+  input[type='radio']:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  /* Áreas de texto: sin el tirador de redimensionar del navegador (crecen solas o tienen alto fijo). */
+  textarea {
+    resize: none;
+  }
+  /* Las que SÍ se redimensionan (`resize-y`) cambian el tirador gris del sistema por dos rayas. */
+  textarea::-webkit-resizer {
+    background-color: transparent;
+    background-image: linear-gradient(
+      135deg,
+      transparent 55%, hsl(var(--toggle-off)) 55%, hsl(var(--toggle-off)) 65%,
+      transparent 65%, transparent 78%, hsl(var(--toggle-off)) 78%, hsl(var(--toggle-off)) 88%, transparent 88%
+    );
   }
   ::selection {
     background: hsl(var(--orange) / 0.25);
@@ -396,6 +567,173 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* ============================================================================
+   Lenguaje "instrumento": vidrio, escenario, neón, conectores punteados, celdas.
+   Nació en zeus (components/zeus/zeus.css) y aquí es de TODA la app. Cada utilidad toma su color de
+   un token con una variable (`[--neon:var(--green)]`) y su intensidad de las variables de `:root` /
+   `.dark`: en claro es sobrio (borde + sombra suave), en oscuro sube a neón. Guía: DESIGN.md.
+   Van en la capa de componentes para que una utilidad de Tailwind en el mismo elemento las pise.
+   ============================================================================ */
+@layer components {
+  /* Superficie base (la usa `Card`): un velo de luz casi imperceptible y un canto interior. El velo
+     es translúcido, así que funciona encima de cualquier `bg-*` que ponga el llamador. */
+  .surface {
+    background-image: var(--surface-sheen);
+    box-shadow: var(--surface-shadow);
+  }
+  /* Vidrio: superficie FLOTANTE (fichas sobre un lienzo, cabeceras pegadas, barras de control).
+     Necesita algo detrás que desenfocar: sobre fondo liso no aporta nada, usa `surface`. */
+  .glass {
+    border: 1px solid hsl(var(--foreground) / var(--glass-edge));
+    background-color: transparent;
+    background-image: linear-gradient(180deg, hsl(var(--card) / var(--glass-top)), hsl(var(--card) / var(--glass-bottom)));
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    backdrop-filter: blur(14px) saturate(1.4);
+    box-shadow: var(--glass-shadow);
+  }
+  /* Vidrio denso para lo que lleva TEXTO encima de contenido (menús, popovers, tooltips de gráfica):
+     más opaco, para que se lea sin importar qué haya debajo. */
+  .glass-pop {
+    border: 1px solid hsl(var(--foreground) / var(--glass-edge));
+    background-color: hsl(var(--popover) / 0.88);
+    -webkit-backdrop-filter: blur(16px) saturate(1.5);
+    backdrop-filter: blur(16px) saturate(1.5);
+    box-shadow: var(--pop-shadow);
+  }
+  /* Escenario: rejilla de puntos + un resplandor. `--glow` = token del color; `--glow-x/-y` = dónde
+     nace. Para EL bloque protagonista de una pantalla o un estado vacío, no para cada tarjeta. */
+  .stage {
+    background-image:
+      radial-gradient(ellipse 60% 70% at var(--glow-x, 50%) var(--glow-y, 0%), hsl(var(--glow, var(--orange)) / var(--stage-glow)), transparent 70%),
+      radial-gradient(hsl(var(--foreground) / var(--stage-dot)) 1px, transparent 1px);
+    background-size: 100% 100%, 22px 22px;
+    background-position: 0 0, 11px 11px;
+  }
+  /* Solo la rejilla de puntos (sin resplandor). */
+  .dots {
+    background-image: radial-gradient(hsl(var(--foreground) / var(--stage-dot)) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: 11px 11px;
+  }
+  /* Neón: canto de color + halo. `--neon` = token (`[--neon:var(--purple-deep)]`); naranja por
+     defecto. UNA cosa por pantalla: lo seleccionado, lo que está en vivo, lo que pide atención. */
+  .neon {
+    border-color: hsl(var(--neon, var(--orange)) / var(--neon-edge));
+    box-shadow:
+      0 0 0 1px hsl(var(--neon, var(--orange)) / calc(var(--neon-edge) * 0.25)) inset,
+      0 0 var(--neon-spread) -6px hsl(var(--neon, var(--orange)) / var(--neon-halo)),
+      0 12px 30px -20px hsl(var(--neon, var(--orange)) / var(--neon-halo));
+  }
+  /* Canto de luz: una línea de color que se desvanece hacia los lados, en el borde superior. Más
+     discreto que `neon`: sirve para distinguir una tarjeta de sus hermanas (KPI con tono). */
+  .edge-glow { position: relative }
+  .edge-glow::before {
+    content: "";
+    position: absolute;
+    inset: 0 12% auto;
+    height: 1px;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, hsl(var(--neon, var(--orange)) / calc(var(--neon-edge) + 0.2)), transparent);
+  }
+  /* Resplandor de esquina dentro de una tarjeta (KPI destacado). */
+  .corner-glow {
+    background-image:
+      radial-gradient(ellipse 70% 90% at 100% 0%, hsl(var(--neon, var(--orange)) / calc(var(--stage-glow) * 1.3)), transparent 70%),
+      var(--surface-sheen);
+  }
+  /* Punto encendido (estado en vivo). */
+  .neon-dot {
+    box-shadow:
+      0 0 0 3px hsl(var(--neon, var(--orange)) / calc(var(--neon-halo) * 0.5)),
+      0 0 10px hsl(var(--neon, var(--orange)) / var(--neon-halo));
+  }
+  /* Cifra o rótulo que brilla. Solo se nota en oscuro. */
+  .neon-text { text-shadow: 0 0 18px hsl(var(--neon, var(--orange)) / var(--neon-text)) }
+
+  /* Conector punteado: une dos cosas (pasos de un flujo, un origen y su destino). Horizontal por
+     defecto; `connector-v` vertical. `--line-color` = token. `connector-flow` lo hace derivar hacia
+     el destino: solo donde el flujo ES el mensaje, y nunca más de uno o dos por pantalla. */
+  .connector {
+    height: 1px;
+    min-width: 12px;
+    background-image: linear-gradient(90deg, hsl(var(--line-color, var(--foreground)) / var(--line)) 50%, transparent 0);
+    background-size: 8px 1px;
+    background-repeat: repeat-x;
+  }
+  .connector-v {
+    width: 1px;
+    min-height: 12px;
+    background-image: linear-gradient(180deg, hsl(var(--line-color, var(--foreground)) / var(--line)) 50%, transparent 0);
+    background-size: 1px 8px;
+    background-repeat: repeat-y;
+  }
+  .connector-flow { animation: roz-drift-x 900ms var(--ease-linear) infinite }
+  .connector-v.connector-flow { animation-name: roz-drift-y }
+
+  /* Rejilla de celdas separadas por hairline: los hijos son las celdas. Para cifras hermanas (lo que
+     antes eran N tarjetas sueltas): `<div class="cells grid-cols-4">`. */
+  .cells {
+    display: grid;
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    background-color: hsl(var(--border));
+  }
+  .cells > * {
+    min-width: 0;
+    background-color: hsl(var(--card));
+    background-image: var(--surface-sheen);
+  }
+
+  /* ---- Marco (AppShell) ---- */
+  .shell { --shell-top: 4rem; --shell-pad-b: 1.25rem }
+  .shell-aside {
+    width: 220px;
+    transition: width var(--duration-fast) var(--ease-smooth-out);
+    background-image:
+      radial-gradient(ellipse 130% 30% at 0% 0%, hsl(var(--orange) / var(--stage-glow)), transparent 70%),
+      linear-gradient(180deg, transparent, hsl(var(--background) / 0.6));
+  }
+  .shell-aside[data-collapsed="true"] { width: 58px }
+  /* El menú hace scroll sin barra (en el riel no cabe): el desvanecido de abajo avisa que sigue. */
+  .shell-nav {
+    -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 20px), transparent);
+    mask-image: linear-gradient(180deg, #000 calc(100% - 20px), transparent);
+  }
+  .shell-header {
+    background-color: hsl(var(--background) / 0.78);
+    -webkit-backdrop-filter: blur(14px) saturate(1.4);
+    backdrop-filter: blur(14px) saturate(1.4);
+  }
+  /* Ítem activo del menú: naranja suave con canto encendido. */
+  .nav-active {
+    background-color: hsl(var(--orange-soft));
+    box-shadow: 0 0 0 1px hsl(var(--orange) / calc(var(--neon-edge) * 0.3)) inset;
+  }
+
+  /* Gráficas (ver charts.tsx). En oscuro el trazo lleva un halo de su propio color (filtro SVG que
+     define cada gráfica y llega por `--halo`); en claro no: sobre hueso un halo es una mancha. */
+  .dark .chart-halo .recharts-area-curve { filter: var(--halo, none) }
+  /* Columna: degradado del color de la serie (`--bar`) que se apaga hacia la base. */
+  .chart-col {
+    background-color: transparent;
+    background-image: linear-gradient(180deg, var(--bar), color-mix(in srgb, var(--bar) 55%, transparent));
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.25) inset;
+  }
+  .dark .chart-col { box-shadow: 0 1px 0 hsl(0 0% 100% / 0.3) inset, 0 0 22px -8px var(--bar) }
+}
+
+@layer utilities {
+  /* Alto de pantalla completa descontando el chrome (ver DESIGN.md → "Alto de pantalla completa"). */
+  .h-shell { height: calc(100dvh - var(--shell-top) - var(--shell-pad-b)) }
+  .min-h-shell { min-height: calc(100dvh - var(--shell-top) - var(--shell-pad-b)) }
+  .max-h-shell { max-height: calc(100dvh - var(--shell-top) - var(--shell-pad-b)) }
+}
+
+@keyframes roz-drift-x { to { background-position: 8px 0 } }
+@keyframes roz-drift-y { to { background-position: 0 8px } }
 
 /* Render de Markdown (descripción de tareas). Theme-aware con tokens del tema; se ve
    legible en claro y oscuro dentro del panel del bento. */

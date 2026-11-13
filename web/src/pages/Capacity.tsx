@@ -118,7 +118,7 @@ export default function Capacity() {
   const openDev: CapacityDev | null = openId ? all.find((d) => d.id === openId) ?? null : null;
 
   return (
-    <Layout title="Capacidad" actions={<RefreshButton busy={refetching} onClick={reload} />}>
+    <Layout title="Capacidad" width="full" actions={<RefreshButton busy={refetching} onClick={reload} />}>
       {error && <ErrorCard message={error} className="mb-4" />}
 
       {/* ---- 1. KPIs ---- */}
@@ -242,7 +242,7 @@ export default function Capacity() {
               icon={<Users />}
               action={
                 <Button asChild variant="outline" size="sm">
-                  <Link to="/app/developers">Ir a Developers</Link>
+                  <Link to="/developers">Ir a Developers</Link>
                 </Button>
               }
             >

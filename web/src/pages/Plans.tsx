@@ -154,7 +154,7 @@ export default function Plans() {
             </Badge>
           )}
           <RefreshButton busy={refetching || fleet.refetching} onClick={() => { reload(); fleet.reload(); }} />
-          <Button asChild variant="secondary"><Link to="/app/settings"><Plus /> Registrar runner</Link></Button>
+          <Button asChild variant="secondary"><Link to="/configuracion"><Plus /> Registrar runner</Link></Button>
         </div>
       }
     >

@@ -4,6 +4,7 @@ import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { ProjectIcon } from '@/components/avatars';
 import { Button } from '@/components/ui/button';
+import { ColorField } from '@/components/ui/color-field';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogCloseButton, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -207,17 +208,16 @@ export function ProjectDialog({
               />
             </label>
 
-            <label className={cn('relative inline-flex cursor-pointer items-center', PILL)} title="Color de identidad del proyecto">
+            <ColorField
+              value={color || autoColor}
+              onChange={(e) => setColor(e.target.value)}
+              aria-label="Color del proyecto"
+              title="Color de identidad del proyecto"
+              className={cn('inline-flex cursor-pointer items-center', PILL)}
+            >
               <span className="size-3.5 rounded-[4px] ring-1 ring-border" style={{ background: color || autoColor }} />
               <span>{color ? 'Color' : 'Color auto'}</span>
-              <input
-                type="color"
-                value={color || autoColor}
-                onChange={(e) => setColor(e.target.value)}
-                aria-label="Color del proyecto"
-                className="absolute inset-0 cursor-pointer opacity-0"
-              />
-            </label>
+            </ColorField>
             {color && (
               <button type="button" onClick={() => setColor('')} className="rounded-sm px-1.5 text-[12px] text-muted-foreground hover:text-foreground">
                 Volver a auto

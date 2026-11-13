@@ -56,7 +56,7 @@ export default function Overview() {
           </BalancedGrid>
 
           {/* Estado de infraestructura (primer vistazo) */}
-          <InfraHealth onOpen={() => nav('/app/infra')} />
+          <InfraHealth onOpen={() => nav('/infra')} />
 
           {/* Actividad + Cliente vs Interno.
 
@@ -141,7 +141,7 @@ export default function Overview() {
                         <div
                           key={d.devId}
                           className="group row-nudge flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 hover:bg-sidebar"
-                          onClick={() => nav(`/app/developers/${d.devId}`)}
+                          onClick={() => nav(`/developers/${d.devId}`)}
                         >
                           <span className="w-5 shrink-0 text-center text-[11px] tabular-nums text-faint">{String(i + 1).padStart(2, '0')}</span>
                           <UserAvatar url={d.avatarUrl} id={d.devId} name={d.name} className="size-7 shrink-0" />
@@ -167,7 +167,7 @@ export default function Overview() {
                 <CardDescription>Por developer, ponderados por prioridad</CardDescription>
               </CardHeader>
               <CardContent className="flex flex-1 flex-col">
-                <Workload rows={data.workload} onPick={(id) => nav(`/app/developers/${id}`)} />
+                <Workload rows={data.workload} onPick={(id) => nav(`/developers/${id}`)} />
               </CardContent>
             </Card>
 

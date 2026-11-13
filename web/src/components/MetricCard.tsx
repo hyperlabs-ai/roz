@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { isValidElement, type ReactNode } from 'react';
+import { isValidElement, type CSSProperties, type ReactNode } from 'react';
 import { Card } from '@/components/ui/card';
 import { Sparkline } from '@/components/charts';
 import { cn } from '@/lib/utils';
@@ -50,6 +50,9 @@ const VALUE_SIZE: Record<Size, string> = {
  *  · `surface` — `card` (con su propia Card), `inset` (recuadro dentro de otra card), `plain`
  *  · `size`    — el tamaño de la cifra
  *
+ * Lenguaje "instrumento": una tarjeta con color propio (`colorVar`, `tone`, `accent`) lleva un canto
+ * de luz de ese color arriba; `glow` la destaca con resplandor de esquina y cifra encendida.
+ *
  * `trend` añade la sparkline embebida de la receta `mono-rounded-kpi` de amicro: la cifra dice
  * dónde estamos y la línea dice cómo llegamos, que es lo que faltaba para leer un KPI sin abrir
  * la gráfica grande.
@@ -70,6 +73,7 @@ export function MetricCard({
   sub,
   trend,
   trendKey = 'value',
+  glow = false,
   className,
 }: {
   label: string;
@@ -90,6 +94,11 @@ export function MetricCard({
   sub?: string;
   trend?: any[];
   trendKey?: string;
+  /**
+   * KPI destacado: resplandor de esquina y cifra encendida con el color de la tarjeta. Uno por fila
+   * como mucho (el número que la pantalla quiere que mires primero).
+   */
+  glow?: boolean;
   className?: string;
 }) {
   const numeric = typeof value === 'number';
@@ -113,9 +122,16 @@ export function MetricCard({
           return <Icon className={layout === 'center' ? 'size-3.5' : 'size-4 sm:size-[18px]'} />;
         })();
 
+  // Color del canto de luz: el de la tarjeta si lo tiene (tono, logro o `colorVar` propio).
+  const edge = accent
+    ? '--hyper'
+    : tone === 'warning' ? '--warning' : tone === 'destructive' ? '--destructive' : tone === 'success' ? '--success'
+    : colorVar !== '--primary' || glow ? colorVar : null;
+
   const valueClass = cn(
     'font-semibold tabular-nums tracking-[-0.04em]',
     VALUE_SIZE[size],
+    glow && 'neon-text',
     accent && 'text-hyper',
     tone === 'warning' && 'text-warning',
     tone === 'destructive' && 'text-destructive',
@@ -209,5 +225,12 @@ export function MetricCard({
       </div>
     );
   }
-  return <Card className={cn('group px-4 py-3.5', layout === 'center' && 'text-center', className)}>{body}</Card>;
+  return (
+    <Card
+      className={cn('group px-4 py-3.5', layout === 'center' && 'text-center', edge && 'edge-glow', glow && 'corner-glow', className)}
+      style={edge ? ({ '--neon': `var(${edge})` } as CSSProperties) : undefined}
+    >
+      {body}
+    </Card>
+  );
 }

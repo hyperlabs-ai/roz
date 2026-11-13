@@ -49,7 +49,7 @@ export function FleetCards({
             Sin un roz-runner en la PC de un dev, los planes de su cola se quedan esperando. Crea un token en Configuración.
           </span>
         </div>
-        <Button asChild size="sm" variant="secondary"><Link to="/app/settings"><Plus /> Registrar runner</Link></Button>
+        <Button asChild size="sm" variant="secondary"><Link to="/configuracion"><Plus /> Registrar runner</Link></Button>
       </Card>
     );
   }

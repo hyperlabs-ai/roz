@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { Cpu, KeyRound, Loader2, Plus, ShieldOff, TriangleAlert } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { TimeField } from '@/components/ui/date-field';
 import { Input } from '@/components/ui/input';
+import { NumberField } from '@/components/ui/number-field';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -221,7 +223,7 @@ function CreateRunnerDialog({ open, onOpenChange }: { open: boolean; onOpenChang
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="rn-max">Máx. a la vez</Label>
-                  <Input id="rn-max" type="number" min={1} max={8} value={max} onChange={(e) => setMax(e.target.value)} />
+                  <NumberField id="rn-max" min={1} max={8} stepper value={Number(max) || 1} onCommit={(v) => setMax(String(v ?? 1))} className="w-full" />
                 </div>
               </div>
               <div className="space-y-1.5">
@@ -241,9 +243,9 @@ function CreateRunnerDialog({ open, onOpenChange }: { open: boolean; onOpenChang
                       {DAY_SHORT[d]}
                     </button>
                   ))}
-                  <Input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="ml-2 h-8 w-28" aria-label="Desde" />
+                  <TimeField fieldSize="sm" value={start} onChange={(e) => setStart(e.target.value)} className="ml-2 w-28" aria-label="Desde" />
                   <span className="text-xs text-muted-foreground">a</span>
-                  <Input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="h-8 w-28" aria-label="Hasta" />
+                  <TimeField fieldSize="sm" value={end} onChange={(e) => setEnd(e.target.value)} className="w-28" aria-label="Hasta" />
                 </div>
                 <p className="text-xs text-muted-foreground">Fuera de horario el runner no toma planes nuevos.</p>
               </div>

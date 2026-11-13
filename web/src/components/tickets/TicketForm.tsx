@@ -8,7 +8,7 @@ import {
 import { IntegrationIcon } from '@/components/brand';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { UserAvatar } from '@/components/bits';
+import { Disclosure, UserAvatar } from '@/components/bits';
 import { OverrideReasonDialog } from '@/components/tasks/OverrideReasonDialog';
 import { ChosenWhy, ClassificationRows, DiscardedList } from '@/components/tasks/AutoAssignPanel';
 import { DueDateMenu, Kbd, PILL, PriorityIcon, PropertyMenu, useAutosize, type PropOption } from '@/components/tasks/properties';
@@ -246,12 +246,12 @@ export function TicketForm({
           )}
           {result.task && !result.linear && (
             <Button asChild variant="outline" size="sm">
-              <Link to={`/app/tasks?task=${result.task.id}`}><TicketIcon className="size-4" /> Ver la tarea</Link>
+              <Link to={`/tareas?task=${result.task.id}`}><TicketIcon className="size-4" /> Ver la tarea</Link>
             </Button>
           )}
           {result.conversationId && (
             <Button asChild variant="outline" size="sm">
-              <Link to={`/app/chat/${result.conversationId}`}><MessageSquare className="size-4" /> Ver el mensaje</Link>
+              <Link to={`/chat/${result.conversationId}`}><MessageSquare className="size-4" /> Ver el mensaje</Link>
             </Button>
           )}
           <Button size="sm" className="ml-auto" onClick={reset}>Crear otro</Button>
@@ -483,10 +483,9 @@ export function TicketForm({
             </div>
           )}
           {discarded.length > 0 && (
-            <details className="text-xs">
-              <summary className="cursor-pointer select-none text-muted-foreground">Descartados ({discarded.length})</summary>
+            <Disclosure className="text-xs" summaryClassName="text-muted-foreground" summary={<span>Descartados ({discarded.length})</span>}>
               <div className="mt-1.5"><DiscardedList candidates={discarded} /></div>
-            </details>
+            </Disclosure>
           )}
         </section>
       </div>

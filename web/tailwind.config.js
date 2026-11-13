@@ -83,6 +83,11 @@ export default {
         DEFAULT: 'var(--shadow-sm)',
         md: 'var(--shadow-md)',
         lg: 'var(--shadow-lg)',
+        // Lenguaje "instrumento" (ver DESIGN.md): halo del color de `--neon` (naranja por defecto;
+        // `[--neon:var(--green)]` lo cambia), sombra del vidrio y de lo flotante.
+        glow: '0 0 var(--neon-spread) -6px hsl(var(--neon, var(--orange)) / var(--neon-halo))',
+        glass: 'var(--glass-shadow)',
+        pop: 'var(--pop-shadow)',
       },
       transitionTimingFunction: {
         // "spring suave": overshoot mínimo, sensación fluida. Curva base del sistema de movimiento.

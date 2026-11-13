@@ -1,0 +1,96 @@
+/* Bandeja de zeus: el recorrido de una solicitud y las filas fantasma de los carriles.
+   Colores solo por tokens del tema. */
+
+.zeus-route-node {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  border: 1.5px solid hsl(var(--foreground) / .28);
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+/* Tramo entre dos escalones: punteado = "solo si el anterior no existe". */
+.zeus-route-line {
+  position: relative;
+  flex: 1;
+  height: 0;
+  margin: 0 14px 0 10px;
+  border-top: 2px dashed hsl(var(--foreground) / .3);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+.zeus-route-tag {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translate(-50%, -50%);
+  margin-top: -1px;
+  padding: 3px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 9999px;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: color var(--duration-fast) var(--ease-out);
+}
+.zeus-route-tip {
+  position: absolute;
+  right: -10px;
+  top: 0;
+  width: 15px;
+  height: 15px;
+  transform: translateY(calc(-50% - 1px));
+  color: hsl(var(--foreground) / .5);
+  transition: color var(--duration-fast) var(--ease-out);
+}
+
+.zeus-route li { transition: opacity var(--duration-fast) var(--ease-out) }
+
+/* Con una solicitud en foco: lo recorrido se enciende, donde se quedó se rellena, el resto se apaga. */
+.zeus-route li[data-state='pass'] .zeus-route-node { border-color: hsl(var(--orange) / .7); color: hsl(var(--orange-ink)) }
+.zeus-route li[data-state='pass'] .zeus-route-line { border-top-style: solid; border-color: hsl(var(--orange) / .8) }
+.zeus-route li[data-state='pass'] .zeus-route-tip,
+.zeus-route li[data-state='pass'] .zeus-route-tag { color: hsl(var(--orange-ink)) }
+.zeus-route li[data-state='hit'] .zeus-route-node {
+  border-color: hsl(var(--orange));
+  background: hsl(var(--orange));
+  color: hsl(var(--primary-foreground));
+  box-shadow: 0 0 0 5px hsl(var(--orange) / .2);
+}
+.zeus-route li[data-state='hit'] .zeus-route-title { color: hsl(var(--orange-ink)) }
+.zeus-route li[data-state='hit'] .zeus-route-line,
+.zeus-route li[data-state='hit'] .zeus-route-tag,
+.zeus-route li[data-state='hit'] .zeus-route-tip { opacity: .4 }
+.zeus-route li[data-state='off'] { opacity: .38 }
+
+/* Fila fantasma: la silueta de una tarjeta que todavía no llega. */
+.zeus-ghost {
+  border: 1.5px dashed hsl(var(--border));
+  border-radius: 8px;
+}
+
+/* Tarjeta de carril: entra con un fundido corto al llegar. */
+.zeus-lane-card { animation: zeus-lane-in var(--duration-slow) var(--ease-smooth-out) backwards }
+@keyframes zeus-lane-in { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
+
+@media (prefers-reduced-motion: reduce) {
+  .zeus-route-node,
+  .zeus-route-line,
+  .zeus-route-tag,
+  .zeus-route-tip,
+  .zeus-route li { transition: none }
+  .zeus-lane-card { animation: none }
+}

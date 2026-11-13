@@ -1,0 +1,57 @@
+/* Estantería de documentos (pestaña Documentos de zeus). Local a components/zeus; todos los colores
+   salen de los tokens del tema. */
+
+/* Celda, cabecera o etiqueta de la matriz: se enciende en cruz al pasar y en naranja al fijarla. */
+.bib-cell {
+  transition: background-color var(--duration-quick) var(--ease-out), box-shadow var(--duration-quick) var(--ease-out);
+  outline: none;
+}
+.bib-cell[data-line='1'] { background-color: hsl(var(--foreground) / .045) }
+.bib-cell[data-hot='1'],
+.bib-cell:focus-visible { background-color: hsl(var(--foreground) / .1) }
+.bib-cell[data-sel='1'] { background-color: hsl(var(--orange) / .09) }
+.bib-cell[data-sel='1'][data-hot='1'] { background-color: hsl(var(--orange) / .16) }
+.bib-cell[data-sel='2'] { background-color: hsl(var(--orange) / .17); box-shadow: inset 0 0 0 1.5px hsl(var(--orange)) }
+.bib-cell:focus-visible { box-shadow: inset 0 0 0 1.5px hsl(var(--ring)) }
+/* Con un filtro fijado, lo que queda fuera se apaga (sin desaparecer: sigue siendo el mapa). */
+.bib-cell > * { transition: opacity var(--duration-fast) var(--ease-out) }
+.bib-cell[data-out='1'] > * { opacity: .4 }
+.bib-cell[data-out='1'][data-hot='1'] > * { opacity: .8 }
+
+/* Un documento: punto = vigente, rombo = fijado, hueco = borrador, atenuado = archivado o reemplazado. */
+.bib-dot {
+  flex: none;
+  width: var(--bib-d, 6px);
+  height: var(--bib-d, 6px);
+  border-radius: 9999px;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.bib-dot[data-pin='1'] { border-radius: 1px; transform: rotate(45deg) scale(.86) }
+.bib-dot[data-st='draft'] {
+  -webkit-mask: radial-gradient(circle closest-side, transparent 0 44%, black 62%);
+  mask: radial-gradient(circle closest-side, transparent 0 44%, black 62%);
+}
+.bib-dot[data-st='off'] { opacity: .38 }
+.bib-dot[data-dim='1'] { opacity: .13 }
+/* El documento que se está leyendo. */
+.bib-dot[data-open='1'] { box-shadow: 0 0 0 1.5px hsl(var(--card)), 0 0 0 3px hsl(var(--foreground)) }
+/* Celda sin documentos: un punto tenue, no un hueco. */
+.bib-dot[data-void='1'] { background-color: hsl(var(--foreground) / .14) }
+
+/* Versión grande del mismo glifo para las filas de la lista y la leyenda. */
+.bib-dot[data-size='lg'] { width: 8px; height: 8px }
+
+.bib-row { animation: bib-row-in var(--duration-slow) var(--ease-smooth-out) backwards; animation-delay: calc(var(--i, 0) * 16ms) }
+@keyframes bib-row-in { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
+
+/* Fila fantasma mientras carga: respira, sin barrido. */
+.bib-ghost { animation: bib-breathe 1.6s var(--ease-in-out) infinite alternate }
+@keyframes bib-breathe { from { opacity: .45 } to { opacity: 1 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .bib-cell,
+  .bib-cell > *,
+  .bib-dot { transition: none }
+  .bib-row,
+  .bib-ghost { animation: none }
+}

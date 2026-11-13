@@ -3,7 +3,7 @@
   "short_name": "roz",
   "description": "El pulso del equipo de desarrollo en un vistazo: commits, tickets, infraestructura y skills.",
   "id": "/app",
-  "start_url": "/app",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f6f5f1",

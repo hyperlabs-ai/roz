@@ -13,7 +13,7 @@ const AlertDialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Overlay
     ref={ref}
-    className={cn('t-overlay fixed inset-0 z-50 bg-scrim/45 backdrop-blur-[3px]', className)}
+    className={cn('t-overlay fixed inset-0 z-50 bg-scrim/50 backdrop-blur-[5px]', className)}
     {...props}
   />
 ));

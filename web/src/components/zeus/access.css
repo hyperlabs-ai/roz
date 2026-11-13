@@ -1,0 +1,35 @@
+/* Pestaña Acceso de zeus. Local a components/zeus; todos los colores salen de los tokens del tema. */
+
+/* Cable del diagrama "tu Claude ⇄ zeus": guiones quietos sin conexión, avanzando cuando hay un token en uso. */
+.access-wire {
+  height: 2px;
+  border-radius: 1px;
+  background-image: repeating-linear-gradient(90deg, hsl(var(--foreground) / .45) 0 6px, transparent 6px 14px);
+  background-size: 14px 2px;
+}
+.access-wire[data-live='1'] {
+  background-image: repeating-linear-gradient(90deg, hsl(var(--orange)) 0 6px, transparent 6px 14px);
+  animation: access-flow 1.8s var(--ease-linear) infinite;
+}
+@keyframes access-flow { to { background-position: 14px 0 } }
+
+.access-core { box-shadow: 0 0 0 1px hsl(var(--orange) / .55), 0 0 0 5px hsl(var(--orange) / .07), 0 14px 44px -18px hsl(var(--orange) / .4) }
+
+/* Tesela de un repo: se levanta apenas al pasar; el botón de sincronizar aparece al pasar o enfocar. */
+.access-tile {
+  transition: border-color var(--duration-quick) var(--ease-out), background-color var(--duration-quick) var(--ease-out), transform var(--duration-quick) var(--ease-smooth-out);
+}
+.access-tile:hover,
+.access-tile:focus-within { border-color: hsl(var(--foreground) / .28); transform: translateY(-1px) }
+.access-sync { opacity: 0; transition: opacity var(--duration-quick) var(--ease-out) }
+.access-tile:hover .access-sync,
+.access-tile:focus-within .access-sync,
+.access-sync[data-on='1'] { opacity: 1 }
+@media (hover: none) { .access-sync { opacity: 1 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .access-wire[data-live='1'] { animation: none }
+  .access-tile { transition: none }
+  .access-tile:hover,
+  .access-tile:focus-within { transform: none }
+}

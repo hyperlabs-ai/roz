@@ -306,7 +306,7 @@ export function WorkReport({ period }: { period: PeriodState }) {
                 return (
                   <TableRow key={p.projectId ?? 'none'}>
                     <TableCell className="max-w-[16rem] pl-5">
-                      {p.projectId ? <Link to={`/app/projects/${p.projectId}`} className="block hover:underline">{name}</Link> : name}
+                      {p.projectId ? <Link to={`/proyectos/${p.projectId}`} className="block hover:underline">{name}</Link> : name}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{p.client}</TableCell>
                     <TableCell className="text-right">
@@ -402,7 +402,7 @@ function PersonFocus({ person: p, colorOf }: { person: WorkReportPerson; colorOf
       <div className="flex items-center gap-2.5">
         <UserAvatar url={p.avatarUrl} id={p.devId} name={p.name} className="size-9" />
         <div className="min-w-0 flex-1">
-          <Link to={`/app/developers/${p.devId}`} className="block truncate text-sm font-semibold hover:underline">{p.name}</Link>
+          <Link to={`/developers/${p.devId}`} className="block truncate text-sm font-semibold hover:underline">{p.name}</Link>
           <div className="truncate text-xs text-muted-foreground">
             {idle ? 'Sin commits en el período' : <>{p.points} pts · {p.commits} commits · {p.closed} cerradas</>}
           </div>

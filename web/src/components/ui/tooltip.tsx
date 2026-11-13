@@ -15,7 +15,8 @@ const TooltipContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        't-tooltip z-50 overflow-hidden rounded-md bg-ink px-2.5 py-1 text-xs font-medium text-ink-foreground shadow-md',
+        // Tinta translúcida con desenfoque: el tooltip sigue siendo "tinta" pero deja ver qué tapa.
+        't-tooltip z-50 overflow-hidden rounded-md border border-ink-foreground/10 bg-ink/90 px-2.5 py-1 text-xs font-medium text-ink-foreground shadow-pop backdrop-blur-md',
         className,
       )}
       {...props}

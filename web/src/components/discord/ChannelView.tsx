@@ -67,7 +67,7 @@ function ThreadsPopover({ channel }: { channel: NonNullable<ChannelEntry['channe
     <button
       key={t.id}
       type="button"
-      onClick={() => navigate(`/app/chat/${t.id}`)}
+      onClick={() => navigate(`/chat/${t.id}`)}
       className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-sidebar"
     >
       <MessagesSquare className="size-4 shrink-0 text-faint" />
@@ -135,7 +135,7 @@ function Header({ entry, onBack }: { entry: ChannelEntry; onBack?: () => void })
         {parent && (
           <>
             <Link
-              to={`/app/chat/${parent.id}`}
+              to={`/chat/${parent.id}`}
               className="hidden min-w-0 max-w-[40%] shrink items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground sm:flex"
             >
               <ChannelGlyph name={parent.name} type={parent.type} />
@@ -216,7 +216,7 @@ function ForumView({ entry }: { entry: ChannelEntry }) {
               <li key={t.id}>
                 <button
                   type="button"
-                  onClick={() => navigate(`/app/chat/${t.id}`)}
+                  onClick={() => navigate(`/chat/${t.id}`)}
                   className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-sidebar"
                 >
                   <MessagesSquare className="size-4 shrink-0 text-faint" />
@@ -309,7 +309,7 @@ export function ChannelView({
         requestAnimationFrame(() => setFocus(id));
         jumpTo(id);
       },
-      onOpenThread: (id) => navigate(`/app/chat/${id}`),
+      onOpenThread: (id) => navigate(`/chat/${id}`),
       onRetry: (m) => {
         retry(m).catch((e) => toast.error('No se envió', { description: sendErrorText(e) }));
       },

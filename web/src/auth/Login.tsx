@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { ErrorCard } from '@/components/bits';
 import { RozLogo } from '@/components/RozLogo';
 import { Eyebrow } from '@/components/brand';
+import { R } from '@/lib/routes';
 
 // Dominios permitidos (coma-separados) vía VITE_ALLOWED_EMAIL_DOMAINS. Vacío = sin pre-filtro
 // en el cliente; el backend igual valida el dominio (DASHBOARD_ALLOWED_DOMAINS).
@@ -66,6 +68,11 @@ export default function Login() {
             </form>
           </CardContent>
         </Card>
+        {/* La raíz pide login: quien llegó sin cuenta necesita una salida hacia la landing pública. */}
+        <p className="mt-4 text-center text-xs text-muted-foreground">
+          ¿No eres del equipo?{' '}
+          <Link to={R.landing} className="font-medium text-foreground underline-offset-4 hover:underline">Conoce roz</Link>
+        </p>
       </div>
     </div>
   );

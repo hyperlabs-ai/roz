@@ -59,7 +59,7 @@ function Item({ conv, title, icon }: { conv: ChatConversation; title: string; ic
   const count = muted ? 0 : conv.kind === 'dm' ? conv.unread : conv.mentions;
   return (
     <NavLink
-      to={`/app/chat/${conv.id}`}
+      to={`/chat/${conv.id}`}
       className={({ isActive }) =>
         cn(
           'group flex h-8 items-center gap-2 rounded-md px-2.5 text-[14px] transition-colors',

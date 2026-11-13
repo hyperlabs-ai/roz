@@ -4,7 +4,7 @@
 // eventos filtrable (lo que antes eran el feed "En vivo" y la página de Actividad).
 //
 // Es lectura pura (funciona con el flag apagado). El historial se sondea cada 20 s solo en la semana
-// actual; las semanas pasadas son una foto. `/app/activity` y la píldora del header traen aquí con
+// actual; las semanas pasadas son una foto. `/activity` y la píldora del header traen aquí con
 // `#historial`.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
@@ -209,6 +209,7 @@ export default function Pulse() {
   return (
     <Layout
       title="Pulso del equipo"
+      width="full"
       eyebrow={eyebrow || undefined}
       actions={
         <div className="flex items-center gap-2">

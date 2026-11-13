@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, generatePath, useLocation, useParams } from 'react-router-dom';
 import { ShieldX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/auth/AuthContext';
@@ -22,23 +22,37 @@ import Chat from '@/pages/Chat';
 import Pulse from '@/pages/Pulse';
 import Meetings from '@/pages/Meetings';
 import Plans from '@/pages/Plans';
-import { useRozV2 } from '@/components/pulse/roz-v2';
+import Zeus from '@/pages/Zeus';
+import { LEGACY_ROUTES, R, stripAppPrefix, zeusTabTarget } from '@/lib/routes';
 
 /**
- * Pantalla principal de /app. Con Linear como fuente de verdad (roz v2) es el Pulso; con el flag
- * apagado sigue siendo el Resumen de siempre. Mientras el estado no llega se espera con un spinner
- * corto en vez de pintar el Resumen y saltar al Pulso.
+ * `/zeus` fue la dirección de zeus antes de volverse la pantalla principal, y sus secciones
+ * fueron pestañas (`?tab=bandeja`). Los enlaces viejos (avisos push, marcadores) siguen llegando
+ * ahí: se mandan a la ruta de la sección conservando el resto de la consulta.
  */
-function Home() {
-  const v2 = useRozV2();
-  if (!v2.ready) {
-    return (
-      <div className="flex h-64 items-center justify-center">
-        <div className="size-6 animate-spin rounded-full border-2 border-muted border-t-primary" />
-      </div>
-    );
-  }
-  return v2.linearSourceOfTruth ? <Pulse /> : <Overview />;
+function ZeusRedirect() {
+  const { search, hash } = useLocation();
+  const target = zeusTabTarget(search) ?? { pathname: R.mapa, search };
+  return <Navigate to={{ ...target, hash }} replace />;
+}
+
+/** Ruta que cambió de nombre: redirige a la nueva con sus parámetros, su consulta y su hash. */
+function Renamed({ to }: { to: string }) {
+  const params = useParams();
+  const { search, hash } = useLocation();
+  return <Navigate to={{ pathname: generatePath(`/${to}`, params), search, hash }} replace />;
+}
+
+/**
+ * La app vivió bajo `/app`. Los avisos push, los correos y los enlaces de Discord que genera el
+ * backend siguen apuntando ahí: `/app/lo-que-sea` se manda a `/lo-que-sea` con su consulta y su hash.
+ * Si ese nombre además es viejo (`/app/tasks`, `/app/zeus?tab=bandeja`), la ruta de destino hace la
+ * segunda redirección. Va FUERA de la puerta de sesión: primero se corrige la dirección y luego,
+ * si hace falta, se pide el login ya en la dirección buena.
+ */
+export function FromAppPrefix() {
+  const { pathname, search, hash } = useLocation();
+  return <Navigate to={{ pathname: stripAppPrefix(pathname), search, hash }} replace />;
 }
 
 function Spinner() {
@@ -69,7 +83,7 @@ function SessionStrip({ text, onRetry }: { text: string; onRetry?: () => void })
   );
 }
 
-// Puerta de autenticación SOLO para el dashboard (/app/*). La landing pública (/) queda fuera.
+// Puerta de autenticación de la app (todo salvo la landing pública, que vive en /landing).
 //
 // Dos puertas, no una: la sesión de Supabase solo prueba quién eres. Entrar además exige estar
 // registrado como dev en roz, y de eso responde el backend en /me. Mientras resuelve se espera —
@@ -150,43 +164,73 @@ function AccessDenied({ reason }: { reason: string }) {
   );
 }
 
+/**
+ * El árbol del dashboard: el chrome (`AppShell`) como ruta layout SIN path, así que permanece
+ * montado al navegar entre secciones, y debajo cada pantalla. Va aparte de `App` para poder
+ * montarlo sin la puerta de sesión (vista previa del shell, pruebas de rutas).
+ */
+export function dashboardRoutes() {
+  return (
+    <Route element={<AppShell />}>
+      {/* Zeus (el contexto del equipo): el mapa es la pantalla principal y cada sección tiene su
+          ruta. La navegación entre ellas vive en el menú lateral. */}
+      <Route index element={<Zeus section="mapa" />} />
+      <Route path="biblioteca" element={<Zeus section="biblioteca" />} />
+      <Route path="bandeja" element={<Zeus section="bandeja" />} />
+      <Route path="equipo" element={<Zeus section="equipo" />} />
+      <Route path="llaves" element={<Zeus section="llaves" />} />
+      <Route path="acceso" element={<Zeus section="acceso" />} />
+
+      <Route path="pulso" element={<Pulse />} />
+      <Route path="resumen" element={<Overview />} />
+      <Route path="developers" element={<Developers />} />
+      <Route path="developers/:id" element={<DeveloperProfile />} />
+      <Route path="capacidad" element={<Capacity />} />
+      <Route path="proyectos" element={<Projects />} />
+      <Route path="proyectos/:id" element={<ProjectDetail />} />
+
+      <Route path="juntas" element={<Meetings />} />
+      {/* Ticket inteligente (crear). Los reportes de trabajo viven en /reportes. */}
+      <Route path="ticket" element={<Ticket />} />
+      <Route path="tareas" element={<Tasks />} />
+      <Route path="chat" element={<Chat />} />
+      <Route path="chat/m/:messageId" element={<Chat />} />
+      <Route path="chat/:conversationId" element={<Chat />} />
+
+      <Route path="planes" element={<Plans />} />
+      <Route path="skills" element={<Skills />} />
+
+      <Route path="infra" element={<Infra />} />
+      <Route path="reportes" element={<Tickets />} />
+      <Route path="configuracion" element={<Settings />} />
+
+      {/* Compatibilidad: rutas con el nombre viejo (ver `routes.ts`). */}
+      <Route path="zeus" element={<ZeusRedirect />} />
+      {/* Actividad se unificó con el Pulso: el historial de eventos vive ahí. */}
+      <Route path="activity" element={<Navigate to={`${R.pulso}#historial`} replace />} />
+      {LEGACY_ROUTES.map(([from, to]) => (
+        <Route key={from} path={from} element={<Renamed to={to} />} />
+      ))}
+      {/* Ruta desconocida: al mapa. */}
+      <Route path="*" element={<Navigate to={R.mapa} replace />} />
+    </Route>
+  );
+}
+
 export default function App() {
   return (
     <Routes>
-        {/* Pública: landing del producto (self-host / GitHub Developer Program) */}
-        <Route path="/" element={<Landing />} />
+        {/* Pública: landing del producto (self-host / GitHub Developer Program). Ya no es la raíz:
+            quien entra a diario cae directo en la app. */}
+        <Route path={R.landing} element={<Landing />} />
 
-        {/* Dashboard operativo, detrás de login. El chrome (sidebar/header) es una ruta layout SIN
-            path, así que permanece montado al navegar entre secciones. */}
-        <Route path="/app" element={<RequireAuth />}>
-          <Route element={<AppShell />}>
-            <Route index element={<Home />} />
-            {/* roz v2: las dos vistas quedan siempre a mano, sea cual sea la principal. */}
-            <Route path="pulse" element={<Pulse />} />
-            <Route path="overview" element={<Overview />} />
-            <Route path="meetings" element={<Meetings />} />
-            <Route path="plans" element={<Plans />} />
-            <Route path="developers" element={<Developers />} />
-            <Route path="developers/:id" element={<DeveloperProfile />} />
-            <Route path="projects" element={<Projects />} />
-            <Route path="projects/:id" element={<ProjectDetail />} />
-            <Route path="infra" element={<Infra />} />
-            {/* Actividad se unificó con el Pulso: el historial de eventos vive ahí. */}
-            <Route path="activity" element={<Navigate to="/app/pulse#historial" replace />} />
-            <Route path="tasks" element={<Tasks />} />
-            <Route path="chat" element={<Chat />} />
-            <Route path="chat/m/:messageId" element={<Chat />} />
-            <Route path="chat/:conversationId" element={<Chat />} />
-            <Route path="capacity" element={<Capacity />} />
-            {/* Ticket inteligente (crear). Reportes sigue en /tickets. */}
-            <Route path="ticket" element={<Ticket />} />
-            <Route path="tickets" element={<Tickets />} />
-            <Route path="skills" element={<Skills />} />
-            <Route path="settings" element={<Settings />} />
-          </Route>
+        {/* Compatibilidad: la app vivió bajo /app. */}
+        <Route path="/app/*" element={<FromAppPrefix />} />
+
+        {/* La app, detrás de login, en la raíz. Su comodín recoge cualquier ruta desconocida. */}
+        <Route path="/" element={<RequireAuth />}>
+          {dashboardRoutes()}
         </Route>
-
-        <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

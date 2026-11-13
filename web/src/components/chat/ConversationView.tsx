@@ -122,7 +122,7 @@ export function ConversationView({
       if (isChannel) await chatApi.leave(conv.id);
       else await chatApi.updateMembership(conv.id, { hidden: true });
       removeConversation(conv.id);
-      navigate('/app/chat');
+      navigate('/chat');
     } catch (e) {
       toast.error(isChannel ? 'No se pudo salir del canal' : 'No se pudo cerrar la conversación', { description: errText(e) });
     } finally {
@@ -136,7 +136,7 @@ export function ConversationView({
     try {
       await chatApi.deleteConversation(conv.id);
       removeConversation(conv.id);
-      navigate('/app/chat');
+      navigate('/chat');
       toast.success(`Se eliminó #${conv.name}`);
     } catch (e) {
       toast.error('No se pudo eliminar el canal', { description: errText(e) });

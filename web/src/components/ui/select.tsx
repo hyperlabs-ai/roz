@@ -36,7 +36,7 @@ const SelectContent = React.forwardRef<
       ref={ref}
       position={position}
       className={cn(
-        't-dropdown relative z-50 max-h-[min(24rem,var(--radix-select-content-available-height))] min-w-[8rem] overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-md',
+        't-dropdown relative z-50 max-h-[min(24rem,var(--radix-select-content-available-height))] min-w-[8rem] overflow-hidden rounded-lg text-popover-foreground glass-pop',
         position === 'popper' && 'data-[side=bottom]:translate-y-1',
         className,
       )}
