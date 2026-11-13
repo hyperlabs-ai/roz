@@ -40,9 +40,11 @@ a merge to *completed*. The work is the source of truth; roz interprets it.
 
 ## Stack
 
-**TypeScript + Hono** on **Vercel serverless** · **Supabase Postgres + pgvector** · async queue =
-**Postgres outbox drained by Vercel Cron** (no external service) · **Claude** (reasoning) ·
-**OpenAI** (embeddings) · **GitHub / Resend** (email) · **React** dashboard SPA in `web/`.
+Two deployments: **roz** (the frontend, a React SPA in `web/`, static on Vercel) and **zeus** (the
+backend, one **TypeScript + Hono** process on Railway running the API, the MCP server, the scheduler,
+the Discord gateway and the team's unified context) · **Supabase Postgres + pgvector** · async queue =
+**Postgres outbox drained by zeus's in-process scheduler** (no external service) · **Claude**
+(reasoning) · **OpenAI** (embeddings) · **GitHub / Resend** (email).
 
 Full design: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -56,7 +58,8 @@ deployment, so **your data stays in your own database**.
 | Service | Why |
 |---|---|
 | **Supabase** | Postgres + pgvector (roz's database) |
-| **Vercel** | serverless runtime + cron |
+| **Vercel** | frontend hosting (static) |
+| **Railway** (or any Docker host) | zeus: the backend, a long-lived process |
 | **GitHub** | a fine-grained PAT — see [`docs/GITHUB-SETUP.md`](docs/GITHUB-SETUP.md) |
 | **Anthropic** | Claude (reasoning) |
 | **OpenAI** | embeddings (`text-embedding-3-large`, 3072 dims) |
@@ -89,10 +92,15 @@ npm run dev                 # GET /health -> { "status": "ok" }
    `0011_pr_attribution.sql`) to your Supabase project (SQL editor or `supabase db push`). The
    schema lives isolated in `roz`; make sure `roz` is in the API's **exposed schemas**
    (Supabase → Settings → API), or everything fails with `PGRST106`.
-2. **Deploy** to Vercel. The build runs the dashboard build; `vercel.json` defines the crons
-   (outbox drain every minute, infra-poll every 15 min, brain-sweep daily, weekly digest on
-   Fridays). Set `CRON_SECRET` in production or the crons return `403`.
-3. **Connect GitHub.** Follow [`docs/GITHUB-SETUP.md`](docs/GITHUB-SETUP.md) (PAT scopes +
+2. **Deploy zeus** (the backend) on Railway: one service from this repo; it picks up the root
+   `Dockerfile`. Give it ALL the variables in `.env.example` (secrets live here) with
+   `ROZ_ENV=production`. Healthcheck: `GET /health`. **Single replica** (the Discord gateway and the
+   scheduler do not tolerate two). Set `CRON_SECRET` or no job runs.
+3. **Deploy roz** (the frontend) on Vercel with **Root Directory = `web`**. Variables: only
+   `ZEUS_API_ORIGIN` (zeus's public origin, with `https://`), `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
+   `web/vercel.ts` rewrites `/api/*` to zeus. Point `DASHBOARD_URL` (on zeus) at the frontend domain,
+   GitHub webhooks at zeus, and OAuth redirect URIs at the frontend (it forwards them through `/api`).
+4. **Connect GitHub.** Follow [`docs/GITHUB-SETUP.md`](docs/GITHUB-SETUP.md) (PAT scopes +
    webhook).
 4. **Seed.** Run `npx tsx scripts/backfill-embeddings.ts` to generate skill embeddings.
    Optionally `npx tsx scripts/backfill-commits.ts` for historical commits. Create your projects
@@ -120,11 +128,11 @@ The public **landing page** is served at `/`; the operator **dashboard** lives b
 | `POST /api/dashboard/tickets/:id/auto-assign` | Dashboard SPA | runs automatic assignment on an open, unassigned task |
 | `GET /api/dashboard/tickets/:id/assignment` | Dashboard SPA | why roz chose (or didn't): classification, candidates with reasons, exact Jev payload |
 | `GET /api/dashboard/*` | Dashboard SPA (Supabase auth + domain) | engineering metrics + infra health |
-| `GET /v1/internal/drain` | Vercel Cron (every min) | drains the outbox (idempotent, with retries) |
-| `GET /v1/internal/infra-poll` | Vercel Cron (every 15 min) | polls Vercel/Railway/Supabase status |
-| `GET /v1/internal/brain-sweep` | Vercel Cron (daily) | backfills missing embeddings |
-| `GET /v1/internal/weekly-digest` | Vercel Cron (Fridays) | team + per-dev digest email |
-| `GET *` | browser | serves the dashboard SPA / public landing |
+| `GET /v1/internal/drain` | zeus scheduler (every 15 s) | drains the outbox (idempotent, with retries) |
+| `GET /v1/internal/infra-poll` | scheduler (every 15 min) | polls Vercel/Railway/Supabase status |
+| `GET /v1/internal/brain-sweep` | scheduler (daily) | backfills missing embeddings |
+| `GET /v1/internal/weekly-digest` | scheduler (Fridays) | team + per-dev digest email |
+| `GET *` | browser (served by Vercel; zeus only serves it in single-box self-host) | serves the dashboard SPA / public landing |
 
 ## Status
 

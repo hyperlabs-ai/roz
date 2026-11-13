@@ -1,0 +1,28 @@
+{
+  "name": "zeus-cli",
+  "version": "0.1.0",
+  "description": "zeus — CLI que corre en la PC de cada dev: sincroniza las variables de entorno de los proyectos con la bóveda de conocimiento cero de zeus y conecta el equipo a zeus.",
+  "type": "module",
+  "bin": {
+    "zeus": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "start": "node dist/cli.js"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

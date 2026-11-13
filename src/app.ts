@@ -1,7 +1,5 @@
 import { Hono } from 'hono';
-import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join, extname } from 'node:path';
+import { cors } from 'hono/cors';
 import type { RozContext } from './types/hono.js';
 import { loggerMiddleware } from './middleware/logger.js';
 import { AppError } from './utils/errors.js';
@@ -15,15 +13,35 @@ import { linearWebhookRoutes } from './routes/linear.js';
 import { runnerRoutes } from './routes/runner.js';
 import { discordOauthRoutes } from './routes/discord-oauth.js';
 import { discordBridgeRoutes } from './routes/discord.js';
+import { zeusCliRoutes } from './routes/zeus.js';
+import { config } from './config.js';
+import { runtimeStatus } from './runtime.js';
+import { mountSpa } from './spa.js';
 
 const app = new Hono<RozContext>();
 
 // Health antes de cualquier middleware que pueda fallar.
+// Siempre 200 mientras el proceso atienda: el puente de Discord caído NO debe tumbar el deploy del
+// API (se reporta dentro, y el propio puente se reinicia solo).
 app.get('/health', (c) =>
-  c.json({ status: 'ok', service: 'roz', ts: new Date().toISOString() }),
+  c.json({ status: 'ok', service: 'zeus', ts: new Date().toISOString(), ...runtimeStatus() }),
 );
 
 app.use('*', loggerMiddleware);
+
+// CORS solo si se configuró un front en otro origen (ROZ_CORS_ORIGINS). Con el rewrite de Vercel el
+// navegador ve un solo origen y esto queda apagado. La sesión viaja en Authorization, no en cookies.
+if (config.cors.origins.length) {
+  app.use(
+    '/api/*',
+    cors({
+      origin: config.cors.origins,
+      allowHeaders: ['authorization', 'content-type'],
+      allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      maxAge: 600,
+    }),
+  );
+}
 
 // Cara interactiva (Claude conversacional).
 app.route('/mcp', mcpRoutes);
@@ -35,6 +53,8 @@ app.route('/webhooks', linearWebhookRoutes);
 app.route('/v1/intake', intakeRoutes);
 // API de roz-runner (roz v2): autentica su propio Bearer rozr_…, sin sesión del dashboard.
 app.route('/v1/runner', runnerRoutes);
+// CLI de zeus en la PC de cada dev (bóveda de llaves): autentica su token zeus_… por persona.
+app.route('/v1/zeus', zeusCliRoutes);
 // Dashboard de visibilidad de ingeniería (auth de OpsHyper). Lo consume el SPA en web/.
 app.route('/api/dashboard', dashboardRoutes);
 // Callback de OAuth de Google (calendario). Va aparte de /api/dashboard porque ese router exige
@@ -43,76 +63,14 @@ app.route('/api/calendar', calendarOauthRoutes);
 // Callback de OAuth2 de Discord (ligar la cuenta del dev). Mismo motivo que el de calendario:
 // llega como navegación del browser y se autentica con el `state` de un solo uso.
 app.route('/api/discord', discordOauthRoutes);
-// Drenado de la cola (outbox) y barridas — disparado por Vercel Cron.
+// Drenado de la cola (outbox) y barridas — las dispara el planificador en proceso (src/jobs).
 app.route('/v1/internal', internalRoutes);
 // Avisos del puente de Discord (POST /v1/internal/discord/events). Trae su propia auth
 // (Bearer ROZ_BRIDGE_SECRET, fail-closed) y responde 404 con ROZ_DISCORD_CHAT apagado.
 app.route('/v1/internal', discordBridgeRoutes);
 
-// --- SPA del dashboard ---
-// La función sirve el build de web/dist (incluido en el bundle vía vercel.json includeFiles).
-// Resolución robusta del directorio: el cwd de la función serverless en Vercel no es fijo, así
-// que probamos rutas candidatas (LAMBDA_TASK_ROOT, cwd, ..) y elegimos donde exista index.html.
-// Lectura manual por ruta absoluta (no serveStatic, que depende del cwd).
-const SPA_DIST = (() => {
-  const candidates = [
-    process.env.LAMBDA_TASK_ROOT ? join(process.env.LAMBDA_TASK_ROOT, 'web/dist') : '',
-    join(process.cwd(), 'web/dist'),
-    join(process.cwd(), '../web/dist'),
-  ].filter(Boolean);
-  return candidates.find((c) => existsSync(join(c, 'index.html'))) ?? candidates[candidates.length - 1]!;
-})();
-
-const MIME: Record<string, string> = {
-  '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html; charset=utf-8',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-  '.ico': 'image/x-icon', '.json': 'application/json', '.woff': 'font/woff', '.woff2': 'font/woff2',
-  '.map': 'application/json', '.webp': 'image/webp', '.gif': 'image/gif', '.txt': 'text/plain',
-  '.webmanifest': 'application/manifest+json', '.mp3': 'audio/mpeg',
-};
-
-// El service worker y el manifest NO deben cachearse de forma agresiva: el navegador debe poder
-// detectar una versión nueva del SW en cada visita para actualizar la PWA.
-const NO_CACHE = new Set(['sw.js', 'manifest.webmanifest']);
-
-// Estáticos hasheados (inmutables) desde /assets.
-app.get('/assets/*', async (c) => {
-  const rel = c.req.path.replace(/^\/+/, ''); // "assets/xxx"
-  try {
-    const buf = await readFile(join(SPA_DIST, rel));
-    return c.body(buf, 200, {
-      'content-type': MIME[extname(rel)] ?? 'application/octet-stream',
-      'cache-control': 'public, max-age=31536000, immutable',
-    });
-  } catch {
-    return c.notFound();
-  }
-});
-
-// Fallback del SPA. Si la ruta tiene extensión (favicon, /roz.png y demás de web/public que
-// el build copia a dist), se sirve ese archivo; si no existe o no tiene extensión, cae al
-// index.html para que resuelva el router del lado cliente.
-app.get('*', async (c) => {
-  const rel = c.req.path.replace(/^\/+/, '');
-  if (rel && extname(rel)) {
-    try {
-      const buf = await readFile(join(SPA_DIST, rel));
-      return c.body(buf, 200, {
-        'content-type': MIME[extname(rel)] ?? 'application/octet-stream',
-        'cache-control': NO_CACHE.has(rel) ? 'no-cache' : 'public, max-age=3600',
-        // El SW debe poder controlar todo el origen, no solo /assets.
-        ...(rel === 'sw.js' ? { 'service-worker-allowed': '/' } : {}),
-      });
-    } catch {
-      /* no es un archivo del build: cae al SPA */
-    }
-  }
-  try {
-    return c.html(await readFile(join(SPA_DIST, 'index.html'), 'utf8'));
-  } catch {
-    return c.text('SPA build no encontrado', 500);
-  }
-});
+// SPA del dashboard: en producción lo sirve Vercel; aquí solo si hay un build local (self-host).
+mountSpa(app);
 
 app.onError((err, c) => {
   const logger = c.get('logger');

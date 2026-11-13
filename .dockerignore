@@ -1,0 +1,16 @@
+node_modules
+dist
+web
+runner
+test
+docs
+discord-bridge
+.git
+.github
+.vercel
+.deploy
+.backups
+.email-previews
+.env*
+*.log
+*.md

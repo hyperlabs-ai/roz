@@ -1,5 +1,5 @@
 // Tipos compartidos del chat sobre Discord (ROZ_DISCORD_CHAT). Fuente ÚNICA para el backend de roz,
-// el puente (discord-bridge/, que los copia o importa) y —copiados a mano, campo por campo—
+// el puente (src/bridge/, que los copia o importa) y —copiados a mano, campo por campo—
 // web/src/lib/api.ts. El contrato completo (endpoints, eventos, eco del webhook) vive en
 // docs/discord-chat-contracts.md; si cambias algo aquí, cambia el doc y los espejos en el mismo cambio.
 //

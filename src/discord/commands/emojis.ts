@@ -1,6 +1,6 @@
 // Emojis de aplicación de roz (Application Emojis de Discord): íconos de proveedores y de Roz-bot
 // dentro del texto de los mensajes (`<:roz_vercel:123…>`). Los sube `npm run discord:emojis`
-// (scripts/discord-emojis.ts) desde discord-bridge/assets/emojis/. Aquí solo se LEEN:
+// (scripts/discord-emojis.ts) desde src/bridge/assets/emojis/. Aquí solo se LEEN:
 // GET /applications/{app}/emojis con el token del bot, cacheado en memoria con TTL. Si no existen, no
 // hay token o Discord tarda, cada ícono cae a texto plano (cadena vacía): el mensaje sale igual.
 import { config } from '../../config.js';

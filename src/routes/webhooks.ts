@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { verifyGithub } from '../utils/webhooks.js';
 import { emit } from '../events/outbox.js';
 import { BACKFILL_DAYS } from '../reconcile/backfill.js';
+import { markSourceDirty } from '../zeus/ingest.js';
 
 export const webhookRoutes = new Hono<RozContext>();
 
@@ -102,6 +103,9 @@ webhookRoutes.post('/github', async (c) => {
     const def = payload.repository?.default_branch;
     const onDefault = !!def && payload.ref === `refs/heads/${def}`;
     if (onDefault) {
+      // zeus: puede haber un ADR o un spec nuevo. Solo se marca la fuente; la barrida lee el
+      // árbol e importa lo que zeus todavía no tiene. Best-effort: un fallo aquí no debe perder los commits.
+      await markSourceDirty(repo).catch((err) => c.get('logger')?.warn({ err, repo }, 'zeus: no se pudo marcar el repo'));
       const commits = payload.commits ?? [];
       for (const commit of commits) {
         await emit(

@@ -1,6 +1,7 @@
 // Acceso a la base de los planes del agente (roz.agent_plan, agent_plan_event, runner) y su mapeo a
 // los tipos HTTP de src/types/roz-v2.ts. Aquí vive la ÚNICA forma de cambiar el estado de un plan:
 // `transitionPlan`, un update condicional que pregunta a nextPlanState y deja su evento.
+import type { ZeusContextPack } from '../types/zeus.js';
 import { db } from '../db/supabase.js';
 import { AppError, NotFoundError } from '../utils/errors.js';
 import { linearSourceOfTruth } from '../linear/enabled.js';
@@ -46,6 +47,8 @@ export type ClaimableReasonValue = AgentPlanSummary['claimableReason'];
 
 export interface PlanRow {
   id: string;
+  /** Paquete de contexto de zeus (migración 0040). Ausente en planes anteriores. */
+  context_pack?: ZeusContextPack | null;
   work_item_id: string;
   linear_issue_id: string | null;
   identifier: string;

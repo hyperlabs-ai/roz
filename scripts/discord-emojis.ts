@@ -6,7 +6,7 @@
  *   npm run discord:emojis              # sube los que falten
  *   npm run discord:emojis -- --check   # solo dice cuáles faltan (no escribe)
  *
- * Los PNG (128x128, fondo transparente) están en discord-bridge/assets/emojis/: se generaron una vez
+ * Los PNG (128x128, fondo transparente) están en assets/discord/emojis/: se generaron una vez
  * desde web/public/integrations/*.svg (Vercel, Railway y GitHub en blanco para que se vean sobre el
  * fondo oscuro de Discord) y web/public/brand/roz-bot.svg. Para regenerarlos, rasteriza esos SVG a
  * 128 px con cualquier herramienta (p. ej. @resvg/resvg-js instalado FUERA del repo) y reemplaza los
@@ -25,7 +25,7 @@ const API = (process.env.DISCORD_API_URL || 'https://discord.com/api/v10').repla
 const token = process.env.DISCORD_BOT_TOKEN ?? '';
 const appId = process.env.DISCORD_CLIENT_ID ?? '';
 const dryRun = process.argv.includes('--check');
-const ASSETS = resolve(dirname(fileURLToPath(import.meta.url)), '../discord-bridge/assets/emojis');
+const ASSETS = resolve(dirname(fileURLToPath(import.meta.url)), '../assets/discord/emojis');
 /** Tope de Discord para la imagen de un emoji. */
 const MAX_BYTES = 256 * 1024;
 

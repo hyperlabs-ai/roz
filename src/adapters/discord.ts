@@ -1,6 +1,6 @@
 // Discord (chat de roz, ROZ_DISCORD_CHAT): cliente REST con `fetch`. Aquí solo vive el TRANSPORTE;
 // qué se publica, en qué canal y con qué permisos lo deciden src/discord/*. La conexión al gateway
-// (eventos en vivo) NO vive aquí: es del puente (discord-bridge/), porque Vercel no mantiene
+// (eventos en vivo) NO vive aquí: es del puente (src/bridge/), porque Vercel no mantiene
 // conexiones abiertas.
 //
 // `fetch` directo y no discord.js, por las mismas razones que src/adapters/linear.ts: controlamos

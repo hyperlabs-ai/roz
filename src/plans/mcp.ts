@@ -1,6 +1,7 @@
 // Lo que el agente (Claude Code en el runner) consulta y reporta por el MCP de roz mientras trabaja
 // un plan: el plan y su issue, las decisiones del proyecto (átomos del brain que salieron de juntas)
 // y su avance. Las herramientas se registran en src/mcp/server.ts.
+import type { ZeusContextPack } from '../types/zeus.js';
 import { db } from '../db/supabase.js';
 import { NotFoundError, ValidationError } from '../utils/errors.js';
 import { assertPlansEnabled, getPlan, getWorkItem, type PlanRow } from './store.js';
@@ -22,6 +23,8 @@ export interface AgentPlanView {
   planMd: string | null;
   planVersion: number;
   feedback: string | null;
+  /** Referencias de zeus elegidas para esta tarea (tráelas con zeus_get). */
+  contextPack: ZeusContextPack | null;
 }
 
 async function resolvePlan(input: { planId?: string; identifier?: string }): Promise<PlanRow> {
@@ -61,6 +64,7 @@ export async function getPlanForAgent(input: { planId?: string; identifier?: str
     planMd: row.plan_md,
     planVersion: row.plan_version,
     feedback: row.feedback,
+    contextPack: row.context_pack ?? null,
   };
 }
 

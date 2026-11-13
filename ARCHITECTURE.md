@@ -44,31 +44,41 @@ Four patterns recur across ALL of roz's domains:
 
 | Layer | Technology |
 |---|---|
-| Runtime / deploy | **Vercel serverless functions** (single entry `api/index.ts`) |
+| Runtime / deploy | **zeus**: one long-lived Node process (`src/index.ts`, Docker → Railway). The frontend (`web/`) deploys separately as static files on Vercel |
 | HTTP framework | **Hono** |
 | Language | **TypeScript** (ESM, `strict`) |
 | Data + vectors | **Supabase Postgres + pgvector** (service role, server-side) |
 | Reasoning | **Claude** (Anthropic SDK, with prompt caching) — spec, classification, reconciliation |
 | Judgments | **TypeSafe Jev** (plain `fetch`, optional) — typed questions about a task for automatic assignment |
 | Embeddings | **OpenAI** `text-embedding-3-large` (3072 dims) — via API |
-| Async queue | **Postgres outbox drained by Vercel Cron** — no external service |
+| Async queue | **Postgres outbox drained by the in-process scheduler** (`src/jobs/scheduler.ts`) — no external service |
 | Interactive face | **MCP server** over HTTP (own stateless JSON-RPC) |
 | Integrations | **GitHub** (truth of code), **Resend** (email) |
 
-> **No persistent worker.** In serverless there is no long-lived process. The worker's role is
-> filled by the **Postgres outbox + Vercel Cron**: each effect is written as an `outbox_event` and a
-> cron (`/v1/internal/drain`, every minute) picks up the pending ones and runs them. Retries with
-> **exponential backoff** (`attempts` + `next_attempt_at`) and **dead-letter** after 5 attempts.
-> Zero extra vendor; idempotency via `idempotency_key`.
+> **The outbox is still the queue.** Each effect is written as an `outbox_event`; zeus's scheduler
+> calls `/v1/internal/drain` every 15 s (in memory, no network hop) and runs the pending ones.
+> Retries with **exponential backoff** (`attempts` + `next_attempt_at`) and **dead-letter** after 5
+> attempts. Zero extra vendor; idempotency via `idempotency_key`.
 
 ---
 
-## Why serverless changes the design
+## Deployment: frontend (roz) and backend (zeus), separately
 
-Three direct consequences of having no persistent process:
+roz started as a single Vercel serverless function serving both the API and the SPA. It is now two
+deployments (the Spanish document, `ARCHITECTURE.es.md`, has the full rationale and the zeus context
+module; contracts are in `docs/zeus-contracts.md`):
 
-1. **The outbox is drained by polling (Vercel Cron).** Every state change writes an `OutboxEvent` in
-   the same transaction as the data (outbox pattern). A cron (`/v1/internal/drain`, every minute)
+- **roz** (frontend) on Vercel, Root Directory `web/`: static SPA only. `web/vercel.ts` rewrites
+  `/api/*` to zeus, so the browser sees one origin. No secrets live here.
+- **zeus** (backend) on Railway, from the root `Dockerfile`: the API, the MCP server, the in-process
+  scheduler that replaced Vercel Cron (`src/jobs/scheduler.ts`), the Discord gateway
+  (`src/bridge/`, formerly a separate service) and the unified-context module (`src/zeus/`). Single
+  instance; graceful shutdown on SIGTERM.
+
+What carries over from the original design:
+
+1. **The outbox is drained by polling.** Every state change writes an `OutboxEvent` in
+   the same transaction as the data (outbox pattern). The scheduler (`/v1/internal/drain`, every 15 s)
    takes the due `pending`/`failed` events, claims them optimistically (`pending`→`processing`) and
    runs the effect. On failure it reschedules with exponential backoff (`next_attempt_at`) up to 5
    attempts, then `dead`. Idempotency via `idempotency_key` makes retries safe.
@@ -266,7 +276,7 @@ your own messages. Identity is `roz.dev`, same as the rest of the app. The code 
 
 ---
 
-## Event core (outbox + Vercel Cron)
+## Event core (outbox + scheduler)
 
 Every state change writes an `OutboxEvent` in the **same transaction** as the data. The cron
 `/v1/internal/drain` (every minute) drains the queue: (1) optimistic claim; (2) run the effect while
@@ -358,11 +368,13 @@ small scale, exact KNN is enough.
 
 ## Security / public surface
 
-- **MCP** (`/mcp`): bearer `ROZ_MCP_TOKEN`.
+- **MCP** (`/mcp`): a personal `zeus_…` token per dev (only its sha256 is stored), so every call is
+  attributed. Runner tokens and the shared `ROZ_MCP_TOKEN` still work with a reduced tool set.
+- **zeus CLI** (`/v1/zeus`) and the zero-knowledge env vault: see `docs/zeus-contracts.md` §4–§5.
 - **App intake** (`/v1/intake`): bearer `ROZ_INGEST_TOKEN` (the project is distinguished by
   `projectKey`). At scale, prefer a per-app token + rate limiting.
 - **Webhooks**: GitHub signature verified via HMAC (`GITHUB_WEBHOOK_SECRET`).
-- **Internal/cron** (`/v1/internal/*`): protected by `CRON_SECRET` (Vercel injects the bearer).
+- **Internal/jobs** (`/v1/internal/*`): protected by `CRON_SECRET` (sent by the scheduler).
 - **Dashboard** (`/app`): Supabase Auth + domain filter (`DASHBOARD_ALLOWED_DOMAINS`). The role is
   resolved best-effort; if the profiles table doesn't exist, the dashboard is read-only.
 - roz uses the Supabase **service role key**: it runs server-side, with no user session.

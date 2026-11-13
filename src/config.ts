@@ -1,6 +1,18 @@
 // Settings tipados desde env. Falla rápido en producción si falta algo crítico;
 // en dev deja vacíos para poder levantar el server sin todas las integraciones.
+import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
+
+const flag = (def: 'true' | 'false') =>
+  z
+    .enum(['true', 'false'])
+    .default(def)
+    .transform((v) => v === 'true');
+/** Flag cuyo valor por defecto depende del entorno (se resuelve abajo, ya con ROZ_ENV leído). */
+const optionalFlag = z
+  .enum(['true', 'false'])
+  .optional()
+  .transform((v) => (v === undefined ? undefined : v === 'true'));
 
 const raw = z
   .object({
@@ -48,9 +60,22 @@ const raw = z
 
     ROZ_MCP_TOKEN: z.string().default(''),
     ROZ_INGEST_TOKEN: z.string().default(''),
-    // Secreto compartido para autenticar los crons de Vercel. Vercel inyecta
-    // `Authorization: Bearer <CRON_SECRET>` en cada invocación cuando este env var está seteado.
+    // Secreto de los jobs internos (/v1/internal/*). El planificador en proceso lo manda en cada
+    // corrida y sirve también para dispararlos a mano. Sin él, ningún job corre (fail-closed).
     CRON_SECRET: z.string().default(''),
+    // Planificador en proceso (sustituye a los crons de Vercel). Por defecto: encendido en
+    // producción, apagado en desarrollo (para que una PC local no compita con producción por los
+    // mismos jobs sobre la misma base).
+    ROZ_SCHEDULER: optionalFlag,
+    // Orígenes extra a los que el API les responde con CORS (coma-separados). Con el front en Vercel
+    // reescribiendo /api hacia zeus NO hace falta: todo es mismo origen. Solo para un front que le
+    // hable directo al dominio de zeus.
+    ROZ_CORS_ORIGINS: z.string().default(''),
+    // Origen público de zeus (https://…), para armar la URL del MCP y del CLI que se le muestra a
+    // cada dev. Vacío: se usa el dominio que da Railway (RAILWAY_PUBLIC_DOMAIN) o, en su defecto, el
+    // del propio request.
+    ZEUS_PUBLIC_URL: z.string().default(''),
+    RAILWAY_PUBLIC_DOMAIN: z.string().default(''),
 
     // URL pública del dashboard (para el botón del digest semanal). Vacío por defecto; en local
     // apunta a http://localhost:3000.
@@ -110,7 +135,7 @@ const raw = z
 
     // Discord como chat de roz (docs/discord-chat-contracts.md). Con ROZ_DISCORD_CHAT=true el chat de
     // roz deja de ser la base interna (0030) y muestra los canales REALES del servidor de la empresa,
-    // espejados por el puente (discord-bridge/, Railway). Apagado por defecto: sin el flag el chat
+    // espejados por el puente (src/bridge/, dentro de zeus). Apagado por defecto: sin el flag el chat
     // interno queda idéntico aunque las llaves estén puestas.
     DISCORD_BOT_TOKEN: z.string().default(''),
     DISCORD_GUILD_ID: z.string().default(''),
@@ -125,8 +150,18 @@ const raw = z
     // Tope por adjunto al publicar desde roz. Discord acepta 10 MiB en servidores sin boost; si el
     // servidor tiene boost se puede subir (nivel 2: 50 MiB, nivel 3: 100 MiB).
     DISCORD_MAX_UPLOAD_BYTES: z.coerce.number().int().positive().default(10 * 1024 * 1024),
-    // Secreto compartido puente → roz (POST /v1/internal/discord/events, Bearer).
+    // Secreto puente → API (POST /v1/internal/discord/*, Bearer). Con el puente dentro del proceso
+    // ya no hay que configurarlo: si viene vacío se genera uno por arranque. Solo se fija a mano si
+    // el puente corre como proceso aparte.
     ROZ_BRIDGE_SECRET: z.string().default(''),
+    // Sostener el gateway de Discord en este proceso. Por defecto: sí en producción, no en desarrollo
+    // (dos procesos con el mismo bot contestarían dos veces cada interacción).
+    ROZ_EMBED_BRIDGE: optionalFlag,
+    // Mensajes por canal en el backfill inicial y tope de páginas de 100 al ponerse al día.
+    DISCORD_BACKFILL_MESSAGES: z.coerce.number().int().min(0).max(100_000).default(200),
+    DISCORD_CATCHUP_MAX_PAGES: z.coerce.number().int().min(1).max(10_000).default(50),
+    // Registrar /roz en el servidor al conectar, si cambió la definición.
+    DISCORD_REGISTER_COMMANDS: flag('true'),
     ROZ_DISCORD_CHAT: z
       .enum(['true', 'false'])
       .default('false')
@@ -188,8 +223,8 @@ const raw = z
   })
   // Chat de Discord, pero NO a medias: con el flag encendido el chat interno desaparece, así que sin
   // bot no se puede escribir, sin OAuth nadie puede ligar su cuenta (y sin cuenta no se ve ningún
-  // canal), sin secreto del puente el tiempo real rechaza todo, y sin llave de cifrado los tokens de
-  // webhook quedarían en claro. Se valida en todos los entornos.
+  // canal), y sin llave de cifrado los tokens de webhook quedarían en claro. Se valida en todos los
+  // entornos. (El secreto del puente ya no se exige: se genera solo, ver ROZ_BRIDGE_SECRET.)
   .superRefine((v, ctx) => {
     if (!v.ROZ_DISCORD_CHAT) return;
     const missing = [
@@ -198,7 +233,6 @@ const raw = z
       !v.DISCORD_CLIENT_ID && 'DISCORD_CLIENT_ID',
       !v.DISCORD_CLIENT_SECRET && 'DISCORD_CLIENT_SECRET',
       !v.DISCORD_OAUTH_REDIRECT_URI && 'DISCORD_OAUTH_REDIRECT_URI',
-      !v.ROZ_BRIDGE_SECRET && 'ROZ_BRIDGE_SECRET',
       !v.ROZ_ENCRYPTION_KEY && 'ROZ_ENCRYPTION_KEY',
     ].filter(Boolean);
     for (const k of missing) {
@@ -271,13 +305,22 @@ export const config = {
     oauthRedirectUri: raw.DISCORD_OAUTH_REDIRECT_URI,
     apiUrl: raw.DISCORD_API_URL.replace(/\/$/, ''),
     maxUploadBytes: raw.DISCORD_MAX_UPLOAD_BYTES,
-    bridgeSecret: raw.ROZ_BRIDGE_SECRET,
+    bridgeSecret: raw.ROZ_BRIDGE_SECRET || randomBytes(32).toString('hex'),
     chatEnabled: raw.ROZ_DISCORD_CHAT,
+    embedBridge: raw.ROZ_EMBED_BRIDGE ?? raw.ROZ_ENV === 'production',
+    backfillMessages: raw.DISCORD_BACKFILL_MESSAGES,
+    catchupMaxPages: raw.DISCORD_CATCHUP_MAX_PAGES,
+    registerCommands: raw.DISCORD_REGISTER_COMMANDS,
   },
   encryptionKey: raw.ROZ_ENCRYPTION_KEY,
   mcp: { token: raw.ROZ_MCP_TOKEN },
   ingest: { token: raw.ROZ_INGEST_TOKEN },
   cron: { secret: raw.CRON_SECRET },
+  scheduler: { enabled: raw.ROZ_SCHEDULER ?? raw.ROZ_ENV === 'production' },
+  zeus: {
+    publicUrl: (raw.ZEUS_PUBLIC_URL || (raw.RAILWAY_PUBLIC_DOMAIN ? `https://${raw.RAILWAY_PUBLIC_DOMAIN}` : '')).replace(/\/$/, ''),
+  },
+  cors: { origins: raw.ROZ_CORS_ORIGINS.split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean) },
 } as const;
 
 export type Config = typeof config;

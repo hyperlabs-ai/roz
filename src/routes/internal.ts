@@ -26,6 +26,7 @@ import { definitionsHash, commandDefinitions } from '../discord/commands/definit
 import type { DiscordInteractionEnvelope } from '../discord/commands/types.js';
 import { inBackground } from '../utils/background.js';
 import { AppError } from '../utils/errors.js';
+import { zeusSweep } from '../zeus/ingest.js';
 
 export const internalRoutes = new Hono<RozContext>();
 
@@ -148,6 +149,16 @@ internalRoutes.get('/plan-watchdog', async (c) => {
   if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
   if (!linearSourceOfTruth()) return c.json({ ok: true, requeued: 0, claimable: 0, skipped: 'flag' });
   const result = await cronJob('plan-watchdog', () => runPlanWatchdog());
+  return c.json({ ok: true, ...result });
+});
+
+// Barrida de zeus cada 10 min: lee los repos que tuvieron push (o que llevan un día sin leerse) e
+// importa los ADR/OpenSpec que zeus todavía no tiene; lo que ya está en el registro no se pisa.
+// Acotada por ciclo; sin GITHUB_TOKEN se salta.
+internalRoutes.get('/zeus-sweep', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  const result = await cronJob('zeus-sweep', () => zeusSweep());
+  if (result.failed.length) c.get('logger')?.warn({ failed: result.failed }, 'zeus: repos que no se pudieron ingerir');
   return c.json({ ok: true, ...result });
 });
 

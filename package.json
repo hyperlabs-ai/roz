@@ -1,7 +1,7 @@
 {
   "name": "roz",
   "version": "0.1.0",
-  "description": "roz — capa de contexto, enrutamiento y notificación alrededor del trabajo de desarrollo. Vercel serverless (Hono) + Supabase, ingesta vía Claude/MCP.",
+  "description": "zeus — el back de roz: API, MCP, planificador, gateway de Discord y gestión de contexto en un proceso (Hono + Supabase). El front vive en web/.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -14,8 +14,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "discord:commands": "tsx scripts/discord-commands.ts",
-    "discord:emojis": "tsx scripts/discord-emojis.ts",
-    "vercel-build": "npm install --prefix web && npm run build --prefix web"
+    "discord:emojis": "tsx scripts/discord-emojis.ts"
   },
   "keywords": [
     "roz",
@@ -30,7 +29,7 @@
     "@hono/zod-validator": "^0.4.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@supabase/supabase-js": "^2.45.0",
-    "@vercel/functions": "^3.10.6",
+    "discord.js": "^14.28.1",
     "dotenv": "^16.4.5",
     "hono": "^4.6.0",
     "openai": "^4.67.0",
@@ -39,6 +38,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.16",
     "@types/node": "^22.7.5",
     "@types/web-push": "^3.6.4",
     "tsx": "^4.19.1",

@@ -13,6 +13,7 @@ import { pulseRoutes, rozV2StatusRoutes } from './pulse.js';
 import { getWorkReport } from '../dashboard/reports.js';
 import { meetingRoutes } from './meetings.js';
 import { planRoutes, runnerDashboardRoutes } from './plans.js';
+import { zeusDashboardRoutes } from './zeus.js';
 import { assertTasksWritable } from '../linear/enabled.js';
 import { assertTaskOrigin, announceTaskFromMessage } from '../chat/messages.js';
 import { requireDashboardAuth, requireAdmin } from '../auth/verify.js';
@@ -109,6 +110,8 @@ dashboardRoutes.route('/roz-v2', rozV2StatusRoutes);
 dashboardRoutes.route('/meetings', meetingRoutes);
 dashboardRoutes.route('/plans', planRoutes);
 dashboardRoutes.route('/runners', runnerDashboardRoutes);
+// zeus: contexto unificado (grafo, bandeja, organización, bóveda). Contrato: docs/zeus-contracts.md.
+dashboardRoutes.route('/zeus', zeusDashboardRoutes);
 
 /** Resuelve el período desde ?from=&to= (ISO). Sin parámetros → mes actual. */
 function period(c: { req: { query: (k: string) => string | undefined } }): Period {
