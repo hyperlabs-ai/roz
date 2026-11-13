@@ -117,6 +117,8 @@ export function Panel({
   title,
   description,
   children,
+  variant = 'default',
+  tone,
   className,
 }: {
   /** Número de la secuencia: `1` → "001". Texto se pinta tal cual. */
@@ -124,11 +126,22 @@ export function Panel({
   title?: ReactNode;
   description?: ReactNode;
   children?: ReactNode;
+  /** `stage` = rejilla de puntos + resplandor (`tone`): el panel protagonista de una pantalla. */
+  variant?: 'default' | 'stage';
+  /** Token del resplandor en `stage`. Naranja por defecto. */
+  tone?: BrandColor;
   className?: string;
 }) {
   const num = typeof n === 'number' ? String(n).padStart(3, '0') : n;
   return (
-    <div className={cn('grid min-w-0 content-start gap-4 rounded-xl bg-panel p-5 sm:p-7', className)}>
+    <div
+      className={cn(
+        'grid min-w-0 content-start gap-4 rounded-xl bg-panel p-5 shadow-[inset_0_0_0_1px_hsl(var(--foreground)/0.04)] sm:p-7',
+        variant === 'stage' && 'stage',
+        className,
+      )}
+      style={tone ? ({ '--glow': `var(--${tone})` } as CSSProperties) : undefined}
+    >
       {(num != null || title || description) && (
         <div className="grid gap-2">
           {num != null && <span className="text-[13px] text-faint tabular-nums">{num}</span>}

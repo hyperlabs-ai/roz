@@ -1,20 +1,28 @@
-import { createContext, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
-import { NavLink, Outlet, matchPath, useLocation, useNavigationType } from 'react-router-dom';
-import { LayoutDashboard, Users, FolderGit2, Server, BarChart3, GraduationCap, Sun, Moon, LogOut, Menu, Bell, BellOff, Settings, ListChecks, Gauge, MessagesSquare, TicketPlus, HeartPulse, Users2, Bot, Monitor } from 'lucide-react';
+import { createContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { Link, NavLink, Outlet, matchPath, useLocation, useNavigationType } from 'react-router-dom';
+import {
+  LayoutDashboard, Users, FolderGit2, Server, BarChart3, GraduationCap, Sun, Moon, LogOut, Menu, Bell, BellOff, Settings,
+  ListChecks, Gauge, MessagesSquare, TicketPlus, HeartPulse, Users2, Bot, Monitor, Network, FileText, Inbox, Building2,
+  KeyRound, Plug, PanelLeftClose, PanelLeftOpen,
+} from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
 import { usePush } from '@/push/PushContext';
 import { useChat } from '@/chat/ChatContext';
 import { useTheme } from '@/components/theme';
 import { MeAvatar } from '@/components/avatars';
 import { useApi } from '@/lib/useApi';
+import { usePoll } from '@/lib/usePoll';
 import { DISCORD_STATUS_KEY, discordStatusOrOff } from '@/discord/status';
 import { RozLogo } from '@/components/RozLogo';
 import { QueuePill } from '@/components/QueuePill';
 import { useRozV2 } from '@/components/pulse/roz-v2';
+import { useZeusMe } from '@/components/zeus/zeus-ui';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { R } from '@/lib/routes';
 import { cn } from '@/lib/utils';
 
 /**
@@ -29,9 +37,14 @@ import { cn } from '@/lib/utils';
  * Para no tocar las 13 páginas, `<Layout>` conserva su firma y publica título y acciones AQUÍ, por
  * portal, en los tres huecos que expone este componente.
  *
- * Identidad roz v2: el sidebar es el `aside` de la consola del mock (fondo un punto distinto,
- * secciones con `label-caps`, activo en naranja suave con su cuadrito naranja) y el header lleva
- * eyebrow + título compacto, sin descripción.
+ * El menú lateral se CONTRAE a un riel de íconos (botón del header, botón al pie del menú o
+ * Ctrl/Cmd + B; se recuerda en localStorage). Contraer no mueve nada de sitio: cada ícono conserva su
+ * x, el texto se desvanece y el ancho se anima con CSS.
+ *
+ * Variables que publica en su raíz (ver DESIGN.md → "Alto de pantalla completa"):
+ *  · `--shell-top`   — lo que hay entre el borde superior de la ventana y el inicio del contenido
+ *                      (header + padding superior de `<main>`).
+ *  · `--shell-pad-b` — el padding inferior de `<main>`.
  */
 
 export interface ShellSlots {
@@ -40,17 +53,22 @@ export interface ShellSlots {
   actionsMobile: HTMLElement | null;
   /** Sección del menú de la ruta actual: el eyebrow por defecto del título. */
   section?: string | null;
+  /** La ruta ocupa todo el alto y ancho (chat): `Layout` no acota el contenido. */
+  fullBleed?: boolean;
 }
 
 /** `null` = no hay shell (se está renderizando un `<Layout>` fuera de su ruta). */
 export const ShellSlotsContext = createContext<ShellSlots | null>(null);
 
-// `badge: 'chat'` pinta junto a la etiqueta el contador del chat (MDs + menciones, o un punto).
+// `badge` pinta un contador junto a la etiqueta (o sobre el ícono, con el menú contraído):
+//  · `chat`  — MDs + menciones, o un punto si solo hay actividad en canales
+//  · `inbox` — mensajes sin leer + solicitudes que esperan tu respuesta en la bandeja de zeus
+//  · `admin` — punto amarillo: zeus todavía no tiene administrador
 type NavIcon = ComponentType<{ className?: string; strokeWidth?: number | string }>;
-type NavItem = { to: string; label: string; icon: NavIcon; end: boolean; badge?: 'chat' };
+type NavBadgeKind = 'chat' | 'inbox' | 'admin';
+type NavItem = { to: string; label: string; icon: NavIcon; end: boolean; badge?: NavBadgeKind };
 type NavSection = { label: string; items: NavItem[] };
 
-/** Logo oficial de Discord como ícono del menú (cuando el chat ES Discord). */
 /**
  * Logo de Discord en MONOCROMO (currentColor), con el mismo estándar que los íconos de lucide del
  * menú: hereda el color del ítem (atenuado, o naranja cuando está activo). Decisión del usuario: nada
@@ -67,26 +85,34 @@ function DiscordNavIcon({ className }: { className?: string }) {
 // Prohibido el ícono de chispa (Sparkle/Sparkles/WandSparkles…) en toda la app: lo vigila
 // test/web-banned-icons.test.ts.
 const I = {
-  overview: { label: 'Resumen', icon: LayoutDashboard },
-  chat: { to: '/app/chat', label: 'Chat', icon: MessagesSquare, end: false, badge: 'chat' },
-  developers: { to: '/app/developers', label: 'Developers', icon: Users, end: false },
-  capacity: { to: '/app/capacity', label: 'Capacidad', icon: Gauge, end: false },
-  projects: { to: '/app/projects', label: 'Proyectos', icon: FolderGit2, end: false },
-  infra: { to: '/app/infra', label: 'Infraestructura', icon: Server, end: false },
-  ticket: { to: '/app/ticket', label: 'Ticket', icon: TicketPlus, end: false },
-  tasks: { to: '/app/tasks', label: 'Tareas', icon: ListChecks, end: false },
-  reports: { to: '/app/tickets', label: 'Reportes', icon: BarChart3, end: false },
-  skills: { to: '/app/skills', label: 'Skills', icon: GraduationCap, end: false },
-  settings: { to: '/app/settings', label: 'Configuración', icon: Settings, end: false },
-  meetings: { to: '/app/meetings', label: 'Juntas', icon: Users2, end: false },
-  plans: { to: '/app/plans', label: 'Planes', icon: Bot, end: false },
-} as const satisfies Record<string, Partial<NavItem>>;
+  // Zeus: una entrada por sección (antes eran pestañas dentro de la página).
+  mapa: { to: R.mapa, label: 'Mapa', icon: Network, end: true },
+  biblioteca: { to: R.biblioteca, label: 'Biblioteca', icon: FileText, end: false },
+  bandeja: { to: R.bandeja, label: 'Bandeja', icon: Inbox, end: false, badge: 'inbox' },
+  equipo: { to: R.equipo, label: 'Equipo', icon: Building2, end: false, badge: 'admin' },
+  llaves: { to: R.llaves, label: 'Llaves', icon: KeyRound, end: false },
+  acceso: { to: R.acceso, label: 'Acceso', icon: Plug, end: false },
+  pulse: { to: R.pulso, label: 'Pulso', icon: HeartPulse, end: false },
+  overview: { to: R.resumen, label: 'Resumen', icon: LayoutDashboard, end: false },
+  chat: { to: R.chat, label: 'Chat', icon: MessagesSquare, end: false, badge: 'chat' },
+  developers: { to: R.developers, label: 'Developers', icon: Users, end: false },
+  capacity: { to: R.capacidad, label: 'Capacidad', icon: Gauge, end: false },
+  projects: { to: R.proyectos, label: 'Proyectos', icon: FolderGit2, end: false },
+  infra: { to: R.infra, label: 'Infraestructura', icon: Server, end: false },
+  ticket: { to: R.ticket, label: 'Ticket', icon: TicketPlus, end: false },
+  tasks: { to: R.tareas, label: 'Tareas', icon: ListChecks, end: false },
+  reports: { to: R.reportes, label: 'Reportes', icon: BarChart3, end: false },
+  skills: { to: R.skills, label: 'Skills', icon: GraduationCap, end: false },
+  meetings: { to: R.juntas, label: 'Juntas', icon: Users2, end: false },
+  plans: { to: R.planes, label: 'Planes', icon: Bot, end: false },
+} as const satisfies Record<string, NavItem>;
 
 /**
- * Menú según roz v2, agrupado en secciones como la consola del mock. Con Linear como fuente de
- * verdad el Pulso pasa a ser la pantalla principal (`/app`), el Resumen se mueve a `/app/overview`
- * y aparecen Juntas y Planes (sus endpoints responden 409 con el flag apagado, así que sin él no se
- * ofrecen). Con el flag apagado el menú es el de siempre más el Pulso, que es lectura pura.
+ * Menú según roz v2, agrupado en secciones como la consola del mock. Zeus (el contexto del equipo)
+ * encabeza el menú con sus seis secciones: el mapa es la pantalla principal (`/`). Pulso y Resumen
+ * viven en su propia ruta (con Linear como fuente de verdad el Pulso va primero). Con ese flag
+ * aparecen además Juntas y Planes (sus endpoints responden 409 con el flag apagado, así que sin él no
+ * se ofrecen).
  *
  * Actividad ya no es página (se unificó con el Pulso: su historial de eventos vive ahí) e Ideas se
  * quitó por completo. Con el chat de Discord activo, "Chat" se llama "Discord" y lleva su logo.
@@ -96,15 +122,11 @@ function useNav(): NavSection[] {
   // Misma caché que MeAvatar y la página del chat: no agrega peticiones.
   const discord = useApi(() => discordStatusOrOff(), [], { key: DISCORD_STATUS_KEY, ttl: 60_000 });
   const sot = v2.linearSourceOfTruth;
-  const pulse: NavItem = sot
-    ? { to: '/app', label: 'Pulso', icon: HeartPulse, end: true }
-    : { to: '/app/pulse', label: 'Pulso', icon: HeartPulse, end: false };
-  const overview: NavItem = sot
-    ? { ...I.overview, to: '/app/overview', end: false }
-    : { ...I.overview, to: '/app', end: true };
   const chat: NavItem = discord.data?.enabled ? { ...I.chat, label: 'Discord', icon: DiscordNavIcon } : I.chat;
-  const visibility = sot ? [pulse, overview] : [overview, pulse];
+  const visibility = sot ? [I.pulse, I.overview] : [I.overview, I.pulse];
   return [
+    // Zeus no depende del flag de Linear: el contexto del equipo existe con o sin él.
+    { label: 'Zeus', items: [I.mapa, I.biblioteca, I.bandeja, I.equipo, I.llaves, I.acceso] },
     { label: 'Visibilidad', items: [...visibility, I.developers, I.capacity, I.projects] },
     { label: 'Entrada', items: [I.meetings, I.ticket, I.tasks, chat] },
     { label: 'Agentes', items: [...(sot ? [I.plans] : []), I.skills] },
@@ -125,73 +147,147 @@ function useSection(): string | null {
   return null;
 }
 
-/** Contador del chat: número con MDs sin leer / menciones; punto si solo hay actividad en canales. */
-function ChatBadge({ className }: { className?: string }) {
+/** Lo que cuenta cada insignia del menú. `count` gana sobre `dot`. */
+type BadgeState = { count: number; dot: boolean; tone: 'red' | 'orange' | 'yellow'; label: string };
+
+/**
+ * Estado de las insignias. La de zeus sale de `/zeus/me` (la misma caché que usan sus pantallas) y
+ * se sondea aquí porque el menú está siempre montado: un agente puede escribirte en cualquier
+ * momento y el aviso tiene que verse desde cualquier sección.
+ */
+function useNavBadges(): Record<NavBadgeKind, BadgeState | null> {
+  // Se llama UNA vez, en `AppShell`: dos llamadas serían dos sondeos.
   const { badge } = useChat();
-  if (badge.count > 0) {
+  const me = useZeusMe();
+  usePoll(me.reload, me.data ? 45_000 : null);
+  const inbox = (me.data?.unreadMessages ?? 0) + (me.data?.pendingForMe ?? 0);
+  return {
+    chat: badge.count > 0
+      ? { count: badge.count, dot: false, tone: 'red', label: `${badge.count} sin leer` }
+      : badge.dot
+        ? { count: 0, dot: true, tone: 'orange', label: 'Hay mensajes nuevos' }
+        : null,
+    inbox: inbox > 0 ? { count: inbox, dot: false, tone: 'orange', label: `${inbox} por atender` } : null,
+    admin: me.data?.needsAdmin ? { count: 0, dot: true, tone: 'yellow', label: 'Falta un administrador' } : null,
+  };
+}
+
+const BADGE_TONE = {
+  red: 'bg-destructive text-destructive-foreground',
+  orange: 'bg-orange text-white',
+  yellow: 'bg-yellow text-foreground',
+} as const;
+
+/**
+ * Insignia de un ítem. En línea (menú abierto, menú móvil) va a la derecha de la etiqueta; con el
+ * menú contraído se monta sobre la esquina del ícono, con un aro del color del fondo para que no se
+ * funda con él.
+ */
+function NavBadge({ state, rail = false, className }: { state: BadgeState | null; rail?: boolean; className?: string }) {
+  if (!state) return null;
+  const tone = BADGE_TONE[state.tone];
+  if (state.count > 0) {
     return (
-      <span className={cn('ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-destructive px-1.5 text-[10.5px] font-semibold text-destructive-foreground tabular-nums', className)}>
-        {badge.count > 99 ? '99+' : badge.count}
+      <span
+        aria-label={state.label}
+        className={cn(
+          'grid place-items-center rounded-full font-semibold tabular-nums',
+          tone,
+          rail
+            ? 'absolute -right-1.5 -top-1.5 h-[15px] min-w-[15px] px-[3px] text-[9.5px] leading-none ring-2 ring-sidebar'
+            : 'ml-auto h-[18px] min-w-[18px] shrink-0 px-1.5 text-[10.5px]',
+          className,
+        )}
+      >
+        {state.count > 99 ? '99+' : state.count}
       </span>
     );
   }
-  if (badge.dot) return <span className={cn('ml-auto size-2 rounded-full bg-primary', className)} aria-label="Hay mensajes nuevos" />;
-  return null;
+  return (
+    <span
+      aria-label={state.label}
+      className={cn(
+        'rounded-full',
+        tone,
+        rail ? 'absolute -right-0.5 -top-0.5 size-2 ring-2 ring-sidebar' : 'ml-auto mr-1 size-2 shrink-0',
+        className,
+      )}
+    />
+  );
 }
 
-function NavItems({ onNavigate }: { onNavigate?: () => void }) {
+/** Texto que se desvanece al contraer el menú. No cambia de tamaño: lo recorta el `aside`. */
+const FADE = 'transition-opacity duration-quick ease-out group-data-[collapsed=true]/aside:pointer-events-none group-data-[collapsed=true]/aside:opacity-0';
+
+type NavBadges = Record<NavBadgeKind, BadgeState | null>;
+
+function NavItems({ collapsed, badges }: { collapsed: boolean; badges: NavBadges }) {
   const nav = useNav();
+  const { pathname } = useLocation();
   return (
     <>
-      {nav.map((section) => (
-        <div key={section.label} className="grid gap-0.5">
-          {/* Etiqueta de sección del mock (`.aside .sec`). */}
-          <div className="px-2.5 pb-1 pt-3 label-caps text-faint">{section.label}</div>
-          {section.items.map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.end}
-              onClick={onNavigate}
-              className={({ isActive }) =>
-                cn(
-                  'group/nav flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] transition-colors duration-200 ease-spring',
-                  isActive
-                    ? 'bg-orange-soft font-semibold text-orange-ink'
-                    : 'text-foreground hover:bg-panel',
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  {/* El "cuadrito" del mock (`.tab .ic`): gris en reposo, naranja en el activo, con
-                      el icono adentro para no perder la lectura rápida de cada sección. */}
-                  <span
+      {nav.map((section, i) => (
+        // Columna flex y no grid: en un grid la etiqueta `nowrap` fija el ancho mínimo de la pista y,
+        // con el menú contraído, los ítems quedarían más anchos que el riel (y su centro, fuera de él).
+        <div key={section.label} className="flex min-w-0 flex-col gap-0.5">
+          {/* Etiqueta de sección. Contraído conserva su alto (nada salta) y deja una raya punteada. */}
+          <div className="relative flex h-7 shrink-0 items-end overflow-hidden px-2 pb-1.5">
+            <span className={cn('label-caps whitespace-nowrap text-faint', FADE)}>{section.label}</span>
+            {i > 0 && (
+              <span
+                aria-hidden
+                className="connector absolute inset-x-2 bottom-3 opacity-0 transition-opacity duration-quick group-data-[collapsed=true]/aside:opacity-100"
+              />
+            )}
+          </div>
+          {section.items.map((n) => {
+            const badge = n.badge ? badges[n.badge] : null;
+            // `Link` con el activo calculado aquí, y no `NavLink` con `className` como función: el
+            // `asChild` del tooltip fusiona `className` como TEXTO y la función acabaría en el DOM.
+            const isActive = !!matchPath({ path: n.to, end: n.end }, pathname);
+            return (
+              // El tooltip (el global, `ui/hover-tip`) solo existe con el menú contraído: abierto, la
+              // etiqueta ya se ve.
+              <Link
+                    key={n.to}
+                    to={n.to}
+                    data-tip={collapsed ? `${n.label}${badge ? ` · ${badge.label}` : ''}` : undefined}
+                    data-tip-side="right"
+                    data-tip-now=""
+                    aria-label={n.label}
+                    aria-current={isActive ? 'page' : undefined}
                     className={cn(
-                      'grid size-[18px] shrink-0 place-items-center rounded-[4px] transition-colors duration-200',
-                      isActive ? 'bg-orange text-white' : 'bg-panel text-muted-foreground group-hover/nav:bg-toggle-off/60',
+                      'group/nav relative flex h-8 shrink-0 items-center gap-2.5 rounded-md px-2 text-[13.5px] outline-none transition-colors duration-200 ease-spring focus-visible:ring-2 focus-visible:ring-ring',
+                      isActive ? 'nav-active font-semibold text-orange-ink' : 'text-foreground hover:bg-panel',
                     )}
                   >
-                    <n.icon className="size-3" strokeWidth={2.25} />
-                  </span>
-                  <span className="min-w-0 truncate">{n.label}</span>
-                  {n.badge === 'chat' && <ChatBadge />}
-                </>
-              )}
-            </NavLink>
-          ))}
+                    {/* El "cuadrito" del mock: gris en reposo, naranja con halo en el activo. */}
+                    <span
+                      className={cn(
+                        'relative grid size-[22px] shrink-0 place-items-center rounded-[5px] transition-[background-color,color,box-shadow] duration-200',
+                        isActive ? 'bg-orange text-white shadow-glow' : 'bg-panel text-muted-foreground group-hover/nav:bg-toggle-off/60 group-hover/nav:text-foreground',
+                      )}
+                    >
+                      <n.icon className="size-[13px]" strokeWidth={2.25} />
+                      {collapsed && <NavBadge state={badge} rail />}
+                    </span>
+                    <span className={cn('min-w-0 flex-1 truncate', FADE)}>{n.label}</span>
+                    {!collapsed && <NavBadge state={badge} />}
+                  </Link>
+            );
+          })}
         </div>
       ))}
     </>
   );
 }
 
-
 function Brand() {
   return (
-    <div className="flex items-center justify-between gap-2 px-2.5 pb-1 pt-1.5">
-      <RozLogo wordmark className="size-[26px]" />
-      <span className="label-caps text-faint">Desarrollo</span>
+    <div className="flex h-9 items-center gap-2 px-[7px]">
+      <RozLogo className="size-6" />
+      <span className={cn('text-[20px] font-bold leading-none tracking-[-0.04em]', FADE)}>roz</span>
+      <span className={cn('label-caps ml-auto whitespace-nowrap text-faint', FADE)}>Desarrollo</span>
     </div>
   );
 }
@@ -241,9 +337,12 @@ function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button className="flex w-full items-center gap-2.5 rounded-md p-2 text-left transition-colors hover:bg-panel">
+        <button
+          aria-label="Tu cuenta"
+          className="flex w-full items-center gap-2.5 rounded-md px-[3px] py-1.5 text-left outline-none transition-colors hover:bg-panel focus-visible:ring-2 focus-visible:ring-ring"
+        >
           <MeAvatar className="size-8" />
-          <div className="min-w-0 flex-1">
+          <div className={cn('min-w-0 flex-1', FADE)}>
             <div className="truncate text-[13px] font-semibold">{user?.name ?? user?.email}</div>
             <div className="label-caps mt-0.5 truncate">{user?.role ?? 'miembro'}</div>
           </div>
@@ -255,7 +354,7 @@ function UserMenu() {
         <ThemeSelector />
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <NavLink to="/app/settings"><Settings /> Configuración</NavLink>
+          <NavLink to={R.configuracion}><Settings /> Configuración</NavLink>
         </DropdownMenuItem>
         {push.supported && (
           <DropdownMenuItem onSelect={(e) => { e.preventDefault(); push.toggle(); }} disabled={push.busy}>
@@ -271,17 +370,15 @@ function UserMenu() {
   );
 }
 
-function MobileNav() {
-  const { badge } = useChat();
+function MobileNav({ badges }: { badges: NavBadges }) {
   const nav = useNav();
+  const any = badges.chat ?? badges.inbox ?? badges.admin;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon-sm" className="relative shrink-0 md:hidden" aria-label="Menú">
           <Menu />
-          {(badge.count > 0 || badge.dot) && (
-            <span className={cn('absolute right-1 top-1 size-2 rounded-full ring-2 ring-background', badge.count > 0 ? 'bg-destructive' : 'bg-primary')} />
-          )}
+          {any && <span className={cn('absolute right-1 top-1 size-2 rounded-full ring-2 ring-background', BADGE_TONE[any.tone])} />}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="scroll-thin max-h-[80dvh] w-52 overflow-y-auto">
@@ -295,7 +392,7 @@ function MobileNav() {
               <DropdownMenuItem key={n.to} asChild>
                 <NavLink to={n.to} end={n.end}>
                   <n.icon /> {n.label}
-                  {n.badge === 'chat' && <ChatBadge />}
+                  {n.badge && <NavBadge state={badges[n.badge]} />}
                 </NavLink>
               </DropdownMenuItem>
             ))}
@@ -305,7 +402,7 @@ function MobileNav() {
         <DropdownMenuSeparator />
         <ThemeSelector />
         <DropdownMenuItem asChild>
-          <NavLink to="/app/settings"><Settings /> Configuración</NavLink>
+          <NavLink to={R.configuracion}><Settings /> Configuración</NavLink>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -329,13 +426,45 @@ function useScrollToTop() {
   }, [pathname, navType]);
 }
 
+const COLLAPSED_KEY = 'roz-nav-collapsed';
+const IS_MAC = typeof navigator !== 'undefined' && /mac|iphone|ipad/i.test(navigator.platform);
+const SHORTCUT = IS_MAC ? '⌘B' : 'Ctrl B';
+
+/** Menú contraído o no. Se recuerda entre visitas y se alterna con Ctrl/Cmd + B. */
+function useCollapsed(): [boolean, () => void] {
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
+  });
+  const toggle = useCallback(() => {
+    setCollapsed((c) => {
+      try { localStorage.setItem(COLLAPSED_KEY, c ? '0' : '1'); } catch { /* modo privado: no se recuerda */ }
+      return !c;
+    });
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== 'b' || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      // En un campo de texto Ctrl+B es "negrita" (editor de tareas, chat): ahí no se toca.
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      e.preventDefault();
+      toggle();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [toggle]);
+  return [collapsed, toggle];
+}
+
 export function AppShell() {
   const { pathname } = useLocation();
   const section = useSection();
   useScrollToTop();
+  const [collapsed, toggleCollapsed] = useCollapsed();
+  const badges = useNavBadges();
   // El chat ocupa todo el alto y ancho disponible (sus columnas hacen su propio scroll). Su key es
   // fija: cambiar de conversación cambia la URL, pero no debe re-montar la página entera.
-  const fullBleed = pathname === '/app/chat' || pathname.startsWith('/app/chat/');
+  const fullBleed = pathname === R.chat || pathname.startsWith(`${R.chat}/`);
 
   // Los huecos del header viven en estado (no en refs) porque `Layout` necesita re-renderizar
   // cuando existen para poder portalizar dentro de ellos.
@@ -345,17 +474,64 @@ export function AppShell() {
     actionsDesktop: (el: HTMLDivElement | null) => setSlots((s) => (s.actionsDesktop === el ? s : { ...s, actionsDesktop: el })),
     actionsMobile: (el: HTMLDivElement | null) => setSlots((s) => (s.actionsMobile === el ? s : { ...s, actionsMobile: el })),
   }).current;
-  const ctx = useMemo(() => ({ ...slots, section }), [slots, section]);
+  const ctx = useMemo(() => ({ ...slots, section, fullBleed }), [slots, section, fullBleed]);
+
+  // `--shell-top` y `--shell-pad-b` se MIDEN (no se escriben a mano): el header cambia de alto con
+  // el notch, con la fila de acciones en móvil y si algún día se le añade una franja. Así una
+  // pantalla puede pedir "el alto que queda" sin números fijos que se desfasan.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const header = headerRef.current;
+    const main = mainRef.current;
+    if (!root || !header || !main) return;
+    const measure = () => {
+      const cs = getComputedStyle(main);
+      root.style.setProperty('--shell-top', `${header.offsetHeight + (parseFloat(cs.paddingTop) || 0)}px`);
+      root.style.setProperty('--shell-pad-b', `${parseFloat(cs.paddingBottom) || 0}px`);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(header);
+    ro.observe(main);
+    return () => ro.disconnect();
+  }, [fullBleed]);
+
+  const ToggleIcon = collapsed ? PanelLeftOpen : PanelLeftClose;
+  const toggleLabel = collapsed ? 'Expandir menú' : 'Contraer menú';
 
   return (
-    <div className={cn('flex bg-background', fullBleed ? 'h-dvh overflow-hidden' : 'min-h-dvh')}>
-      {/* Sidebar (md+): el `aside` de la consola del mock. */}
-      <aside className="sticky top-0 hidden h-screen w-[220px] shrink-0 flex-col border-r bg-sidebar px-2.5 py-3.5 md:flex">
+    <div ref={rootRef} className={cn('shell flex bg-background', fullBleed ? 'h-dvh overflow-hidden' : 'min-h-dvh')}>
+      {/* Sidebar (md+). El ancho se anima; adentro nada cambia de x, así que no hay saltos. */}
+      <aside
+        data-collapsed={collapsed}
+        className="shell-aside group/aside sticky top-0 z-30 hidden h-dvh shrink-0 flex-col overflow-hidden border-r bg-sidebar px-2.5 py-3 md:flex"
+      >
         <Brand />
-        <nav className="scroll-thin -mx-1 mt-1 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1 pb-2">
-          <NavItems />
+        <nav className="shell-nav scroll-none -mx-1 mt-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overflow-x-hidden px-1 pb-2">
+          <NavItems collapsed={collapsed} badges={badges} />
         </nav>
-        <div className="border-t pt-2">
+        <div className="flex min-w-0 flex-col gap-0.5 border-t border-dashed pt-2">
+          <Tooltip delayDuration={0}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={toggleCollapsed}
+                aria-label={toggleLabel}
+                aria-expanded={!collapsed}
+                className="flex h-8 shrink-0 w-full items-center gap-2.5 rounded-md px-2 text-[13px] text-muted-foreground outline-none transition-colors hover:bg-panel hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="grid size-[22px] shrink-0 place-items-center"><ToggleIcon className="size-4" /></span>
+                <span className={cn('min-w-0 flex-1 truncate text-left', FADE)}>Contraer menú</span>
+                <kbd className={cn('whitespace-nowrap rounded-[4px] border px-1 py-px font-sans text-[10.5px] font-medium text-faint', FADE)}>{SHORTCUT}</kbd>
+              </button>
+            </TooltipTrigger>
+            {collapsed && (
+              <TooltipContent side="right" sideOffset={10}>{toggleLabel} <span className="ml-1.5 opacity-70">{SHORTCUT}</span></TooltipContent>
+            )}
+          </Tooltip>
           <UserMenu />
         </div>
       </aside>
@@ -363,15 +539,32 @@ export function AppShell() {
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
         <header
-          className={cn('sticky top-0 z-20 border-b bg-background/85 backdrop-blur-md', fullBleed && 'md:hidden')}
+          ref={headerRef}
+          className={cn('shell-header sticky top-0 z-20 border-b', fullBleed && 'md:hidden')}
           style={{ paddingTop: 'env(safe-area-inset-top)' }}
         >
-          {/* Fila principal */}
-          <div className="flex items-center gap-2 px-4 py-2.5 md:min-h-[68px] md:px-8 md:py-3">
-            <MobileNav />
+          {/* Una sola franja: menú, título y acciones. */}
+          <div className="flex items-center gap-2 px-4 py-2 md:h-12 md:px-5 md:py-0">
+            <MobileNav badges={badges} />
             {/* Logo compacto solo en móvil (la sidebar lo trae en desktop) */}
             <RozLogo className="size-7 shrink-0 md:hidden" />
-            <div ref={set.title} className="min-w-0 flex-1" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={toggleCollapsed}
+                  aria-label={toggleLabel}
+                  aria-expanded={!collapsed}
+                  className="-ml-1.5 hidden shrink-0 text-muted-foreground md:inline-flex"
+                >
+                  <ToggleIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="start">{toggleLabel} <span className="ml-1.5 opacity-70">{SHORTCUT}</span></TooltipContent>
+            </Tooltip>
+            <span aria-hidden className="hidden h-4 w-px shrink-0 bg-border md:block" />
+            <div ref={set.title} className="min-w-0 flex-1 md:pl-1" />
             {/* Desktop: acciones + pulso de la cola (el tema vive en el menú del avatar) */}
             <div className="hidden shrink-0 items-center gap-2 sm:flex">
               <div ref={set.actionsDesktop} className="contents" />
@@ -386,16 +579,19 @@ export function AppShell() {
               aparezca en las páginas sin acciones (antes la fila entera era condicional). */}
           <div ref={set.actionsMobile} className="border-t px-4 py-2 empty:hidden sm:hidden [&_button]:w-full" />
         </header>
+        {/* Sin tope de ancho: cada página elige el suyo con `<Layout width>`. `overflow-x-clip` (no
+            `hidden`) para que `position: sticky` siga funcionando dentro de las páginas. */}
         <main
+          ref={mainRef}
           className={cn(
             fullBleed
               ? 'min-h-0 w-full flex-1 overflow-hidden'
-              : 'mx-auto w-full max-w-[1680px] flex-1 overflow-x-clip px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-8 md:pt-6 md:pb-8',
+              : 'w-full flex-1 overflow-x-clip px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:px-5 md:pb-5',
           )}
         >
           {/* key por ruta → la VISTA se re-monta y re-dispara la transición de entrada. El chrome
               de arriba ya no: vive fuera de esta key. */}
-          <div key={fullBleed ? '/app/chat' : pathname} className={cn('animate-page', fullBleed && 'h-full')}>
+          <div key={fullBleed ? R.chat : pathname} className={cn('animate-page', fullBleed && 'h-full')}>
             <ShellSlotsContext.Provider value={ctx}>
               <Outlet />
             </ShellSlotsContext.Provider>

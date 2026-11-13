@@ -64,11 +64,11 @@ function DiscordChatInner() {
 
   const filters = useApi(() => apiGet<TicketFilterOptions>('/tickets/filters'), [], { key: '/tickets/filters', ttl: 600_000 });
 
-  // Enlaces del chat interno anterior (/app/chat/m/:id): ya no se pueden resolver aquí.
+  // Enlaces del chat interno anterior (/chat/m/:id): ya no se pueden resolver aquí.
   useEffect(() => {
     if (!legacyMessageId) return;
     toast('Ese enlace es del chat anterior de roz', { description: 'El chat del equipo ahora vive en Discord.' });
-    navigate('/app/chat', { replace: true });
+    navigate('/chat', { replace: true });
   }, [legacyMessageId, navigate]);
 
   const entry = channelId ? discord.channels.get(channelId) ?? null : null;
@@ -102,7 +102,7 @@ function DiscordChatInner() {
   if (!channelId && !legacyMessageId && wide && discord.tree) {
     const last = lastOpened();
     const target = (last && discord.channels.has(last) ? last : null) ?? firstText?.id;
-    if (target) return <Navigate to={`/app/chat/${target}`} replace />;
+    if (target) return <Navigate to={`/chat/${target}`} replace />;
   }
 
   const showList = wide || !channelId;
@@ -122,7 +122,7 @@ function DiscordChatInner() {
               key={entry.id}
               entry={entry}
               focusMessageId={focus}
-              onBack={wide ? undefined : () => navigate('/app/chat')}
+              onBack={wide ? undefined : () => navigate('/chat')}
               onCreateIssue={onCreateIssue}
               onTask={onTask}
             />
@@ -134,7 +134,7 @@ function DiscordChatInner() {
               title="Este canal no existe o tu cuenta no puede verlo."
               lede="Pudo haberse borrado en Discord, o cambiaron sus permisos."
               action={
-                <Button variant="secondary" size="sm" onClick={() => navigate('/app/chat')}>
+                <Button variant="secondary" size="sm" onClick={() => navigate('/chat')}>
                   Volver a los canales
                 </Button>
               }

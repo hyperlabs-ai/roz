@@ -450,7 +450,7 @@ export default function ProjectDetail() {
       await apiSend('DELETE', `/projects/${project.id}`);
       invalidate('/projects');
       invalidate('/overview');
-      nav('/app/projects');
+      nav('/proyectos');
     }, { success: { title: 'Proyecto eliminado', description: project?.name }, error: 'No se pudo eliminar' });
 
   // Avance por estado (para el anillo): hecho / en marcha sobre el total no cancelado.
@@ -498,7 +498,7 @@ export default function ProjectDetail() {
       }
     >
       <Button asChild variant="ghost" size="sm" className="mb-3 -ml-2 text-muted-foreground">
-        <Link to="/app/projects"><ArrowLeft /> Proyectos</Link>
+        <Link to="/proyectos"><ArrowLeft /> Proyectos</Link>
       </Button>
 
       {error && <ErrorCard message={error} className="mb-4" />}
@@ -560,7 +560,7 @@ export default function ProjectDetail() {
             <Card className="flex min-w-0 flex-col">
               <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle>Avance de tareas</CardTitle>
-                <SectionLink to="/app/tasks">Tablero</SectionLink>
+                <SectionLink to="/tareas">Tablero</SectionLink>
               </CardHeader>
               <CardContent className="flex flex-1 flex-col justify-center gap-3">
                 {data.ticketsByStatus.length ? (

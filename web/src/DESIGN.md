@@ -16,9 +16,10 @@ invierte a mano.
 4. **Tipografía:** Inter Tight para TODO, incluidas las etiquetas de interfaz (ver "Etiquetas" abajo).
    JetBrains Mono (`font-mono`) queda SOLO para código, IDs de issue (`WAT-44`, `HYP-12`), hashes,
    ramas, rutas/repos y bloques de terminal. Nunca para eyebrows, labels, roles, botones o contadores.
-5. **Superficies:** tarjeta blanca con hairline (`Card`, radio 10px, sin sombra) sobre fondo hueso;
-   panel gris (`Panel`, radio 14px) para agrupar o secuenciar. La separación es por borde, no por
-   sombra.
+5. **Superficies:** tarjeta blanca con hairline (`Card`, radio 10px) sobre fondo hueso; panel gris
+   (`Panel`, radio 14px) para agrupar o secuenciar. La separación sigue siendo por BORDE; encima va
+   el lenguaje "instrumento" (vidrio, escenario, neón, punteados): ver "Lenguaje visual" abajo, que
+   también dice cuándo NO usarlo.
 6. Solo presentación: no cambies llamadas a la API ni lógica de estado al rediseñar.
 7. Textos de UI en español.
 
@@ -47,9 +48,104 @@ invierte a mano.
 | `chart-1..5` | Naranja, morado, verde, amarillo, cielo (categórica) |
 | `hyper` | Dorado de logro (hyper points) |
 
+Sombras: `shadow-sm|md|lg` (elevación), `shadow-glow` (halo del color de `--neon`), `shadow-glass`,
+`shadow-pop` (lo flotante).
+
 Radios: `rounded-lg` 10px (tarjeta), `rounded-xl` 14px (panel/modal), `rounded-md` 6px (campo),
 `rounded-sm`/`rounded-btn` 4px (botón, segmento). Clases CSS: `.eyebrow`, `.label-caps`,
 `.title-tight`, `.scroll-list`, `.scroll-none`.
+
+## Lenguaje visual: instrumento (vidrio, escenario, neón, punteados)
+
+Nació en las pantallas de zeus y es de TODA la app. Son utilidades globales de `styles.css` (sin
+prefijo); cada una toma su COLOR de un token por variable y su INTENSIDAD de variables que cambian
+con el tema: **en claro es sobrio** (borde + sombra suave, sin brillo) y **en oscuro sube a neón**.
+No hay que escribir `dark:` para nada de esto.
+
+| Utilidad | Qué es | Para qué |
+| --- | --- | --- |
+| `surface` | Velo de luz translúcido + canto interior | La base de `Card`. Ya viene puesta. |
+| `glass` | Vidrio: translúcido, desenfoque, borde de tinta | Lo que FLOTA sobre un lienzo o un escenario: fichas, barras de control. |
+| `glass-pop` | Vidrio denso (88 % opaco) | Lo flotante con TEXTO: menús, popovers, selects, tooltip de gráfica. Ya viene en esos componentes. |
+| `stage` | Rejilla de puntos + resplandor (`--glow`, `--glow-x`, `--glow-y`) | EL bloque protagonista de una pantalla, un estado vacío grande. |
+| `dots` | Solo la rejilla de puntos | Fondo de un hueco, una celda vacía. |
+| `neon` | Canto de color + halo (`--neon`) | Lo seleccionado, lo que está en vivo, lo que pide atención. |
+| `edge-glow` | Línea de luz en el borde superior (`--neon`) | Distinguir una tarjeta de sus hermanas (KPI con color). Discreto. |
+| `corner-glow` | Resplandor en la esquina (`--neon`) | El KPI que la pantalla quiere que mires primero. |
+| `neon-dot` / `neon-text` | Punto encendido / cifra que brilla | Estado en vivo; la cifra principal. `neon-text` solo se nota en oscuro. |
+| `connector` / `connector-v` | Línea punteada (`--line-color`) | Unir dos cosas: pasos de un flujo, origen → destino, separadores del riel. |
+| `connector-flow` | El punteado deriva hacia el destino | Solo donde el flujo ES el mensaje. Uno o dos por pantalla. |
+| `cells` | Rejilla de celdas separadas por hairline | Cifras hermanas en un solo bloque (lo que antes eran N tarjetas sueltas). |
+| `shadow-glow` | Halo suelto del color de `--neon` | Un ícono o un botón encendido (el activo del menú). |
+
+El color se pasa como token: `className="neon [--neon:var(--green)]"`,
+`className="stage [--glow:var(--purple-deep)] [--glow-y:100%]"`. Naranja si no se dice nada.
+
+```tsx
+<Card variant="stage" tone="purple-deep">…</Card>     // escenario con resplandor morado
+<Card variant="neon" tone="green">…</Card>            // canto + halo verde
+<Card variant="glass">…</Card>                        // ficha flotante (sobre un stage/lienzo)
+<Card tone="chart-2">…</Card>                         // tarjeta normal con línea de luz arriba
+<Panel variant="stage" tone="blue" title="…">…</Panel>
+<MetricCard label="Commits" value={184} glow />       // KPI destacado
+<div className="cells grid-cols-2 lg:grid-cols-4">…celdas…</div>
+<span className="connector flex-1" />                 // entre dos nodos de una fila flex
+```
+
+**Cuándo NO:**
+
+- **Neón: uno por pantalla** (dos si son la misma idea). Si todo brilla, nada destaca. Nunca en
+  texto corrido, tablas, formularios ni en cada fila de una lista.
+- **Vidrio solo si hay algo detrás que desenfocar** (un `stage`, un lienzo, contenido que se
+  desplaza por debajo). Una tarjeta de vidrio sobre el fondo liso es una tarjeta gris: usa `Card`.
+- **Escenario: un bloque por pantalla.** No es el fondo de la página ni de cada tarjeta.
+- **`connector-flow` y cualquier movimiento en reposo:** ambiente sutil, nunca decoración. Todo se
+  apaga con `prefers-reduced-motion` (guard global).
+- En claro NO fuerces el efecto con `dark:` invertido ni subiendo alfas a mano: la sobriedad en
+  claro es la regla. Para un panel siempre oscuro (lienzo del mapa) se pone la clase `dark` en el
+  contenedor y las utilidades suben solas.
+- Siguen vigentes: cero hex, nada de barras horizontales, `label-caps`, sin Sparkles.
+
+Lo que ya lo trae puesto (no hay que añadir nada): `Card` (surface), menús/popovers/selects y el
+tooltip de las gráficas (glass-pop), `Tooltip` (tinta translúcida), cabecera y pie de `Dialog`
+(vidrio: el contenido se adivina al pasar por debajo), `Table` (filas con hairline punteada),
+`EmptyState` (un nodo sobre una línea punteada), `TabsList`, el menú lateral y el header, y las
+gráficas (ver "Gráficas").
+
+### Sin controles nativos
+
+Regla del dueño: **no queda ningún control por defecto del navegador.** Lo que el navegador pinta
+por su cuenta se reemplaza por un componente propio o se viste una sola vez en `styles.css`
+(bloque "Sin controles por defecto del navegador").
+
+| En vez de | Usa |
+| --- | --- |
+| `<Input type="date">` | `DateField` (`ui/date-field.tsx`), valor `YYYY-MM-DD` |
+| `<Input type="time">` | `TimeField`, valor `HH:mm` |
+| `<Input type="datetime-local">` | `DateTimeField`, valor `YYYY-MM-DDTHH:mm` |
+| `<input type="color">` | `ColorField` (`ui/color-field.tsx`): muestras de tokens + hex libre |
+| `<input type="number">` | `NumberField` (`ui/number-field.tsx`); las flechitas nativas están apagadas |
+| `<details>/<summary>` | `Disclosure` (`bits.tsx`) |
+| `<select>` | `Select` / `Combobox` |
+| `title="…"`, `<title>` en un SVG | `data-tip="…"` (tooltip global, `ui/hover-tip.tsx`) |
+| `alert()` / `confirm()` | toast (`lib/toast`) / `AlertDialog` |
+
+Los campos de fecha, hora y color aceptan el mismo `value` y el mismo
+`onChange={(e) => set(e.target.value)}` que el input que sustituyen (y `onValueChange` con la cadena
+directa), así que migrar un sitio es cambiar el nombre del componente y quitar `type`.
+
+Vestido de forma global, sin tocar cada sitio: barras de scroll, aro de foco, `::selection`,
+`accent-color`, autorrelleno de Chrome, casillas y radios (`input[type=checkbox|radio]` se dibujan
+con tokens), X/lupa de `type="search"`, triángulo de `<summary>`, tirador de `<textarea>`.
+`<input type="file">` va SIEMPRE oculto (`className="hidden"`) detrás de un botón propio. Los menús
+contextuales del navegador sí se quedan.
+
+### Gráficas (`components/charts.tsx`)
+
+Rejilla de puntos (solo horizontal), áreas y columnas que se apagan en degradado hacia la base, y
+EN OSCURO el trazo de `AreaTrend`/`Sparkline` lleva un halo de su propio color y las columnas un
+resplandor (en claro no: sobre hueso un halo es una mancha). El tooltip es de vidrio. No hay nada
+que configurar; las APIs no cambiaron.
 
 ## Componentes base (`components/ui`)
 
@@ -59,13 +155,16 @@ Radios: `rounded-lg` 10px (tarjeta), `rounded-xl` 14px (panel/modal), `rounded-m
 - **Badge** (alias `Chip`) — píldora redondeada; `dot` antepone un punto. Variantes por tipo:
   `rule`, `llm`, `human`; por estado: `ok`, `warn`, `bad`, `info`, `neutral`, `brand`. Los nombres
   viejos (`success`, `warning`, `destructive`, `secondary`, `outline`, `default`) siguen válidos.
-- **Card** — `CardTitle` es 14px semibold como `.ct` del mock.
+- **Card** — `CardTitle` es 14px semibold como `.ct` del mock. `variant`: `default | glass | stage |
+  neon`; `tone` = token del canto/resplandor (ver "Lenguaje visual").
 - **Tabs** — control segmentado (`TabsList` gris + píldora blanca que viaja).
 - **Dialog** — backdrop con blur; `DialogHeader eyebrow="Junta manual"` pinta el eyebrow y la
   cabecera queda separada por hairline; `DialogFooter` es el pie gris con acciones a la derecha.
 - **Switch** (`ui/switch.tsx`) — interruptor naranja con pulgar cuadrado-redondeado.
-- **Table** — encabezados `label-caps` en `faint`.
-- **Input / Select / Tooltip** — campos blancos radio 6px con foco morado; tooltip de tinta.
+- **Table** — encabezados `label-caps` en `faint` sobre franja `sidebar`; filas separadas por
+  hairline punteada.
+- **Input / Select / Tooltip** — campos blancos radio 6px con foco morado; tooltip de tinta
+  translúcida; el desplegable del select es `glass-pop`.
 
 ## Piezas de marca (`components/brand.tsx`)
 
@@ -165,7 +264,7 @@ algo automático), `Cpu`, `GraduationCap` (skills). Lo vigila `test/web-banned-i
   tarjeta de Proyectos el color va como punto sobre el ícono.
 - **Roz-bot** (`RozBotAvatar`, `mood`: `normal | happy | thinking | alert`) — personaje del bot de
   Discord y de los avisos del sistema. SVG en `public/brand/roz-bot*.svg`, PNG 512 en
-  `public/brand/` y `discord-bridge/assets/` (los regenera `discord-bridge/scripts/export-bot-avatars.mjs`).
+  `public/brand/` y `src/bridge/assets/` (los regenera `src/bridge/scripts/export-bot-avatars.mjs`).
   En el chat de Discord, un mensaje con `author.rozBot` se pinta con Roz-bot.
 
 Excepción a "cero hex": la paleta de DiceBear vive en `avatars.tsx` (fondos `ffe4d8 e7e4fa fff1cc
@@ -174,27 +273,85 @@ del DOM y no lee variables CSS. Es la misma en claro y oscuro a propósito.
 
 ## Marco
 
-- `AppShell` dibuja el aside (secciones Visibilidad / Entrada / Agentes / Operación) y el header.
-- `Layout` acepta `title`, `eyebrow` (por defecto, la sección del menú), `icon` y `actions`.
-  **Sin descripción bajo el título** (se quitó `subtitle`): la cabecera es eyebrow + título. Si una
-  pantalla necesita contexto, va en el contenido. No repitas el título dentro del contenido.
+- `AppShell` dibuja el aside (secciones Zeus / Visibilidad / Entrada / Agentes / Operación) y el
+  header. Las rutas viven en `src/routes.ts` (ver "Rutas").
+- **Menú contraíble.** El aside se contrae a un riel de íconos (58px) con el botón del header, el
+  botón "Contraer menú" al pie del aside o `Ctrl/Cmd + B` (no actúa dentro de un campo de texto,
+  donde es "negrita"). Se recuerda en `localStorage` (`roz-nav-collapsed`). Contraído: tooltip con el
+  nombre a la derecha, insignias montadas sobre la esquina del ícono, y las etiquetas de sección
+  pasan a ser una raya punteada. Nada cambia de x al contraer: el ancho se anima con CSS
+  (`.shell-aside`) y el texto se desvanece. En móvil no hay aside: sigue el menú ☰.
+- **Insignias del menú** (`badge` del ítem): `chat` (MDs y menciones), `inbox` (bandeja de zeus:
+  sin leer + por decidir) y `admin` (punto amarillo: zeus sin administrador). Las dos de zeus salen
+  de `useZeusMe`, que el shell sondea cada 45 s desde cualquier pantalla.
+- `Layout` acepta `title`, `eyebrow` (por defecto, la sección del menú), `icon`, `actions` y
+  `width`. **Una sola franja de 48px**: eyebrow / título en la misma línea y las acciones a la
+  derecha. **Sin descripción** (se quitó `subtitle`). Si una pantalla necesita contexto, va en el
+  contenido. No repitas el título dentro del contenido. `Layout` pone además el título de la
+  pestaña del navegador (`<título> · roz`).
+- **Ancho por página** (`<Layout width>`), ya no hay tope global en `<main>`:
+  `full` = todo el ancho (tableros, matrices, lienzos: zeus, Pulso, Tareas, Capacidad) ·
+  `wide` = tope 1680px centrado (el default: rejillas de tarjetas) · `reading` = tope 1120px
+  (formularios, texto corrido). El padding lateral de `<main>` es 20px (16 en móvil).
+- **Alto de pantalla completa.** El shell publica en su raíz `--shell-top` (lo que hay entre el
+  borde superior de la ventana y el inicio del contenido: header + padding superior de `<main>`;
+  hoy 65px en escritorio) y `--shell-pad-b` (padding inferior de `<main>`; hoy 20px). Se MIDEN con
+  `ResizeObserver`, así que siguen siendo ciertas con notch, con la fila de acciones en móvil o si
+  el header cambia. Una pantalla que quiere llenar la ventana usa
+  `calc(100dvh - var(--shell-top) - var(--shell-pad-b))`, o las clases `h-shell` / `min-h-shell` /
+  `max-h-shell`. Nada de números fijos (`100dvh-196px`): se desfasan en cuanto cambia el header.
 - El chip del usuario (abajo a la izquierda del aside) lleva el rol en `label-caps`.
 - Menú del avatar (abajo a la izquierda; en móvil, al final del menú ☰): selector de tema
   (Claro / Oscuro / Sistema) y el acceso a **Configuración**. Ni el tema ni Configuración están en
   el header ni en el menú lateral (decisión del usuario).
-- Nav: Ideas ya no existe; Actividad se unificó con el Pulso (`/app/activity` redirige a
-  `/app/pulse#historial`, donde vive el historial de eventos). Con el chat de Discord activo, el
+- Nav: Ideas ya no existe; Actividad se unificó con el Pulso (`/activity` redirige a
+  `/pulso#historial`, donde vive el historial de eventos). Con el chat de Discord activo, el
   ítem "Chat" se llama "Discord" y lleva el logo oficial. La píldora de eventos del header es
-  discreta (ícono + punto; con eventos sin procesar, punto rojo + número) y abre `/app/pulse#historial`.
+  discreta (ícono + punto; con eventos sin procesar, punto rojo + número) y abre `/pulso#historial`.
 - `MetricCard` (layout `stack`) es el KPI del mock: etiqueta `label-caps`, cifra grande tabular,
   delta en color con flecha.
-- Chat (`/app/chat`) es full-bleed como Discord: en desktop `AppShell` oculta su topbar
+- Chat (`/chat`) es full-bleed como Discord: en desktop `AppShell` oculta su topbar
   (`fullBleed && 'md:hidden'`); en móvil se queda porque lleva el menú. Las dos barras del chat
   (servidor y canal) comparten la altura `CHAT_BAR` (`h-14`, en `discord/ChannelSidebar.tsx`) y
   cada canal lleva UN solo ícono (`ChannelGlyph`: el emoji del nombre o el ícono del tipo;
   `splitChannelName` en `discord/channelName.ts` separa el emoji del nombre).
-- Configuración tiene secciones por hash: `/app/settings#notifications|calendar|discord|runner|
+- Configuración tiene secciones por hash: `/configuracion#notifications|calendar|discord|runner|
   appearance|account`. Enlaza a la sección concreta (p.ej. "Registrar runner" → `#runner`).
+
+## Rutas (`src/lib/routes.ts`)
+
+**La app vive en la raíz**: `/` es el mapa de zeus (tras el login) y la landing pública está en
+`/landing`. Quien entra a diario no pasa por la landing; la pantalla de login enlaza a ella.
+
+La ruta es la palabra del menú, en minúsculas y sin acentos. Las palabras del producto que la
+interfaz ya dice en inglés (Developers, Skills, Ticket, Chat) conservan su ruta. `R` tiene todas
+(`R.tareas`, `R.configuracion`…) y `to` arma las que llevan parámetro (`to.developer(id)`,
+`to.proyecto(id)`, `to.chat(id, thread?)`, `to.tarea(id)`, `to.plan(id)`, `to.nodo(ref)`,
+`to.configuracion('runner')`). En código nuevo usa `R`/`to`, no cadenas sueltas.
+
+| Sección | Rutas |
+| --- | --- |
+| Zeus | `/` (Mapa) · `/biblioteca` · `/bandeja` · `/equipo` · `/llaves` · `/acceso` |
+| Visibilidad | `/pulso` · `/resumen` · `/developers(/:id)` · `/capacidad` · `/proyectos(/:id)` |
+| Entrada | `/juntas` · `/ticket` · `/tareas` · `/chat(/:conversationId, /m/:messageId)` |
+| Agentes | `/planes` · `/skills` |
+| Operación | `/infra` · `/reportes` · `/configuracion` |
+
+- Cada sección de zeus es una ruta y monta su componente de `components/zeus/`; su estado propio
+  sigue en la consulta (`?nodo=`, `?doc=`, `?k=`, `?p=`…) y no viaja al cambiar de sección.
+- **Toda ruta vieja redirige** conservando parámetros, consulta y hash, en dos pasos encadenados:
+  1. `/app` y `/app/*` → lo mismo sin el prefijo (`FromAppPrefix` en `App.tsx`): la app vivió
+     bajo `/app`.
+  2. Nombres viejos (`LEGACY_ROUTES` + `zeusTabTarget`): `/zeus`, `/zeus?tab=X` y `/?tab=X` → la
+     sección; `pulse`, `overview`, `meetings`, `plans`, `projects(/:id)`, `tasks`, `capacity`,
+     `tickets` (→ `reportes`), `settings`, `activity` (→ `/pulso#historial`).
+
+  Así `/app/zeus?tab=bandeja` → `/bandeja` y `/app/projects/7?x=1` → `/proyectos/7?x=1`. El
+  backend sigue generando enlaces `/app/...` en avisos push, correos y Discord: NO quites una
+  redirección sin cambiar antes esos enlaces. Si renombras una ruta, añade su par a `LEGACY_ROUTES`.
+- Una ruta desconocida cae en el mapa (y, sin sesión, en el login).
+- PWA: `start_url` es `/`; el `id` del manifest sigue siendo `/app` A PROPÓSITO (es la identidad
+  de la app instalada: cambiarlo la convierte en otra app y las instalaciones dejan de actualizarse).
 
 ## Composición (ver `#producto` del mock)
 
@@ -285,6 +442,19 @@ text-orange-ink`.
   contenido (regla de "modales, nunca secciones que se despliegan").
 - `components/PresencePanel.tsx` — `avatarPresence(status)` (calendario → `presence` de
   `GithubAvatar`).
+- `components/zeus/` — Zeus: el mapa es la pantalla principal (`/`) y cada sección tiene su ruta. `layout.ts` es geometría PURA del
+  mapa (`zoneLayout`: radial POR ZONAS, el mismo dibujo en cada nivel zeus → tipo → proyecto →
+  entradas; prueba `test/zeus-layout.test.ts`) y `ZoneCanvas.tsx` el SVG hecho a mano: el encuadre,
+  la ficha flotante y los pulsos se escriben fuera de React. El lienzo es SIEMPRE oscuro (clase `dark`
+  + `zeus-stage` en el contenedor: re-declara los tokens adentro); úsalo para el diagrama protagonista
+  de una pantalla, no para todo. `zeus-ui.tsx` — `KIND_META`/`kindMeta` (ícono + tono por tipo; cada
+  tipo de documento tiene su propio tono), `zoneTone(i)` para zonas que no son un tipo, `EDGE_META` +
+  `EdgeSwatch` (el tipo de arista se distingue por PATRÓN de guiones, no por color), `Figure` (cifra
+  grande en rejilla `gap-px bg-border`), `Tally`, `RailTitle`, `StatusBadge`, `CommandBlock`,
+  `CopyButton`, `ago` (con segundos). `hooks.ts` — claves de caché bajo `/zeus`. El detalle de un nodo
+  es `Reader.tsx`: un inspector ADJUNTO (ocupa el lugar de los rieles, con modo "leer a todo lo
+  ancho"), nunca un cajón angosto encimado; el texto de un documento de git se edita en GitHub y lo
+  que zeus agrega encima (fijar, revisión, etiquetas, conexiones) se edita ahí mismo.
 
 ## Primitivas ya alineadas
 

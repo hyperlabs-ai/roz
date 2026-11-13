@@ -187,7 +187,7 @@ export default function Developers() {
             {top3.length > 0 ? (
               <div className="mx-auto flex w-full max-w-2xl flex-1 items-end justify-center gap-1.5 pt-6 sm:gap-3">
                 {[top3[1], top3[0], top3[2]].map((d) =>
-                  d ? <TopCard key={d.id} d={d} rank={top3.indexOf(d) + 1} metric={metric} onClick={() => nav(`/app/developers/${d.id}`)} /> : null,
+                  d ? <TopCard key={d.id} d={d} rank={top3.indexOf(d) + 1} metric={metric} onClick={() => nav(`/developers/${d.id}`)} /> : null,
                 )}
               </div>
             ) : (
@@ -204,7 +204,7 @@ export default function Developers() {
             metricKey={metric}
             metricLabel={m.label}
             metricValue={m.value}
-            onPick={(devId) => nav(`/app/developers/${devId}`)}
+            onPick={(devId) => nav(`/developers/${devId}`)}
           />
         </div>
       )}
@@ -255,7 +255,7 @@ export default function Developers() {
         {loading && Array.from({ length: 5 }).map((_, i) => <DevRowSkeleton key={i} />)}
         {!loading && rows.map((d) => (
           <Fresh key={d.id} fresh={devs.isFresh(d.id)}>
-            <DevRow d={d} busy={devs.isBusy(d.id)} menu={menu(d)} onClick={() => nav(`/app/developers/${d.id}`)} />
+            <DevRow d={d} busy={devs.isBusy(d.id)} menu={menu(d)} onClick={() => nav(`/developers/${d.id}`)} />
           </Fresh>
         ))}
       </Revalidating>

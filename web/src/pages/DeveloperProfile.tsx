@@ -82,7 +82,7 @@ export default function DeveloperProfile() {
       }
     >
       <Button asChild variant="ghost" size="sm" className="mb-4 -ml-2 label-caps text-faint">
-        <Link to="/app/developers"><ArrowLeft /> Developers</Link>
+        <Link to="/developers"><ArrowLeft /> Developers</Link>
       </Button>
 
       {error && <ErrorCard message={error} className="mb-4" />}

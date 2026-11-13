@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { CircleAlert, RefreshCw } from 'lucide-react';
+import { ChevronRight, CircleAlert, RefreshCw } from 'lucide-react';
 import { PersonAvatar } from '@/components/avatars';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -192,6 +192,44 @@ export function Collapse({ open, children, className }: { open: boolean; childre
   return (
     <div className={cn('t-collapse', className)} data-open={open ? 'true' : 'false'}>
       <div>{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Desplegable propio: reemplaza a `<details>/<summary>` (flecha y comportamiento del navegador, sin
+ * animación). El resumen es un botón con su flecha, y el contenido tweenea el alto con `Collapse`.
+ * El contenido plegado sale del orden de tabulación (`inert`).
+ */
+export function Disclosure({
+  summary, children, defaultOpen = false, className, summaryClassName,
+}: {
+  summary: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+  className?: string;
+  /** Clases del botón del resumen (relleno, fondo, tipografía). */
+  summaryClassName?: string;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={className}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          'flex w-full select-none items-center gap-1.5 rounded-sm text-left outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
+          summaryClassName,
+        )}
+      >
+        <ChevronRight aria-hidden className={cn('size-3.5 shrink-0 text-faint transition-transform duration-fast ease-spring', open && 'rotate-90')} />
+        <span className="flex min-w-0 flex-1 items-center justify-between gap-2">{summary}</span>
+      </button>
+      <Collapse open={open}>
+        {/* `inert` como atributo suelto: los tipos de React 18 aún no lo conocen. */}
+        <div {...(open ? {} : ({ inert: '' } as object))}>{children}</div>
+      </Collapse>
     </div>
   );
 }
@@ -417,7 +455,12 @@ export function EmptyState({ icon, children, action }: { icon?: ReactNode; child
   return (
     <div className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center">
       {icon && (
-        <div className="flex size-11 items-center justify-center rounded-lg bg-panel text-muted-foreground [&_svg]:size-5">{icon}</div>
+        // Un nodo sobre una línea punteada: el vacío se lee como "aquí va algo", no como un hueco.
+        <div className="flex w-full max-w-[240px] items-center gap-2.5">
+          <span aria-hidden className="connector flex-1" />
+          <div className="dots flex size-11 shrink-0 items-center justify-center rounded-lg border border-dashed border-foreground/20 bg-card text-muted-foreground [&_svg]:size-5">{icon}</div>
+          <span aria-hidden className="connector flex-1" />
+        </div>
       )}
       <span className="max-w-xs text-sm text-muted-foreground">{children}</span>
       {action}

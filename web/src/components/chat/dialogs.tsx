@@ -178,7 +178,7 @@ export function ChannelDialog({
           memberDevIds: members,
         });
         upsertConversation(c);
-        navigate(`/app/chat/${c.id}`);
+        navigate(`/chat/${c.id}`);
         toast.success(`Se creó #${c.name}`);
       }
       onOpenChange(false);
@@ -280,7 +280,7 @@ export function NewDmDialog({ open, onOpenChange }: { open: boolean; onOpenChang
     try {
       const { conversation } = await chatApi.openDm(selected);
       upsertConversation(conversation);
-      navigate(`/app/chat/${conversation.id}`);
+      navigate(`/chat/${conversation.id}`);
       onOpenChange(false);
     } catch (e) {
       toast.error('No se pudo abrir la conversación', { description: errText(e) });
@@ -339,7 +339,7 @@ export function BrowseChannelsDialog({ open, onOpenChange }: { open: boolean; on
     try {
       const { conversation } = await chatApi.join(c.id);
       upsertConversation(conversation);
-      navigate(`/app/chat/${c.id}`);
+      navigate(`/chat/${c.id}`);
       onOpenChange(false);
     } catch (e) {
       toast.error('No se pudo unir al canal', { description: errText(e) });
@@ -377,12 +377,12 @@ export function BrowseChannelsDialog({ open, onOpenChange }: { open: boolean; on
                   </div>
                 </div>
                 {c.joined ? (
-                  <Button size="sm" variant="outline" onClick={() => { navigate(`/app/chat/${c.id}`); onOpenChange(false); }}>
+                  <Button size="sm" variant="outline" onClick={() => { navigate(`/chat/${c.id}`); onOpenChange(false); }}>
                     Abrir
                   </Button>
                 ) : (
                   <div className="flex gap-1.5">
-                    <Button size="sm" variant="ghost" onClick={() => { navigate(`/app/chat/${c.id}`); onOpenChange(false); }}>Ver</Button>
+                    <Button size="sm" variant="ghost" onClick={() => { navigate(`/chat/${c.id}`); onOpenChange(false); }}>Ver</Button>
                     <Button size="sm" onClick={() => void join(c)} disabled={busy === c.id}>
                       {busy === c.id && <Loader2 className="animate-spin" />} Unirme
                     </Button>

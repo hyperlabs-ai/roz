@@ -91,8 +91,8 @@ type TaskDialogState = { mode: 'create'; message: ChatMessage } | { mode: 'edit'
  * Chat del equipo, estilo Slack con los colores de roz: canales (públicos y privados), MDs, hilos,
  * adjuntos, menciones, y cada mensaje se puede convertir en tarea de roz.
  *
- * Rutas: /app/chat (lista), /app/chat/:conversationId (?thread=<raíz> abre el hilo) y
- * /app/chat/m/:messageId (enlace a un mensaje: desde una tarea o un push).
+ * Rutas: /chat (lista), /chat/:conversationId (?thread=<raíz> abre el hilo) y
+ * /chat/m/:messageId (enlace a un mensaje: desde una tarea o un push).
  *
  * Es el chat con ROZ_DISCORD_CHAT apagado: idéntico a como era antes del chat de Discord.
  */
@@ -119,11 +119,11 @@ function InternalChat() {
     let alive = true;
     chatApi
       .locate(messageId)
-      .then((r) => alive && navigate(`/app/chat/${r.conversationId}?thread=${r.rootId}`, { replace: true }))
+      .then((r) => alive && navigate(`/chat/${r.conversationId}?thread=${r.rootId}`, { replace: true }))
       .catch(() => {
         if (!alive) return;
         toast.error('No se encontró el mensaje', { description: 'Pudo haberse eliminado, o es de una conversación privada.' });
-        navigate('/app/chat', { replace: true });
+        navigate('/chat', { replace: true });
       });
     return () => {
       alive = false;
@@ -164,7 +164,7 @@ function InternalChat() {
       chat.subscribe((e) => {
         if (e.type === 'conversation.removed' && e.conversationId === conversationId) {
           toast('Esa conversación ya no está disponible');
-          navigate('/app/chat', { replace: true });
+          navigate('/chat', { replace: true });
         }
       }),
     [chat.subscribe, conversationId, navigate], // eslint-disable-line react-hooks/exhaustive-deps
@@ -208,7 +208,7 @@ function InternalChat() {
     const author = m.authorDevId ? chat.nameOf(m.authorDevId) ?? 'Alguien' : 'Alguien';
     const text = decodeMentions(m.body, chat.nameOf).trim();
     const where = conv ? (conv.kind === 'channel' ? `#${conv.name}` : `MD con ${conversationTitle(conv, chat.nameOf, chat.me)}`) : 'el chat';
-    const link = `${window.location.origin}/app/chat/m/${m.id}`;
+    const link = `${window.location.origin}/chat/m/${m.id}`;
     const activeIds = new Set(chat.devs.filter((d) => d.active).map((d) => d.id));
     return {
       name: firstLinePlain(text) || `Seguimiento del mensaje de ${author}`,
@@ -235,7 +235,7 @@ function InternalChat() {
       chat.conversations.find((c) => c.id === last && c.membership) ??
       chat.conversations.find((c) => c.kind === 'channel' && c.isDefault) ??
       chat.conversations[0];
-    if (target) return <Navigate to={`/app/chat/${target.id}`} replace />;
+    if (target) return <Navigate to={`/chat/${target.id}`} replace />;
   }
 
   const showList = wide || !conversationId;
@@ -259,7 +259,7 @@ function InternalChat() {
                   key={conversation.id}
                   conversation={conversation}
                   onOpenThread={openThread}
-                  onBack={wide ? undefined : () => navigate('/app/chat')}
+                  onBack={wide ? undefined : () => navigate('/chat')}
                 />
               ) : missing === conversationId ? (
                 <ChatState
@@ -269,7 +269,7 @@ function InternalChat() {
                   title="Esta conversación no existe o no tienes acceso."
                   lede="Pudo haberse eliminado, o es un canal privado al que no te han invitado."
                   action={
-                    <Button variant="secondary" size="sm" onClick={() => navigate('/app/chat')}>
+                    <Button variant="secondary" size="sm" onClick={() => navigate('/chat')}>
                       Volver al chat
                     </Button>
                   }

@@ -1,0 +1,174 @@
+/* Mapa de zeus. Local a components/zeus. Todos los colores salen de los tokens del tema. */
+
+.zeus-view { transform-origin: 0 0 }
+/* Solo al encuadrar (cambio de vista, botón): durante un arrastre la transición estorbaría. */
+.zeus-view[data-anim='1'] { transition: transform var(--duration-very-slow) var(--ease-smooth-out) }
+
+/* La posición va como `transform` en CSS para que el paso radial ↔ árbol se anime solo: un nodo que
+   existe en las dos disposiciones conserva su elemento y viaja a su nuevo sitio. */
+.zeus-node {
+  cursor: pointer;
+  outline: none;
+  transition: transform 620ms var(--ease-smooth-out), opacity var(--duration-fast) var(--ease-out);
+  /* `backwards` y no `both`: al terminar, la opacidad vuelve a mandarla el filtro (`data-dim`). */
+  animation: zeus-fade-in var(--duration-slow) var(--ease-out) backwards;
+}
+.zeus-label[data-auto='1'] { opacity: 0 }
+/* Con un nodo en foco (elegido o bajo el cursor) las entradas ajenas se apagan y quedan sus vecinas. */
+.zeus-has-focus .zeus-node[data-role='entry'],
+.zeus-has-focus .zeus-node[data-role='outer'] { opacity: .32 }
+.zeus-node[data-role='outer']:hover .zeus-outer { fill: hsl(var(--foreground)) }
+
+/* Escenario del mapa: rejilla de puntos y un resplandor cálido detrás del centro. */
+.zeus-stage {
+  background-image:
+    radial-gradient(circle at 50% 46%, hsl(var(--orange) / .11), transparent 42%),
+    radial-gradient(hsl(var(--foreground) / .1) 1px, transparent 1px);
+  background-size: 100% 100%, 22px 22px;
+}
+/* Escena isométrica: el resplandor baja al suelo y un velo oscurece los bordes (viñeta). */
+.zeus-stage-iso {
+  background-image:
+    radial-gradient(ellipse 60% 46% at 50% 58%, hsl(var(--orange) / .13), transparent 70%),
+    radial-gradient(ellipse at 50% 50%, transparent 55%, hsl(var(--background)) 100%),
+    radial-gradient(hsl(var(--foreground) / .09) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 22px 22px;
+}
+/* Vidrio: superficie flotante sobre el lienzo (ficha, controles). */
+.zeus-glass {
+  border: 1px solid hsl(var(--foreground) / .14);
+  background: linear-gradient(180deg, hsl(var(--card) / .82), hsl(var(--card) / .62));
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
+  box-shadow: 0 1px 0 hsl(var(--foreground) / .06) inset, 0 18px 40px -18px hsl(0 0% 0% / .7);
+}
+
+/* Zona: un sector teñido con el tono de su categoría; se enciende al pasar. */
+.zeus-wedge { fill-opacity: .09; cursor: pointer; transition: fill-opacity var(--duration-quick) var(--ease-out) }
+.zeus-wedge:hover { fill-opacity: .2 }
+.zeus-fade { animation: zeus-fade-in var(--duration-slow) var(--ease-out) backwards }
+
+/* Lectura de un documento: medida de libro, tablas que no se aplastan. */
+.markdown-body.zeus-prose { font-size: 14.5px; line-height: 1.7 }
+.markdown-body.zeus-prose h1 { font-size: 1.45rem; margin-top: 2rem; letter-spacing: -.02em }
+.markdown-body.zeus-prose h2 { font-size: 1.15rem; margin-top: 2rem; padding-bottom: .4rem; border-bottom: 1px solid hsl(var(--border)); letter-spacing: -.01em }
+.markdown-body.zeus-prose h3 { font-size: 1rem; margin-top: 1.5rem }
+.markdown-body.zeus-prose p, .markdown-body.zeus-prose ul, .markdown-body.zeus-prose ol { margin-top: .7rem; margin-bottom: .7rem }
+.markdown-body.zeus-prose table { display: block; width: max-content; max-width: 100%; overflow-x: auto; font-size: 13px }
+.markdown-body.zeus-prose th, .markdown-body.zeus-prose td { padding: .45rem .7rem; min-width: 7rem; vertical-align: top }
+.markdown-body.zeus-prose pre { font-size: 12.5px }
+
+/* Entrada del lector: se desliza desde la derecha. */
+.zeus-reader { animation: zeus-reader-in var(--duration-slow) var(--ease-smooth-out) both }
+@keyframes zeus-reader-in { from { opacity: 0; transform: translateX(18px) } to { opacity: 1; transform: none } }
+.zeus-node[data-dim='1'] { opacity: .16 }
+.zeus-node:focus-visible .zeus-focus { stroke: hsl(var(--ring)); stroke-width: 2 }
+.zeus-node:hover .zeus-dot { filter: brightness(1.12) }
+.zeus-node:hover .zeus-label,
+.zeus-node:focus-visible .zeus-label,
+.zeus-node[data-selected='1'] .zeus-label { opacity: 1 }
+.zeus-label { transition: opacity var(--duration-fast) var(--ease-out); pointer-events: none }
+
+/* Las aristas no pueden viajar con los nodos (x1/y1 no son animables por CSS): se desvanecen al
+   cambiar de vista y reaparecen cuando los nodos ya llegaron. */
+.zeus-link { animation: zeus-fade-in var(--duration-slow) var(--ease-out) 420ms backwards }
+.zeus-link[data-hot='1'] { stroke: hsl(var(--orange)); stroke-opacity: 1; stroke-width: 1.8 }
+
+@keyframes zeus-fade-in { from { opacity: 0 } to { opacity: 1 } }
+
+/* Anillo punteado del centro, girando despacio. */
+.zeus-orbit { transform-box: fill-box; transform-origin: center; animation: zeus-spin 48s var(--ease-linear) infinite }
+@keyframes zeus-spin { to { transform: rotate(360deg) } }
+
+/* Indicador "en línea" de personas y PCs: un anillo que se abre y se apaga. */
+.zeus-live { fill: none; stroke: hsl(var(--green)); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; animation: zeus-ping 2.2s var(--ease-out) infinite }
+@keyframes zeus-ping { from { transform: scale(1); opacity: .9 } to { transform: scale(2.6); opacity: 0 } }
+
+/* Pulso de actividad: el punto que viaja (lo mueve la Web Animations API) y el destello del nodo. */
+.zeus-pulse-core { fill: hsl(var(--orange)) }
+.zeus-pulse-glow { fill: hsl(var(--orange) / .28) }
+.zeus-flash { fill: none; stroke: hsl(var(--orange)); stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: zeus-flash 1.5s var(--ease-out) both }
+@keyframes zeus-flash { from { transform: scale(.6); opacity: 1 } to { transform: scale(3.2); opacity: 0 } }
+
+/* Entrada de una fila nueva en el ticker de actividad. */
+.zeus-tick { animation: zeus-tick-in var(--duration-slow) var(--ease-smooth-out) both }
+@keyframes zeus-tick-in { from { opacity: 0; transform: translateY(-6px) } to { opacity: 1; transform: none } }
+
+/* Organigrama de arriba hacia abajo: listas anidadas con conectores dibujados con bordes. Cada `li`
+   pinta medio travesaño a cada lado y su bajada; el primero y el último lo recortan. */
+.zeus-org,
+.zeus-org ul { display: flex; justify-content: center; padding: 0; list-style: none }
+.zeus-org ul { position: relative; padding-top: 22px }
+.zeus-org li { position: relative; display: flex; flex-direction: column; align-items: center; padding: 22px 7px 0 }
+.zeus-org > li { padding-top: 0 }
+.zeus-org ul::before,
+.zeus-org ul > li::before,
+.zeus-org ul > li::after { content: ''; position: absolute; top: 0; border-color: hsl(var(--border)); border-style: solid; border-width: 0 }
+/* Bajada del jefe al travesaño. */
+.zeus-org ul::before { left: 50%; height: 22px; border-left-width: 1.5px }
+/* Travesaño: mitad izquierda y mitad derecha de cada hijo. */
+.zeus-org ul > li::before { right: 50%; width: 50%; height: 22px; border-top-width: 1.5px }
+.zeus-org ul > li::after { left: 50%; width: 50%; height: 22px; border-top-width: 1.5px; border-left-width: 1.5px }
+.zeus-org ul > li:first-child::before,
+.zeus-org ul > li:last-child::after { border-top-width: 0 }
+.zeus-org ul > li:last-child::before { border-right-width: 1.5px; border-top-right-radius: 6px }
+.zeus-org ul > li:last-child::after { border-left-width: 0 }
+.zeus-org ul > li:first-child::after { border-top-left-radius: 6px }
+.zeus-org ul > li:only-child::before { border-top-right-radius: 0 }
+
+@media (prefers-reduced-motion: reduce) {
+  .zeus-view[data-anim='1'],
+  .zeus-node { transition: none }
+  .zeus-node,
+  .zeus-fade,
+  .zeus-reader,
+  .zeus-link,
+  .zeus-orbit,
+  .zeus-live,
+  .zeus-flash,
+  .zeus-tick { animation: none }
+  /* Sin movimiento el aviso sigue existiendo: un anillo fijo que el código retira al rato. */
+  .zeus-flash { transform: scale(2); opacity: .9 }
+}
+
+/* ---------------------------------------------------------------- tablero del mapa (instrumentos) */
+
+/* Marca de sección: una rayita de neón antes de cada etiqueta. */
+.zeus-hud-tick { width: 10px; height: 2px; border-radius: 2px; background: hsl(var(--orange)); box-shadow: 0 0 8px hsl(var(--orange) / .9) }
+/* Cabecera del panel izquierdo: un resplandor que cae desde arriba y una hairline punteada debajo. */
+.zeus-hud-head { background: radial-gradient(120% 90% at 0% 0%, hsl(var(--orange) / .16), transparent 62%) }
+/* Numerales: degradado de arriba abajo; el de acento, naranja con halo. */
+.zeus-numeral { background: linear-gradient(180deg, hsl(var(--foreground)), hsl(var(--foreground) / .62)); -webkit-background-clip: text; background-clip: text; color: transparent }
+.zeus-numeral-accent { background-image: linear-gradient(180deg, hsl(var(--salmon)), hsl(var(--orange))); filter: drop-shadow(0 0 14px hsl(var(--orange) / .45)) }
+/* Cuatro cifras separadas por una cruz punteada. */
+.zeus-hud-quad > * { padding: 4px 0 }
+.zeus-hud-quad > :nth-child(odd) { padding-right: 14px; border-right: 1px dashed hsl(var(--foreground) / .16) }
+.zeus-hud-quad > :nth-child(even) { padding-left: 14px }
+.zeus-hud-quad > :nth-child(-n+2) { padding-bottom: 14px; border-bottom: 1px dashed hsl(var(--foreground) / .16) }
+.zeus-hud-quad > :nth-child(n+3) { padding-top: 14px }
+/* Guía punteada entre un nombre y su cifra. */
+.zeus-leader { flex: 1 1 12px; min-width: 12px; align-self: flex-end; margin-bottom: 4px; border-bottom: 1px dotted hsl(var(--foreground) / .28) }
+/* Fila del índice: al encenderse, un canto de neón a la izquierda con el tono de la zona. */
+.zeus-leader-row { transition: background-color var(--duration-quick) var(--ease-out) }
+.zeus-leader-row::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px; border-radius: 2px; background: hsl(var(--c)); opacity: 0; box-shadow: 0 0 10px hsl(var(--c)); transition: opacity var(--duration-quick) var(--ease-out) }
+.zeus-leader-row:hover, .zeus-leader-row[data-on] { background: linear-gradient(90deg, hsl(var(--c) / .16), transparent 85%) }
+.zeus-leader-row:hover::before, .zeus-leader-row[data-on]::before { opacity: 1 }
+/* Columnas del nivel: vidrio teñido que se enciende hacia la punta, con tapa de neón. */
+.zeus-skyline { border-bottom: 1px dashed hsl(var(--foreground) / .2) }
+.zeus-column { min-height: 6px; background: linear-gradient(180deg, hsl(var(--c) / .85), hsl(var(--c) / .1)); box-shadow: 0 -2px 0 hsl(var(--c)), 0 -6px 14px -4px hsl(var(--c) / .8); opacity: .72; transition: opacity var(--duration-quick) var(--ease-out), filter var(--duration-quick) var(--ease-out) }
+.group\/col:hover .zeus-column, .zeus-column[data-on] { opacity: 1; filter: brightness(1.25) }
+/* Línea de tiempo: riel punteado que une los nodos. */
+.zeus-timeline > li::before { content: ''; position: absolute; left: 5px; top: 14px; bottom: -3px; border-left: 1px dashed hsl(var(--foreground) / .22) }
+.zeus-timeline > li:last-child::before { display: none }
+.zeus-beat { animation: zeus-beat 1.6s var(--ease-out) infinite }
+@keyframes zeus-beat { 0% { box-shadow: 0 0 0 0 hsl(var(--orange) / .7) } 100% { box-shadow: 0 0 0 9px hsl(var(--orange) / 0) } }
+/* Módulo de vidrio: una hairline de luz arriba, como el canto de un cristal. */
+.zeus-hud-card { position: relative }
+.zeus-hud-card::before { content: ''; position: absolute; left: 14px; right: 14px; top: 0; height: 1px; background: linear-gradient(90deg, transparent, hsl(var(--foreground) / .35), transparent) }
+
+@media (prefers-reduced-motion: reduce) { .zeus-beat { animation: none } }
+
+/* Zonas hermanas (salto lateral): píldoras sobre el lienzo; la abierta lleva su tono encendido. */
+.zeus-sibling { color: hsl(var(--muted-foreground)); transition: background-color var(--duration-quick) var(--ease-out), color var(--duration-quick) var(--ease-out) }
+.zeus-sibling:hover { background: hsl(var(--c) / .16); color: hsl(var(--foreground)) }
+.zeus-sibling[data-on] { background: hsl(var(--c) / .22); color: hsl(var(--foreground)); box-shadow: 0 0 0 1px hsl(var(--c) / .6), 0 0 16px -4px hsl(var(--c) / .8) }

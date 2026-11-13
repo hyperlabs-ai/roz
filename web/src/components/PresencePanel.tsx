@@ -178,7 +178,7 @@ export function PresencePanel({
                 avatar; no hacía falta tintar nada aquí. */}
             {mine ? (
               <Link
-                to="/app/settings"
+                to="/configuracion"
                 title="Gestionar tu conexión con Google Calendar"
                 // La fila de developers es clicable entera (lleva al perfil). Sin frenar la
                 // propagación, este enlace nunca se alcanzaría: ganaría el onClick de la tarjeta.

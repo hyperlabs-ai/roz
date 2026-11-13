@@ -832,7 +832,7 @@ export function TaskDialog({
   async function copy(what: 'id' | 'link') {
     try {
       await navigator.clipboard.writeText(
-        what === 'id' ? t.identifier : `${window.location.origin}/app/tasks?scope=team&task=${t.id}`,
+        what === 'id' ? t.identifier : `${window.location.origin}/tareas?scope=team&task=${t.id}`,
       );
       setCopied(what);
       setTimeout(() => setCopied(null), 1400);
@@ -901,7 +901,7 @@ export function TaskDialog({
               {copied === 'link' ? <Check className="text-green" /> : <Link2 />}
             </button>
             {t.chatMessageId && (
-              <Link to={`/app/chat/m/${t.chatMessageId}`} onClick={() => handleOpenChange(false)} className={HBTN} aria-label="Ver conversación de origen" title="Ver conversación de origen">
+              <Link to={`/chat/m/${t.chatMessageId}`} onClick={() => handleOpenChange(false)} className={HBTN} aria-label="Ver conversación de origen" title="Ver conversación de origen">
                 <MessagesSquare />
               </Link>
             )}

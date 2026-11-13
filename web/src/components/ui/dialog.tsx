@@ -15,7 +15,7 @@ const DialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     ref={ref}
-    className={cn('t-overlay fixed inset-0 z-50 bg-scrim/45 backdrop-blur-[3px]', className)}
+    className={cn('t-overlay fixed inset-0 z-50 bg-scrim/50 backdrop-blur-[5px]', className)}
     {...props}
   />
 ));
@@ -58,7 +58,8 @@ export interface DialogContentProps extends React.ComponentPropsWithoutRef<typeo
 }
 
 /**
- * Modal del mock: tarjeta de radio 14px con cabecera separada por hairline y pie gris.
+ * Modal del mock: tarjeta de radio 14px con cabecera separada por hairline y pie gris. Cabecera y
+ * pie son de vidrio (translúcidos con desenfoque): el contenido que pasa por debajo se adivina.
  *
  * El contenido conserva su `p-6 gap-4` de siempre (los ~20 diálogos de la app cuentan con él). La
  * cabecera y el pie llegan hasta los filos con márgenes negativos, y SOLO cuando el contenido tiene
@@ -72,7 +73,7 @@ export interface DialogContentProps extends React.ComponentPropsWithoutRef<typeo
 const DialogContent = React.forwardRef<React.ElementRef<typeof DialogPrimitive.Content>, DialogContentProps>(
   ({ className, children, showClose = true, ...props }, ref) => {
     const merged = cn(
-      't-modal scroll-thin fixed left-[50%] top-[50%] z-50 grid max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto rounded-xl border bg-card p-6 text-card-foreground shadow-lg',
+      't-modal scroll-thin fixed left-[50%] top-[50%] z-50 grid max-h-[calc(100dvh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto rounded-xl border border-foreground/[0.12] bg-card p-6 text-card-foreground shadow-lg',
       className,
     );
     const padded = !/(^|\s)p-0(\s|$)/.test(merged);
@@ -115,7 +116,7 @@ const DialogHeader = ({ className, eyebrow, actions, children, ...props }: Dialo
     <div
       className={cn(
         'flex items-center gap-3 text-left',
-        padded && 'sticky -top-6 z-10 -mx-6 -mt-6 border-b bg-card px-6 pb-3.5 pt-4',
+        padded && 'sticky -top-6 z-10 -mx-6 -mt-6 border-b bg-card/80 px-6 pb-3.5 pt-4 backdrop-blur-md',
         className,
       )}
       {...props}
@@ -140,7 +141,7 @@ const DialogFooter = ({ className, ...props }: React.HTMLAttributes<HTMLDivEleme
   return (
     <div
       className={cn(
-        'flex flex-col-reverse gap-2 border-t bg-sidebar sm:flex-row sm:items-center sm:justify-end',
+        'flex flex-col-reverse gap-2 border-t bg-sidebar/85 backdrop-blur-md sm:flex-row sm:items-center sm:justify-end',
         padded && 'sticky -bottom-6 z-10 -mx-6 -mb-6 mt-1 px-6 py-3.5',
         className,
       )}

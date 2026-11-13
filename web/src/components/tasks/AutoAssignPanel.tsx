@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from '@/lib/toast';
 import { AlertTriangle, ChevronDown, Loader2, RotateCw, Bot, XCircle, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Disclosure } from '@/components/bits';
 import { apiGet, apiSend, type AssignClassification, type AssignmentDetailResponse, type AssignCandidate, type Ticket } from '@/lib/api';
 import {
   FAILED_REASON_LABEL, REASON_LABEL, RELATION_LABEL, SOURCE_LABEL, SUGGESTION_LABEL, TIER_LABEL, URGENCY_LABEL, pointsLabel,
@@ -395,15 +396,19 @@ function DecisionDetail({ decision: d, name }: { decision: NonNullable<Assignmen
         </section>
       )}
 
-      <details className="text-[11px] text-muted-foreground">
-        <summary className="cursor-pointer select-none">
-          {d.jevModel ?? 'sin modelo'} · política {d.policyVersion}
-          {d.questionsVersion ? ` · preguntas ${d.questionsVersion}` : ''} · ver lo que se envió a Jev
-        </summary>
+      <Disclosure
+        className="text-[11px] text-muted-foreground"
+        summary={
+          <span>
+            {d.jevModel ?? 'sin modelo'} · política {d.policyVersion}
+            {d.questionsVersion ? ` · preguntas ${d.questionsVersion}` : ''} · ver lo que se envió a Jev
+          </span>
+        }
+      >
         <pre className="scroll-thin mt-1 max-h-56 overflow-auto rounded-sm bg-panel p-2 font-mono text-[10px] leading-snug">
           {JSON.stringify(d.request, null, 2)}
         </pre>
-      </details>
+      </Disclosure>
     </div>
   );
 }
