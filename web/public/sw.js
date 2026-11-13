@@ -5,8 +5,8 @@
 
 // La app vive en la raíz (antes bajo /app): el shell cacheado es '/'. Subir la versión borra la
 // caché vieja en el `activate`.
-const CACHE = 'roz-shell-v4';
-const SHELL = ['/', '/icon-192.png', '/manifest.webmanifest'];
+const CACHE = 'roz-shell-v5';
+const SHELL = ['/', '/icon-192.png?v=2', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -113,7 +113,7 @@ self.addEventListener('push', (event) => {
       body: data.body || '',
       // Los avisos los firma Roz-bot: el backend manda su avatar con la expresión del aviso.
       icon: data.icon || '/brand/roz-bot.png',
-      badge: data.badge || '/icon-192.png',
+      badge: data.badge || '/icon-192.png?v=2',
       tag: data.tag || undefined,
       renotify: !!data.tag,
       requireInteraction: !!data.requireInteraction,
