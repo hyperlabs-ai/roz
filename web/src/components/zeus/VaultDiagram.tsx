@@ -131,7 +131,7 @@ export function VaultDiagram({
   const people = new Set(envs.flatMap((e) => e.grants.map((g) => g.devId))).size;
 
   return (
-    <section className={cn('dark zeus-stage relative overflow-hidden rounded-lg border bg-background text-foreground', className)} aria-label="Cómo viaja un secreto">
+    <section className={cn('zeus-stage relative overflow-hidden rounded-lg border bg-background text-foreground', className)} aria-label="Cómo viaja un secreto">
       <div className="flex items-center justify-between gap-3 px-4 pt-3">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5">
           <h2 className="label-caps text-foreground/85">Cómo viaja un secreto</h2>

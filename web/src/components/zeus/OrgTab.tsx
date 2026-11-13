@@ -274,7 +274,7 @@ export function OrgTab({ me }: { me: ZeusMe | null }) {
       {org.error && <ErrorCard message={failed ? 'No se pudo cargar el organigrama.' : org.error} />}
 
       <div className="grid gap-3 lg:h-[calc(100dvh-var(--shell-top,196px)-var(--shell-pad-b,0px))] lg:min-h-[660px] lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:grid-rows-[minmax(0,1fr)]">
-        <section className="dark zeus-stage scroll-thin flex min-h-0 flex-col overflow-y-auto overflow-x-hidden rounded-lg border bg-background text-foreground" aria-label="Organigrama">
+        <section className="zeus-stage scroll-thin flex min-h-0 flex-col overflow-y-auto overflow-x-hidden rounded-lg border bg-background text-foreground" aria-label="Organigrama">
           <div className="grid shrink-0 gap-3 border-b p-3.5">
             <RailTitle meta={<RefreshButton busy={org.refetching} onClick={org.reload} className="-my-1.5" />}>Organigrama · quién reporta a quién</RailTitle>
             <div className="grid grid-cols-4 gap-px overflow-hidden rounded-lg border bg-border">

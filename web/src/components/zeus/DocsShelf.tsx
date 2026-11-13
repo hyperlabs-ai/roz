@@ -232,7 +232,7 @@ export function DocsShelf({
 
   return (
     <section
-      className={cn('dark zeus-stage flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card text-foreground', className)}
+      className={cn('zeus-stage flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card text-foreground', className)}
       style={{ '--bib-d': `${scale.dot}px` } as CSSProperties}
       aria-label="Estantería: documentos por proyecto y tipo"
     >

@@ -165,7 +165,7 @@ function ConnectDiagram({ tokens, ready }: { tokens: ZeusTokenSummary[]; ready: 
     </div>
   );
   return (
-    <div className="dark zeus-stage relative shrink-0 border-b bg-background px-4 pb-4 pt-3 text-foreground">
+    <div className="zeus-stage relative shrink-0 border-b bg-background px-4 pb-4 pt-3 text-foreground">
       <div className="flex items-center justify-between gap-3">
         <h2 className="label-caps text-foreground/85">Conecta tu Claude</h2>
         <span className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
