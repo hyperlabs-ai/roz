@@ -210,9 +210,10 @@ describe('env init / ls', () => {
     await expect(envInit(ana.ctx, ['ROZ', 'a:b'])).rejects.toThrow(UsageError);
   });
 
-  it('un dev que no es admin no puede crear entornos', async () => {
+  it('cualquier dev crea un entorno y queda como el primero con acceso (los roles no limitan)', async () => {
     await keyInit(beto.ctx, []);
-    await expect(envInit(beto.ctx, ['ROZ'])).rejects.toThrow(/administrador/);
+    expect(await envInit(beto.ctx, ['ROZ'])).toBe(0);
+    expect([...(zeus.env('ROZ', 'development')?.grants.keys() ?? [])]).toEqual([(await key(beto)).keyId]);
   });
 
   it('ls muestra entornos y si este equipo tiene acceso', async () => {
@@ -545,10 +546,13 @@ describe('env grant', () => {
     await expect(envGrant(ana.ctx, ['ROZ', '--to', 'Beto', '--yes'])).rejects.toThrow(/no corresponde a su llave pública/);
   });
 
-  it('un dev sin permisos de admin no puede dar acceso', async () => {
+  it('quien tiene acceso lo comparte (sin ser admin); quien no lo tiene, no puede', async () => {
+    const caro = machine(zeus, zeus.addDev('Caro Dev').token, 'caro-pc');
+    await keyInit(caro.ctx, []);
+    await expect(envGrant(beto.ctx, ['ROZ', '--to', 'Caro', '--yes'])).rejects.toThrow(/acceso/);
     await envGrant(ana.ctx, ['ROZ', '--to', 'Beto', '--yes']);
-    zeus.addDev('Caro Dev');
-    await expect(envGrant(beto.ctx, ['ROZ', '--to', 'Caro', '--yes'])).rejects.toThrow(/administrador/);
+    expect(await envGrant(beto.ctx, ['ROZ', '--to', 'Caro', '--yes'])).toBe(0);
+    expect(zeus.env('ROZ', 'development')?.grants.has((await key(caro)).keyId ?? '')).toBe(true);
   });
 
   it('selectKeys: por id de llave, id de dev, nombre, y correo solo si zeus lo manda', () => {
@@ -676,10 +680,14 @@ describe('env revoke / rotate', () => {
     expect(ana.log.join('\n')).toMatch(/este equipo$/m);
   });
 
-  it('un dev que no es admin no puede rotar ni revocar', async () => {
-    await expect(envRotate(beto.ctx, ['ROZ', '--yes'])).rejects.toThrow(/administrador/);
-    await expect(envRevoke(beto.ctx, ['ROZ', '--key', (await key(ana)).keyId ?? '', '--yes'])).rejects.toThrow(/administrador/);
+  it('quien no tiene acceso no puede rotar ni revocar; quien sí, puede rotar sin ser admin', async () => {
+    const dani = machine(zeus, zeus.addDev('Dani Dev').token, 'dani-pc');
+    await keyInit(dani.ctx, []);
+    await expect(envRotate(dani.ctx, ['ROZ', '--yes'])).rejects.toThrow(/acceso/);
+    await expect(envRevoke(dani.ctx, ['ROZ', '--key', (await key(ana)).keyId ?? '', '--yes'])).rejects.toThrow(/administrador/);
     expect(zeus.env('ROZ', 'development')?.dekVersion).toBe(1);
+    expect(await envRotate(beto.ctx, ['ROZ', '--yes'])).toBe(0);
+    expect(zeus.env('ROZ', 'development')?.dekVersion).toBe(2);
   });
 });
 

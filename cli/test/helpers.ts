@@ -133,7 +133,7 @@ export class FakeZeus {
       return { dev: { id: dev.id, name: dev.name, email: dev.email }, zeusAdmin: dev.admin };
     }
     if (method === 'GET' && route === '/vault/keys') {
-      if (query.get('all') === '1') admin();
+      // Llaves públicas: cualquiera las lista para poder dar acceso.
       const all = query.get('all') === '1';
       return { keys: this.keys.filter((k) => !k.revokedAt && (all || k.devId === dev.id)) };
     }
@@ -198,7 +198,7 @@ export class FakeZeus {
       return { ok: true, moved: grants.length };
     }
     if (method === 'POST' && route === '/vault/envs') {
-      admin();
+      // Como el servidor real: cualquier dev crea un entorno y queda como el primero con acceso.
       const { projectKey, env, keyId, wrappedDek } = body as { projectKey: string; env: string; keyId: string; wrappedDek: string };
       const project = this.project(projectKey);
       this.ownKey(dev, keyId);
@@ -280,7 +280,6 @@ export class FakeZeus {
         return { dekVersion: env.dekVersion, revisions };
       }
       if (method === 'POST' && rest[0] === 'grants') {
-        admin();
         const { keyId, grants } = body as { keyId: string; grants: Array<{ keyId: string; wrappedDek: string }> };
         this.granted(dev, env, keyId);
         for (const g of grants) {
@@ -291,13 +290,13 @@ export class FakeZeus {
         return { ok: true, granted: grants.length };
       }
       if (method === 'DELETE' && rest[0] === 'grants' && rest[1]) {
-        admin();
+        const holdsAccess = this.keys.some((k) => k.devId === dev.id && !k.revokedAt && env.grants.get(k.id)?.dekVersion === env.dekVersion);
+        if (!holdsAccess) admin();
         if (!env.grants.delete(rest[1])) throw new HttpError(404, 'NOT_FOUND', 'esa llave no tenía acceso');
         env.needsRotation = true;
         return { ok: true };
       }
       if (method === 'POST' && rest[0] === 'rotate') {
-        admin();
         const { keyId, dekVersion, grants, secrets, revisions } = body as {
           keyId: string;
           dekVersion: number;

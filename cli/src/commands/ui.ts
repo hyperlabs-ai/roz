@@ -164,7 +164,9 @@ export async function envUi(ctx: Ctx, args: string[]): Promise<number> {
   const addr = server.address();
   port = typeof addr === 'object' && addr ? addr.port : 0;
   bump();
-  const pick = positionals[0] ? `&project=${encodeURIComponent(positionals[0])}${positionals[1] ? `&env=${encodeURIComponent(positionals[1])}` : ''}` : '';
+  // El entorno según el estándar (en un repo, `<repo>-<etapa>`), para que el visor abra justo ese.
+  const t = positionals[0] ? await resolveTarget(ctx, positionals[0], positionals[1]) : null;
+  const pick = t ? `&project=${encodeURIComponent(t.projectKey)}${positionals[1] || t.repo ? `&env=${encodeURIComponent(t.env)}` : ''}` : '';
   const url = `http://127.0.0.1:${port}/#t=${token}${pick}`;
   ctx.out(`visor de zeus en ${url}`);
   ctx.log('solo en esta PC. Ctrl+C para cerrarlo (se cierra solo tras 15 min sin uso). No compartas la URL.');
