@@ -3,7 +3,7 @@
 // acceso a X?" en la franja de abajo. Todo sale de `ZeusOrgMember.projects` (claves de proyecto); el
 // nombre legible de cada clave se toma del mapa si ya está cargado.
 import { useMemo, useState } from 'react';
-import { Crown, Pencil, Search, X } from 'lucide-react';
+import { Pencil, Search, X } from 'lucide-react';
 import { PersonAvatar } from '@/components/avatars';
 import { fold } from '@/components/projects/project-ui';
 import { Button } from '@/components/ui/button';
@@ -146,7 +146,6 @@ export function OrgMatrix({
                     <span className="grid min-w-0 flex-1">
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className={cn('truncate text-[13px] font-semibold', isMe && 'text-orange-ink')}>{m.name}</span>
-                        {m.zeusAdmin && <Crown className="size-3 shrink-0 text-orange" aria-label="Admin de zeus" />}
                       </span>
                       <span className="label-caps truncate text-[9.5px]">{roleLabel(m.role)}{isMe && ' · tú'}</span>
                     </span>

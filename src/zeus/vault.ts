@@ -185,7 +185,7 @@ async function loadEnv(projectKey: string, env: string): Promise<{ env: EnvRow; 
   const project = await resolveProject(projectKey);
   const { data, error } = await db().from('zeus_vault_env').select(ENV_COLS).eq('project_id', project.id).eq('name', checkEnvName(env)).maybeSingle();
   if (error) throw error;
-  if (!data) throw new NotFoundError(`el proyecto ${project.key} no tiene el entorno "${env}" en la bóveda (un admin lo crea con \`zeus env init ${project.key} ${env}\`)`);
+  if (!data) throw new NotFoundError(`el proyecto ${project.key} no tiene el entorno "${env}" en la bóveda (cualquiera lo crea con \`zeus env init ${project.key} ${env}\`)`);
   return { env: data as EnvRow, project };
 }
 
@@ -199,7 +199,7 @@ async function currentGrant(env: EnvRow, key: KeyRow): Promise<{ wrapped_dek: st
     .eq('dek_version', env.dek_version)
     .maybeSingle();
   if (error) throw error;
-  if (!data) throw new AppError(VAULT_NO_ACCESS_CODE, 'este equipo no tiene acceso a ese entorno: pídeselo a un administrador de zeus', 403);
+  if (!data) throw new AppError(VAULT_NO_ACCESS_CODE, 'este equipo no tiene acceso a ese entorno: pídeselo a cualquiera que ya lo tenga (lo comparte con `zeus env grant`)', 403);
   return data as { wrapped_dek: string };
 }
 

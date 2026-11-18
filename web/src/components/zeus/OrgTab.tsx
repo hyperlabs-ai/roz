@@ -43,7 +43,6 @@ function PersonNode({ member, isMe, canEdit, onEdit }: NodeProps) {
       <PersonAvatar name={member.name} login={member.githubLogin} email={member.email} id={member.devId} presence={member.online ? 'on' : 'off'} className="size-10" />
       <span className="flex max-w-full items-center gap-1">
         <span className="truncate text-[13px] font-semibold">{member.name}</span>
-        {member.zeusAdmin && <Crown className="size-3 shrink-0 text-orange" aria-label="Admin de zeus" />}
       </span>
       <span className="label-caps max-w-full truncate text-[9.5px]">{roleLabel(member.role)}{!member.active && ' · inactivo'}</span>
     </>
@@ -70,7 +69,6 @@ function PersonChip({ member, isMe, canEdit, onEdit, assign }: NodeProps & { ass
       <span className="grid min-w-0 flex-1 gap-px">
         <span className="flex min-w-0 items-center gap-1">
           <span className="truncate text-[13px] font-semibold">{member.name}</span>
-          {member.zeusAdmin && <Crown className="size-3 shrink-0 text-orange" aria-label="Admin de zeus" />}
         </span>
         <span className="label-caps truncate text-[9.5px]">{roleLabel(member.role)}{!member.active && ' · inactivo'}</span>
       </span>
