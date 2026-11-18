@@ -47,20 +47,20 @@ const ChoiceAnswer = z.object({
   type: z.literal('choice'),
   choice: z.string(),
   confidence: z.number(),
-  probabilities: z.record(z.number()),
+  probabilities: z.record(z.string(), z.number()),
 });
 const ScoreAnswer = z.object({
   type: z.literal('score'),
   score: z.number(),
   confidence: z.number(),
-  legend: z.record(z.unknown()),
-  probabilities: z.record(z.number()),
+  legend: z.record(z.string(), z.unknown()),
+  probabilities: z.record(z.string(), z.number()),
 });
 const Answer = z.discriminatedUnion('type', [NoulAnswer, ChoiceAnswer, ScoreAnswer]);
 
 const SystemOneResponseSchema = z.object({
   model: z.string(),
-  answers: z.record(Answer),
+  answers: z.record(z.string(), Answer),
   usage: z.object({ input_tokens: z.number(), output_tokens: z.number() }),
 });
 

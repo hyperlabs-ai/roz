@@ -585,7 +585,7 @@ const ServiceBody = z.object({
   provider: z.enum(['vercel', 'railway', 'supabase']),
   externalRef: z.string().min(1),
   label: z.string().nullish(),
-  config: z.record(z.unknown()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
 });
 
 dashboardRoutes.post('/projects/:id/services', requireAdmin, async (c) => {
@@ -603,7 +603,7 @@ const ServicePatch = z.object({
   provider: z.enum(['vercel', 'railway', 'supabase']).optional(),
   externalRef: z.string().min(1).optional(),
   label: z.string().nullish(),
-  config: z.record(z.unknown()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
 });
 
 dashboardRoutes.patch('/projects/:id/services/:serviceId', requireAdmin, async (c) => {
