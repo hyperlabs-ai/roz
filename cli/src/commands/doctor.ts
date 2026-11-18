@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { Ctx } from '../context.js';
 import { findZeusFiles } from '../envfile.js';
 import { loadDeviceKey } from '../store.js';
+import { updateNotice } from '../update.js';
 import { folderStatus } from './env.js';
 import { parse, type RegisteredKey } from './vault.js';
 
@@ -21,7 +22,11 @@ export async function doctorReport(ctx: Ctx, opts: { brief?: boolean } = {}): Pr
   const lines: string[] = [];
   const brief = opts.brief ?? false;
 
+  // En paralelo con zeus: a lo más una consulta a npm al día, con espera corta.
+  const update = updateNotice(ctx).catch(() => null);
   const me = await timeout(ctx.api.whoami().catch(() => null), HOOK_BUDGET_MS);
+  const notice = await update;
+  if (notice) lines.push(`! ${notice}${brief ? ' (sugiéreselo a la persona; no lo actualices sin su permiso)' : ''}`);
   if (!me) {
     if (!brief) lines.push('✗ sin conexión con zeus (¿corriste `zeus login`?)');
     return lines;

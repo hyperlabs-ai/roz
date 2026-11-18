@@ -226,3 +226,14 @@ function signalNumber(signal: NodeJS.Signals): number | null {
   const table: Partial<Record<NodeJS.Signals, number>> = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGKILL: 9, SIGTERM: 15 };
   return table[signal] ?? null;
 }
+
+/** Última versión publicada en el registro público de npm (sin credenciales ni datos de la persona). */
+export async function realLatestVersion(pkg: string): Promise<string | null> {
+  const res = await fetch(`https://registry.npmjs.org/${pkg.replace('/', '%2F')}/latest`, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(1500),
+  });
+  if (!res.ok) return null;
+  const body = (await res.json()) as { version?: unknown };
+  return typeof body.version === 'string' ? body.version : null;
+}

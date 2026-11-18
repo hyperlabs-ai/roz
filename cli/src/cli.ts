@@ -13,7 +13,8 @@ import { keyCommand } from './commands/key.js';
 import { run } from './commands/run.js';
 import { CliError, UsageError, type Ctx } from './context.js';
 import { configPath, keyPath, loadConfig, zeusHome, type ZeusConfig } from './store.js';
-import { realClipboard, realFs, realOpenUrl, realPrompt, realSpawn, realStdin } from './system.js';
+import { realClipboard, realFs, realLatestVersion, realOpenUrl, realPrompt, realSpawn, realStdin } from './system.js';
+import { updateNotice } from './update.js';
 import { VERSION } from './version.js';
 
 const HELP = `zeus ${VERSION} — variables de entorno del equipo en una bóveda de conocimiento cero, y tu PC conectada a zeus.
@@ -82,6 +83,7 @@ function buildCtx(cfg: ZeusConfig | null): Ctx {
     clipboard: realClipboard,
     openUrl: realOpenUrl,
     stdin: realStdin,
+    latestVersion: realLatestVersion,
   };
 }
 
@@ -106,6 +108,19 @@ async function main(argv: string[]): Promise<number> {
 
   const cfg = await loadConfig(realFs, zeusHome(), process.env);
   const ctx = buildCtx(cfg);
+  const code = await route(cmd, rest, ctx, cfg);
+  // Al terminar, una línea si hay CLI más nuevo (stderr: no ensucia lo que se entuba). No en el
+  // hook ni en el servidor MCP, que no deben tardar; `doctor` ya lo trae en su reporte.
+  if (!QUIET.has(cmd)) {
+    const notice = await updateNotice(ctx).catch(() => null);
+    if (notice) ctx.log(`zeus: ${notice}`);
+  }
+  return code;
+}
+
+const QUIET = new Set(['guard', 'mcp', 'doctor', 'setup']);
+
+async function route(cmd: string, rest: string[], ctx: Ctx, cfg: ZeusConfig | null): Promise<number> {
   const needConfig = (): ZeusConfig => {
     if (!cfg) throw new CliError('este equipo no está conectado a zeus: corre `zeus login`');
     return cfg;

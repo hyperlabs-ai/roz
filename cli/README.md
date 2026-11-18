@@ -225,6 +225,8 @@ zeus run ROZ -- npm run dev
 | `~/.zeus/key.json` | Llave de este equipo. **Respáldala o no la pierdas**: sin ella este equipo no abre nada. |
 | `~/.zeus/known-keys.json` | Huellas que verificaste al dar acceso. |
 
+Una vez al día como mucho, el CLI consulta en el registro público de npm si hay versión nueva y, si la hay, lo dice en una línea al terminar el comando (y en el resumen que recibe Claude al abrir sesión). `ZEUS_NO_UPDATE_CHECK=1` lo apaga.
+
 `ZEUS_HOME` cambia la carpeta; `ZEUS_URL` y `ZEUS_TOKEN` pisan lo guardado; `ZEUS_DEBUG=1` muestra el
 stack de los errores. La carpeta se crea 0700 y los archivos 0600. En Windows esos permisos no aplican;
 los archivos viven en tu perfil, que ya es privado de tu usuario.
