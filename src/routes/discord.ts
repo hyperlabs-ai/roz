@@ -336,7 +336,7 @@ discordRoutes.post('/messages/:messageId/task', async (c) => {
 // ---- Comandos de /roz desde el compositor de roz (docs/discord-commands-contract.md §9) ----
 
 const SubcommandSchema = z.enum(ROZ_SUBCOMMANDS);
-const OptionsSchema = z.record(z.string().max(200)).optional();
+const OptionsSchema = z.record(z.string(), z.string().max(200)).optional();
 
 /** Menú "/": la MISMA lista y descripciones que el desplegable de Discord. */
 discordRoutes.get('/commands', async (c) => {
@@ -351,7 +351,7 @@ discordRoutes.get('/commands', async (c) => {
 const CommandBody = z.object({
   subcommand: SubcommandSchema,
   options: OptionsSchema,
-  fields: z.record(z.union([z.string().max(8000), z.array(z.string().max(100)).max(50)])).optional(),
+  fields: z.record(z.string(), z.union([z.string().max(8000), z.array(z.string().max(100)).max(50)])).optional(),
 });
 
 discordRoutes.post('/channels/:channelId/commands', async (c) => {

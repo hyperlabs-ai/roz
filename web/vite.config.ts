@@ -24,12 +24,14 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       emptyOutDir: true,
-      rollupOptions: {
+      rolldownOptions: {
         output: {
-          manualChunks: {
-            react: ['react', 'react-dom', 'react-router-dom'],
-            charts: ['recharts'],
-            supabase: ['@supabase/supabase-js'],
+          // Vite 8 (rolldown) solo acepta manualChunks como función.
+          manualChunks(id: string) {
+            if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id)) return 'react';
+            if (/[\\/]node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor)[\\/]/.test(id)) return 'charts';
+            if (/[\\/]node_modules[\\/]@supabase[\\/]/.test(id)) return 'supabase';
+            return undefined;
           },
         },
       },

@@ -224,7 +224,7 @@ function jsonSchemaFor(def: z.ZodTypeAny): Record<string, unknown> {
   if (schema instanceof z.ZodString) return { type: 'string', ...base };
   if (schema instanceof z.ZodNumber) return { type: 'number', ...base };
   if (schema instanceof z.ZodBoolean) return { type: 'boolean', ...base };
-  if (schema instanceof z.ZodEnum) return { type: 'string', enum: (schema as z.ZodEnum<[string, ...string[]]>).options, ...base };
+  if (schema instanceof z.ZodEnum) return { type: 'string', enum: (schema as z.ZodEnum).options, ...base };
   if (schema instanceof z.ZodArray) {
     return { type: 'array', items: jsonSchemaFor((schema as z.ZodArray<z.ZodTypeAny>).element), ...base };
   }
@@ -239,8 +239,8 @@ function objectSchema(obj: z.ZodObject<z.ZodRawShape>): Record<string, unknown> 
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
   for (const [key, def] of Object.entries(shape)) {
-    properties[key] = jsonSchemaFor(def);
-    const { optional } = unwrap(def);
+    properties[key] = jsonSchemaFor(def as z.ZodTypeAny);
+    const { optional } = unwrap(def as z.ZodTypeAny);
     if (!optional && !(def instanceof z.ZodOptional) && !(def instanceof z.ZodDefault)) {
       required.push(key);
     }
