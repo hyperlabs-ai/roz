@@ -195,9 +195,9 @@ export async function sendMessage(input: SendMessageInput, actor: ZeusActor): Pr
   logActivity(actorActivity(actor), kind === 'task' ? 'task' : 'message', `dev:${to.id}`, { to: to.name });
   if (to.id !== actor.devId) {
     notify(to.id, to.email, kind === 'task' ? `${actor.name} te encargó algo` : `${actor.name} te escribió`, subject || body, 'bandeja');
-    // Un encargo pide acción: también va por correo. Un mensaje suelto se queda en bandeja y push.
+    // Mensajes y encargos también van por correo (respeta los interruptores de cada persona).
     const id = (data as MessageRow).id;
-    if (kind === 'task') inBackground(() => mailWorkEvent(id, 'new'));
+    inBackground(() => mailWorkEvent(id, 'new'));
   }
   return toMessage(data as MessageRow, new Map([[actor.devId, actor.name], [to.id, to.name]]), new Map(project ? [[project.id, project.key]] : []));
 }

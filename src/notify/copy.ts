@@ -680,7 +680,7 @@ export interface ZeusWorkInput {
   actor?: string | null;
   /** Login de GitHub de quien hizo la acción (su avatar en el correo). */
   actorLogin?: string | null;
-  kind: 'task' | 'plan';
+  kind: 'task' | 'plan' | 'message';
   event: ZeusWorkEvent;
   title: string;
   project?: string | null;
@@ -693,6 +693,7 @@ export interface ZeusWorkInput {
 
 /** Correo inmediato de la bandeja de zeus: algo que pide acción de quien lo recibe. */
 export function zeusWorkNotice(i: ZeusWorkInput): Notice {
+  if (i.kind === 'message') return zeusMessageNotice(i);
   const me = firstName(i.recipient);
   const actor = firstName(i.actor) || 'Alguien del equipo';
   const what = i.kind === 'plan' ? 'plan' : 'encargo';
@@ -749,6 +750,28 @@ export function zeusWorkNotice(i: ZeusWorkInput): Notice {
     decor: {
       [i.event === 'changes_requested' || i.event === 'declined' ? 'Respondió' : 'De']: person(actor, i.actorLogin),
     },
+  });
+}
+
+/** Mensaje directo en la bandeja de zeus: el texto ES el correo, sin pendientes ni botones de decisión. */
+function zeusMessageNotice(i: ZeusWorkInput): Notice {
+  const me = firstName(i.recipient);
+  const actor = firstName(i.actor) || 'Alguien del equipo';
+  const subject = clean(i.title);
+  const text = clip(clean((i.excerpt ?? '').replace(/^#+\s*/gm, '').replace(/[ \t]+/g, ' ')), 1500);
+  return finish({
+    title: title(i.seed, [`${actor} te escribió`, `${hi(me)}${actor} te mandó un mensaje`, `Mensaje de ${actor}${me ? `, ${me}` : ''}`]),
+    body: subject || clip(text, 120),
+    subject: subject ? `${actor} te escribió: ${subject}` : `${actor} te escribió`,
+    mood: 'default',
+    kicker: 'Mensaje nuevo',
+    headline: subject || `${actor} te escribió`,
+    lead: text,
+    facts: [['De', actor], ...(i.project ? ([['Proyecto', i.project]] as [string, string][]) : [])],
+    cta: { label: 'Responder en mi bandeja', url: i.url },
+    section: 'Bandeja de zeus',
+    reason: `Te llega porque ${actor} te escribió a ti. Puedes apagar estos correos en tus avisos.`,
+    decor: { De: person(actor, i.actorLogin) },
   });
 }
 

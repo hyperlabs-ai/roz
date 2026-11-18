@@ -22,7 +22,7 @@ import { cn } from '@/lib/utils';
 import { zeusApi, type ZeusActivityEvent, type ZeusMcpConnection, type ZeusMcpPendingItem, type ZeusMcpStatus, type ZeusMe } from '@/lib/zeus';
 import { GRAPH_KEY, NODES_KEY } from './hooks';
 import { AREA_META, McpDiagram, areaOf, type WorkArea } from './McpDiagram';
-import { McpTokenList, SETUP_COMMAND } from './McpTokens';
+import { McpTokenList, SETUP_COMMAND, cliCommand } from './McpTokens';
 import { CmdLine, Step, StepNote, Steps, type StepState } from './zeus-steps';
 import { CLI_INSTALL, MESSAGE_STATUS, OnlineDot, ago, dateTime, describeActivity, viaLabel } from './zeus-ui';
 import './access.css';
@@ -325,7 +325,8 @@ export function AccessTab({ me }: { me: ZeusMe | null }) {
             </Step>
             <Step n={2} state={stepState(1)} title="Instala el CLI y entra" stateLabel={mine?.lastCliAt ? `Hecho · ${ago(mine.lastCliAt, now)}` : undefined}>
               <CmdLine wrap command={CLI_INSTALL} />
-              <CmdLine wrap command="zeus login --url <zeus> --token <token>" />
+              {/* La URL la da zeus (GET /zeus/me): nadie tiene que saberla ni escribirla. */}
+              {me?.apiUrl ? <CmdLine wrap command={cliCommand(me.apiUrl, '<token>')} /> : <StepNote>Leyendo la URL de zeus…</StepNote>}
             </Step>
             <Step n={3} state={stepState(2)} title="Conecta Claude Code" stateLabel={mine?.lastMcpAt ? `Hecho · ${ago(mine.lastMcpAt, now)}` : undefined} last>
               <CmdLine wrap command={SETUP_COMMAND} />
