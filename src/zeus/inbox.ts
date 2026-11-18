@@ -6,6 +6,7 @@ import { pushToDev } from '../notify/push.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { inBackground } from '../utils/background.js';
 import { mailWorkEvent } from './mail.js';
+import { claimOnce, releaseOnce } from '../events/outbox.js';
 import {
   ZEUS_OPEN_STATUSES,
   type ZeusActivityEvent,
@@ -207,6 +208,51 @@ async function systemMessage(toDevId: string, subject: string, body: string, req
     .from('zeus_message')
     .insert({ from_dev_id: extra.fromDevId ?? null, to_dev_id: toDevId, subject, body, request_id: requestId, parent_id: extra.parentId ?? null, via: 'system' });
   if (error) throw error;
+}
+
+export interface InboxNoticeInput {
+  toDevId: string;
+  subject: string;
+  body: string;
+  /** Quien originó el evento (asignó, revisó…); null = lo avisa zeus. */
+  fromDevId?: string | null;
+  /** Referencia del grafo (`project:<id>`, `repo:<owner/name>`…); una inválida se descarta. */
+  ref?: string | null;
+  projectId?: string | null;
+  /** Llave de idempotencia: el mismo evento no deja dos mensajes aunque se reintente. */
+  dedupeKey?: string | null;
+}
+
+/**
+ * Deja un aviso del sistema en la bandeja de un dev (tarea asignada, PR revisada, deploy caído…):
+ * lo que tiene pendiente debe estar ahí al entrar, aunque haya silenciado el correo o el push.
+ * Nunca lanza: el aviso es un extra y no puede tumbar el efecto que lo dispara.
+ */
+export async function inboxNotice(input: InboxNoticeInput): Promise<boolean> {
+  try {
+    if (!input.toDevId || !isUuid(input.toDevId)) return false;
+    if (input.dedupeKey && !(await claimOnce(`inbox:${input.dedupeKey}`, 'zeus-inbox'))) return false;
+    const ref = input.ref && parseRef(input.ref) ? input.ref : null;
+    const { error } = await db()
+      .from('zeus_message')
+      .insert({
+        kind: 'message',
+        from_dev_id: input.fromDevId && input.fromDevId !== input.toDevId ? input.fromDevId : null,
+        to_dev_id: input.toDevId,
+        subject: input.subject.trim().slice(0, 160) || null,
+        body: input.body.trim().slice(0, MAX_MESSAGE_CHARS) || input.subject.trim(),
+        ref,
+        project_id: input.projectId && isUuid(input.projectId) ? input.projectId : null,
+        via: 'system',
+      });
+    if (error) {
+      if (input.dedupeKey) await releaseOnce(`inbox:${input.dedupeKey}`).catch(() => undefined);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function loadMessage(id: string): Promise<MessageRow> {

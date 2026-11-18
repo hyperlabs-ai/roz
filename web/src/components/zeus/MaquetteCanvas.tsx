@@ -1087,7 +1087,8 @@ export const MaquetteCanvas = memo(
 
     const zoomBy = useCallback((factor: number) => {
       const g0 = goal.current;
-      g0.dist = Math.min(fitDist.current * 2.5, Math.max(fitDist.current * 0.2, g0.dist * factor));
+      // Alejar se queda cerca del encuadre inicial: más allá la maqueta se vuelve un punto y no aporta.
+      g0.dist = Math.min(fitDist.current * 1.6, Math.max(fitDist.current * 0.2, g0.dist * factor));
     }, []);
     useEffect(() => {
       const el = canvasRef.current;

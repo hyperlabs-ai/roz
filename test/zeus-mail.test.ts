@@ -126,8 +126,9 @@ describe('resumen diario de variables', () => {
     expect(to('alan')).toHaveLength(1);
     const m = to('alan')[0]!;
     expect(m.subject).toBe('Cambiaron variables en 2 entornos');
-    expect(m.text).toMatch(/HYPERHUB\/api-hyperhub-production: Fer: nuevas: REDIS_URL · cambiaron: STRIPE_KEY/);
-    expect(m.text).toMatch(/HYPERHUB\/site-hyperhub-production: Crix: se quitaron: OLD_FLAG/);
+    expect(m.text).toMatch(/HYPERHUB\/api-hyperhub-production: Nuevas: REDIS_URL; cambiaron: STRIPE_KEY \(Lo cambió Fer\)/);
+    expect(m.text).toMatch(/HYPERHUB\/site-hyperhub-production: Se quitaron: OLD_FLAG \(Lo cambió Crix\)/);
+    expect(m.text).toMatch(/zeus env status/);
     expect(to('crix')).toHaveLength(0);
 
     expect(await sendZeusEnvDigests(now)).toEqual({ devs: 0, notices: 0 });
@@ -155,6 +156,6 @@ describe('textos', () => {
     expect(n.cta?.url).toBe('https://roz/bandeja');
     const d = zeusEnvDigestNotice({ seed: 's', recipient: 'Alan', url: 'u', changes: [{ label: 'P/api-production', actor: 'Fer', added: ['X'], changed: [], deleted: [], rotated: true }] });
     expect(d.subject).toBe('Cambiaron variables en P/api-production');
-    expect(d.items?.[0]?.text).toBe('Fer: nuevas: X · rotó la llave (los valores no cambiaron)');
+    expect(d.items?.[0]).toMatchObject({ text: 'Nuevas: X; rotó la llave (los valores no cambiaron)', meta: 'Lo cambió Fer' });
   });
 });

@@ -12,6 +12,7 @@ import { sendEmail } from '../adapters/email.js';
 import { emailAllowed, emailEnabled } from '../notify/switches.js';
 import type { DeployRef, FailureInfo } from './types.js';
 import type { TransitionKind } from './transitions.js';
+import { renderEmailDoc, type EmailBlock, type EmailFact, type EmailTone } from '../notify/email-layout.js';
 
 const PROVIDER_NAME: Record<string, string> = { vercel: 'Vercel', railway: 'Railway', supabase: 'Supabase' };
 
@@ -58,10 +59,6 @@ function fmtDateTime(iso: string | null): string {
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `${d.getDate()} ${MONTHS[d.getMonth()]}, ${hh}:${mm}`;
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function clip(s: string, max: number): string {
@@ -138,7 +135,7 @@ export function serviceCopy(t: ServiceTransition, self = false): Copy {
       cause ? `${provider} dice: ${cause}` : null,
       `Producción sigue en línea ${servingPhrase(t)}.`,
     ];
-    return { title: `Falló un deploy en ${svc} · ${t.projectName}`, body: parts.filter(Boolean).join(' ') };
+    return { title: `Falló un deploy de ${svc} en ${t.projectName}`, body: parts.filter(Boolean).join(' ') };
   }
 
   if (t.kind === 'down') {
@@ -150,99 +147,87 @@ export function serviceCopy(t: ServiceTransition, self = false): Copy {
       !paused && t.failure?.scope === 'deploy' && author ? `El último deploy fue ${self ? 'tuyo' : `de ${author}`} y no hay otro sirviendo.` : null,
       t.lastSeenOkAt ? `Lo vi bien por última vez el ${fmtDateTime(t.lastSeenOkAt)}.` : null,
     ];
-    return { title: `${svc} ${verb} · ${t.projectName}`, body: parts.filter(Boolean).join(' ') };
+    return { title: `${svc} de ${t.projectName} ${verb}`, body: parts.filter(Boolean).join(' ') };
   }
 
   const parts = [
     `${svc} (${provider}) volvió a estar en línea${t.downtimeMs ? ` tras ${fmtDuration(t.downtimeMs)} fuera` : ''}.`,
     t.serving?.sha ? `Está sirviendo ${shortSha(t.serving.sha)}${author ? `, de ${self ? 'tu commit' : author}` : ''}.` : null,
   ];
-  return { title: `${svc} volvió a estar en línea · ${t.projectName}`, body: parts.filter(Boolean).join(' ') };
+  return { title: `${svc} de ${t.projectName} volvió a estar en línea`, body: parts.filter(Boolean).join(' ') };
 }
 
-const TONE: Record<TransitionKind, { accent: string; bg: string; tag: string }> = {
-  down: { accent: '#c2410c', bg: '#ffe4d6', tag: 'Servicio sin atender' },
-  deploy_failed: { accent: '#a16207', bg: '#fef3c7', tag: 'Deploy fallido · producción en línea' },
-  up: { accent: '#15803d', bg: '#dcfce7', tag: 'Servicio recuperado' },
+const TONE: Record<TransitionKind, { tone: EmailTone; tag: string; bot: string }> = {
+  down: { tone: 'alert', tag: 'Servicio sin atender', bot: 'roz-bot-alert.png' },
+  deploy_failed: { tone: 'warn', tag: 'Deploy fallido, producción en línea', bot: 'roz-bot-thinking.png' },
+  up: { tone: 'ok', tag: 'Servicio recuperado', bot: 'roz-bot-happy.png' },
 };
 
+const STATUS_CHIP: Record<string, { label: string; tone: EmailTone }> = {
+  healthy: { label: 'En línea', tone: 'ok' },
+  paused: { label: 'Pausado', tone: 'neutral' },
+  down: { label: 'Caído', tone: 'alert' },
+  degraded: { label: 'Degradado', tone: 'warn' },
+};
+
+/** El correo de una transición, en el layout único de roz (src/notify/email-layout.ts). */
 export function render(t: ServiceTransition, dashboardUrl: string, to: { name: string | null; self: boolean }): { subject: string; html: string; text: string } {
   const provider = PROVIDER_NAME[t.provider] ?? t.provider;
   const copy = serviceCopy(t, to.self);
   const tone = TONE[t.kind];
   const failed = t.kind !== 'up';
   const first = to.name?.trim().split(/\s+/)[0];
-  const hello = first ? `Hola ${first}.` : 'Hola.';
+  const base = dashboardUrl.replace(/\/+$/, '');
 
-  // Filas de detalle (label → valor). Solo lo que se sabe.
-  const rows: [string, string][] = [
-    ['Proyecto', esc(t.projectName)],
-    ['Servicio', `${esc(t.serviceLabel)} · ${esc(provider)}`],
-    ['Estado del servicio', t.status === 'healthy' ? 'En línea' : t.status === 'paused' ? 'Pausado' : t.status === 'down' ? 'Caído' : esc(t.status)],
+  // Detalle: solo lo que se sabe.
+  const status = STATUS_CHIP[t.status] ?? { label: t.status, tone: 'neutral' as EmailTone };
+  const facts: EmailFact[] = [
+    { label: 'Proyecto', value: t.projectName },
+    { label: 'Servicio', value: `${t.serviceLabel} en ${provider}` },
+    { label: 'Estado', value: status.label, chip: status.tone },
   ];
   const last = t.lastDeploy;
   if (last && failed) {
     const sha = shortSha(last.sha);
-    const label = t.kind === 'deploy_failed' ? 'Deploy que falló' : 'Último deploy';
-    rows.push([label, [last.message ? esc(clip(last.message, 90)) : null, sha ? `<code style="font-family:ui-monospace,monospace;font-size:12px">${sha}</code>` : null].filter(Boolean).join(' · ') || esc(last.nativeState)]);
+    facts.push({ label: t.kind === 'deploy_failed' ? 'Deploy que falló' : 'Último deploy', value: last.message ? clip(last.message, 90) : last.nativeState });
+    if (sha) facts.push({ label: 'Commit', value: sha, mono: true });
     const by = who(t);
-    if (by) rows.push(['Autor', esc(by)]);
-    if (last.branch) rows.push(['Rama', esc(last.branch)]);
-    if (last.durationMs) rows.push(['Duró', fmtDuration(last.durationMs)]);
+    if (by) facts.push({ label: 'Autor', value: by, ...(last.author ? { person: { name: by, login: last.author } } : {}) });
+    if (last.branch) facts.push({ label: 'Rama', value: last.branch, mono: true });
+    if (last.durationMs) facts.push({ label: 'Duró', value: fmtDuration(last.durationMs) });
   }
-  if (failed && t.failure?.step) rows.push(['Falló en', esc(t.failure.step)]);
-  const cause = causeLine(t);
-  if (failed && cause) rows.push(['Causa', esc(cause)]);
+  if (failed && t.failure?.step) facts.push({ label: 'Falló en', value: t.failure.step });
   if (t.kind === 'deploy_failed' && t.serving) {
     const sha = shortSha(t.serving.sha);
-    rows.push(['Sigue sirviendo', [sha ? `<code style="font-family:ui-monospace,monospace;font-size:12px">${sha}</code>` : null, t.serving.message ? esc(clip(t.serving.message, 70)) : null].filter(Boolean).join(' · ') || 'El deploy anterior']);
+    facts.push({ label: 'Sigue sirviendo', value: (sha ? `${sha}${t.serving.message ? ` (${clip(t.serving.message, 70)})` : ''}` : t.serving.message ? clip(t.serving.message, 70) : '') || 'El deploy anterior' });
   }
-  if (t.kind === 'down' && t.lastSeenOkAt) rows.push(['Visto bien por última vez', fmtDateTime(t.lastSeenOkAt)]);
-  if (t.kind === 'up') rows.push(['Tiempo fuera', fmtDuration(t.downtimeMs)]);
+  if (t.kind === 'down' && t.lastSeenOkAt) facts.push({ label: 'Visto bien por última vez', value: fmtDateTime(t.lastSeenOkAt) });
+  if (t.kind === 'up') facts.push({ label: 'Tiempo fuera', value: fmtDuration(t.downtimeMs) });
 
-  const rowsHtml = rows
-    .map(
-      ([k, v]) =>
-        `<tr><td style="padding:7px 0;color:#7a7268;font-size:13px;width:38%;vertical-align:top">${k}</td>
-         <td style="padding:7px 0;color:#1c1917;font-size:13px;vertical-align:top">${v}</td></tr>`,
-    )
-    .join('');
-
+  const cause = failed ? causeLine(t) : null;
   const tail = failed ? (t.failure?.logTail ?? []).slice(-6) : [];
-  const logHtml = tail.length
-    ? `<p style="margin:16px 0 6px;color:#7a7268;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase">Últimas líneas del log</p>
-       <pre style="margin:0;background:#1c1917;color:#f5efe6;border-radius:10px;padding:12px 14px;font-family:ui-monospace,monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word">${esc(tail.join('\n'))}</pre>`
-    : '';
+  const blocks: EmailBlock[] = [
+    ...(cause ? [{ kind: 'callout' as const, tone: tone.tone, text: `${provider} dice: ${cause}` }] : []),
+    { kind: 'facts', rows: facts },
+    ...(tail.length ? [{ kind: 'code' as const, title: 'Últimas líneas del log', lines: tail }] : []),
+  ];
 
-  const inspect = failed && last?.inspectorUrl ? `<a href="${last.inspectorUrl}" style="color:#c2410c;font-size:13px;margin-left:14px">Abrir el deploy en ${esc(provider)}</a>` : '';
-  const button = `<a href="${dashboardUrl}/app/infra" style="display:inline-block;background:#ff6b35;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;font-size:14px">Ver en roz</a>`;
-
-  const html = `<!doctype html><html><body style="margin:0;background:#f5efe6;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-    <table role="presentation" width="540" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e7dfd3">
-      <tr><td style="background:#1c1917;padding:18px 28px">
-        <span style="color:#ff6b35;font-size:18px;font-weight:800">roz</span>
-        <span style="color:#a8a096;font-size:13px;margin-left:8px">Roz-bot · infraestructura</span>
-      </td></tr>
-      <tr><td style="padding:24px 28px 4px">
-        <span style="display:inline-block;background:${tone.bg};color:${tone.accent};border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700">${esc(tone.tag)}</span>
-        <p style="margin:14px 0 18px;color:#1c1917;font-size:16px;line-height:1.5">${esc(hello)} ${esc(copy.body)}</p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #efe8dc">${rowsHtml}</table>
-        ${logHtml}
-      </td></tr>
-      <tr><td style="padding:20px 28px 26px">${button}${inspect}</td></tr>
-      <tr><td style="padding:14px 28px;border-top:1px solid #efe8dc">
-        <span style="color:#a8a096;font-size:12px">Te lo cuenta Roz-bot. Reviso tus servicios cada pocos minutos.</span>
-      </td></tr>
-    </table>
-  </td></tr></table>
-</body></html>`;
-
-  const textRows = rows.map(([k, v]) => `${k}: ${v.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')}`).join('\n');
-  const textLog = tail.length ? `\n\nÚltimas líneas del log:\n${tail.join('\n')}` : '';
-  const text = `${hello} ${copy.body}\n\n${textRows}${textLog}\n\nVer en roz: ${dashboardUrl}/app/infra\n\nRoz-bot`;
-
-  return { subject: `Roz: ${copy.title}`, html, text };
+  return renderEmailDoc({
+    subject: copy.title,
+    preheader: copy.body,
+    botFile: tone.bot,
+    section: 'Infraestructura',
+    kicker: tone.tag,
+    tone: tone.tone,
+    headline: copy.title,
+    // La causa va en su recuadro: en el texto no se repite.
+    lead: `${first ? `Hola ${first}. ` : ''}${cause ? copy.body.replace(`${provider} dice: ${cause}`, '').replace(/\s+/g, ' ').trim() : copy.body}`,
+    blocks,
+    cta: { label: 'Ver en roz', url: `${base}/infra` },
+    secondary: failed && last?.inspectorUrl ? { label: `Abrir el deploy en ${provider}`, url: last.inspectorUrl } : null,
+    reason: 'Reviso tus servicios cada pocos minutos y te aviso cuando cambian de estado.',
+    base,
+  });
 }
 
 /** Contenido compacto (título + cuerpo) para una notificación push de una transición. Reusa la
@@ -265,6 +250,7 @@ const TEMPLATE: Record<TransitionKind, string> = {
  */
 export async function notifyServiceTransitions(transitions: ServiceTransition[]): Promise<{ sent: number; failed: number }> {
   if (!transitions.length) return { sent: 0, failed: 0 };
+  await inboxTransitions(transitions);
   if (!config.resend.apiKey) return { sent: 0, failed: 0 };
   if (!(await emailEnabled())) return { sent: 0, failed: 0 }; // killswitch de equipo
 
@@ -292,4 +278,37 @@ export async function notifyServiceTransitions(transitions: ServiceTransition[])
     }
   }
   return { sent, failed };
+}
+
+/**
+ * Bandeja de zeus: un servicio caído o un deploy fallido es trabajo pendiente de alguien. Le queda a
+ * quien hizo el último deploy (si es dev de roz) o, sin autor conocido, a quien administra zeus. La
+ * recuperación no deja mensaje (no pide nada). Independiente del correo; nunca lanza.
+ */
+async function inboxTransitions(transitions: ServiceTransition[]): Promise<void> {
+  try {
+    const pending = transitions.filter((t) => t.kind !== 'up');
+    if (!pending.length) return;
+    // Import diferido: la bandeja arrastra config de zeus que el poller no necesita para el correo.
+    const { inboxNotice } = await import('../zeus/inbox.js');
+    let admins: string[] | null = null;
+    for (const t of pending) {
+      let targets: string[];
+      if (t.authorDevId) targets = [t.authorDevId];
+      else {
+        if (!admins) {
+          const { data } = await db().from('dev').select('id, role, zeus_admin').eq('active', true);
+          admins = ((data ?? []) as Array<{ id: string; role: string | null; zeus_admin: boolean | null }>).filter((d) => d.zeus_admin || d.role === 'ceo').map((d) => d.id);
+        }
+        targets = admins;
+      }
+      const marker = t.lastDeploy?.sha ?? t.lastSeenOkAt ?? t.providerStatus ?? '';
+      for (const devId of targets) {
+        const copy = serviceCopy(t, devId === t.authorDevId);
+        await inboxNotice({ toDevId: devId, subject: copy.title, body: copy.body, dedupeKey: `infra:${t.kind}:${t.externalRef}:${marker}:${devId}` });
+      }
+    }
+  } catch {
+    // best-effort: el correo y el push siguen su curso
+  }
 }

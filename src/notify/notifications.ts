@@ -13,9 +13,11 @@ import { sendEmail } from '../adapters/email.js';
 import { pushToDev, pushToEmail } from './push.js';
 import { emailAllowed, emailEnabled } from './switches.js';
 import { claimOnce, releaseOnce } from '../events/outbox.js';
+import { inboxNotice } from '../zeus/inbox.js';
 import {
   assignedNotice,
   documentedNotice,
+  dueLabel,
   dueNotice,
   meetingReadyNotice,
   prMergedNotice,
@@ -41,7 +43,7 @@ export interface AssignedPayload {
   auto?: boolean;
 }
 
-interface DevRow { id: string; name: string | null; email: string | null }
+interface DevRow { id: string; name: string | null; email: string | null; github_login?: string | null }
 
 const OPEN_STATUSES = ['planificada', 'pendiente', 'en_progreso', 'revision'];
 
@@ -52,7 +54,7 @@ function taskUrl(id?: string | null): string | null {
 
 async function devById(id?: string | null): Promise<DevRow | null> {
   if (!id) return null;
-  const { data } = await db().from('dev').select('id, name, email').eq('id', id).maybeSingle();
+  const { data } = await db().from('dev').select('id, name, email, github_login').eq('id', id).maybeSingle();
   return (data as DevRow | null) ?? null;
 }
 
@@ -69,15 +71,17 @@ export async function notifyProposerDone(opts: {
   name: string;
   url?: string | null;
 }): Promise<void> {
+  const supabase = db();
+  // Quien reportó suele ser del equipo: si lo es, se le habla por su nombre y le queda en su bandeja.
+  const { data: who } = await supabase.from('dev').select('id, name').ilike('email', opts.to).limit(1);
+  const reporter = (who as { id: string; name: string | null }[] | null)?.[0] ?? null;
+  const recipient = reporter?.name ?? null;
+  const notice = workDoneNotice({ seed: `done:${opts.identifier}`, recipient, identifier: opts.identifier, name: opts.name, url: opts.url });
+  if (reporter) await inboxNotice({ toDevId: reporter.id, subject: notice.subject, body: notice.body, dedupeKey: `done:${opts.identifier}:${reporter.id}` });
   // Killswitch: se omite el aviso sin lanzar, para que el evento del outbox cierre en vez de
   // reintentar hasta morir. El destinatario es un correo suelto (quien reportó), no un dev: solo
   // aplica el interruptor global.
   if (!(await emailEnabled())) return;
-  const supabase = db();
-  // Quien reportó suele ser del equipo: si lo es, se le habla por su nombre.
-  const { data: who } = await supabase.from('dev').select('name').ilike('email', opts.to).limit(1);
-  const recipient = (who as { name: string | null }[] | null)?.[0]?.name ?? null;
-  const notice = workDoneNotice({ seed: `done:${opts.identifier}`, recipient, identifier: opts.identifier, name: opts.name, url: opts.url });
   const { subject, html, text } = renderEmail(notice, config.dashboard.url);
   try {
     const res = await sendEmail({ to: opts.to, subject, html, text });
@@ -110,19 +114,7 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
   // Tomar una tarea uno mismo no necesita aviso.
   if (payload.actorDevId && payload.actorDevId === devId) return;
 
-  // Interruptores (global + el del dev) ANTES del guard anti-duplicado: si se consumiera el claim
-  // con los avisos apagados, al reencenderlos este dev ya nunca recibiría el correo.
-  if (!(await emailAllowed(devId))) return;
-
   const supabase = db();
-
-  // Guard anti-duplicado: el evento del outbox puede reintentarse (p.ej. si el envío fue OK
-  // pero el insert en `notification` falló). Reclamar aquí asegura UN solo correo por
-  // (issue, dev); si el efecto falla se libera para que el reintento sí pueda enviar.
-  const notifyKey = `notify-assign:${identifier}:${devId}`;
-  const firstTime = await claimOnce(notifyKey, 'notify-assign');
-  if (!firstTime) return;
-
   const dev = await devById(devId);
   const { data: wiData } = workItemId
     ? await supabase.from('work_item').select('name, url, priority, due_date, estimate, project_id').eq('id', workItemId).maybeSingle()
@@ -148,12 +140,37 @@ export async function notifyAssignment(payload: AssignedPayload): Promise<void> 
     seed: `assign:${identifier}:${devId}`,
     recipient: dev?.name,
     actor: actor?.name,
+    actorLogin: actor?.github_login ?? null,
     auto: !!payload.auto,
     previous: previous?.name,
     task: { identifier, name: wi?.name, project, priority: wi?.priority, dueDate: wi?.due_date, estimate: wi?.estimate },
     openBefore,
     url,
   });
+
+  // La bandeja de zeus va SIEMPRE (aunque el correo esté silenciado): es donde el dev ve lo que
+  // tiene pendiente al entrar. Idempotente por (tarea, dev).
+  await inboxNotice({
+    toDevId: devId,
+    subject: notice.subject,
+    body: notice.body,
+    fromDevId: payload.actorDevId ?? null,
+    projectId: wi?.project_id ?? null,
+    ref: wi?.project_id ? `project:${wi.project_id}` : null,
+    dedupeKey: `assign:${identifier}:${devId}`,
+  });
+
+  // Interruptores (global + el del dev) ANTES del guard anti-duplicado: si se consumiera el claim
+  // con los avisos apagados, al reencenderlos este dev ya nunca recibiría el correo.
+  if (!(await emailAllowed(devId))) return;
+
+  // Guard anti-duplicado: el evento del outbox puede reintentarse (p.ej. si el envío fue OK
+  // pero el insert en `notification` falló). Reclamar aquí asegura UN solo correo por
+  // (issue, dev); si el efecto falla se libera para que el reintento sí pueda enviar.
+  const notifyKey = `notify-assign:${identifier}:${devId}`;
+  const firstTime = await claimOnce(notifyKey, 'notify-assign');
+  if (!firstTime) return;
+
   const { subject, html, text } = renderEmail(notice, config.dashboard.url);
 
   if (!dev?.email) {
@@ -292,8 +309,19 @@ interface RepoNotifyPayload {
 export async function notifyRepoDetected(payload: RepoNotifyPayload): Promise<void> {
   const repo = payload.repo;
   if (!repo) return;
-  if (!(await emailEnabled())) return; // killswitch de equipo: nada que enviar, nada que reintentar
   const supabase = db();
+
+  // Un repo sin proyecto es trabajo pendiente de quien administra (vincularlo): le queda en su bandeja.
+  // Uno ya vinculado es solo informativo: no ensucia la bandeja de nadie.
+  if (!payload.linked) {
+    const { data: admins } = await supabase.from('dev').select('id, name, role, zeus_admin').eq('active', true);
+    for (const a of ((admins ?? []) as Array<{ id: string; name: string | null; role: string | null; zeus_admin: boolean | null }>).filter((d) => d.zeus_admin || d.role === 'ceo')) {
+      const n = repoDetectedNotice({ seed: `repo:${repo}:${a.id}`, recipient: a.name, repo, repoUrl: payload.repoUrl ?? null, projectName: null, linked: false });
+      await inboxNotice({ toDevId: a.id, subject: n.subject, body: n.lead.replace(/^Hola [^.]+\. /, ''), ref: /^[\w.-]+\/[\w.-]+$/.test(repo) ? `repo:${repo}` : null, dedupeKey: `repo:${repo}:${a.id}` });
+    }
+  }
+
+  if (!(await emailEnabled())) return; // killswitch de equipo: nada que enviar, nada que reintentar
 
   const { data } = await supabase.from('dev').select('id, name, email').eq('active', true).not('email', 'is', null);
   const devs = (data ?? []) as DevRow[];
@@ -381,6 +409,7 @@ export async function notifyPrMerged(input: {
         seed: `pr-merged:${pr.repo}:${pr.number}:${dev.id}`,
         recipient: dev.name,
         merger: merger.name ?? input.mergedByLogin,
+        mergerLogin: merger.github_login ?? input.mergedByLogin,
         pr: { ...pr, url: prUrl(pr.repo, pr.number) },
         reviewers: reviewers.filter((r) => r.id !== dev.id).map((r) => r.name ?? r.github_login),
       });
@@ -412,9 +441,21 @@ export async function notifyPrReviewed(input: {
           seed: `pr-review:${pr.repo}:${pr.number}:${review.login}:${state}`,
           recipient: dev.name,
           reviewer: reviewer?.name ?? review.login,
+          reviewerLogin: review.login,
           state: state as ReviewState,
           pr: { ...pr, url: prUrl(pr.repo, pr.number) },
         });
+        // Aprobada (toca integrar) o con cambios pedidos (toca ajustar): pendiente real, va a la bandeja.
+        if (state !== 'commented') {
+          await inboxNotice({
+            toDevId: dev.id,
+            subject: notice.subject,
+            body: `${notice.body}. ${prUrl(pr.repo, pr.number)}`,
+            fromDevId: reviewer?.id ?? null,
+            ref: `repo:${pr.repo}`,
+            dedupeKey: `pr-review:${pr.repo}:${pr.number}:${review.login.toLowerCase()}:${state}:${dev.id}`,
+          });
+        }
         await pushToDev(
           dev.id,
           dev.email,
@@ -453,6 +494,17 @@ export async function notifyMeetingReady(input: {
       project,
       url,
     });
+    // Candidatas por decidir = pendiente de quien subió la junta.
+    if (input.candidates > 0) {
+      await inboxNotice({
+        toDevId: dev.id,
+        subject: notice.subject,
+        body: `${notice.body}. ${url}`,
+        projectId: input.projectId ?? null,
+        ref: input.projectId ? `project:${input.projectId}` : null,
+        dedupeKey: `meeting:${input.meetingId}`,
+      });
+    }
     await pushToDev(dev.id, dev.email, toPush(notice, { url, tag: `meeting:${input.meetingId}`, data: { kind: 'meeting_ready', meetingId: input.meetingId } }), 'meeting_ready');
   } catch { /* best-effort */ }
 }
@@ -500,6 +552,12 @@ export async function notifyDueTasks(now: Date = new Date()): Promise<DueReminde
       const items: DueItem[] = list.map((r) => ({ identifier: r.identifier, name: r.name, dueDate: r.due_date, project: r.project_id ? projName.get(r.project_id) ?? null : null, url: taskUrl(r.id) }));
       const listUrl = `${config.dashboard.url}/app/tasks`;
       const notice = dueNotice({ seed: `due:${devId}:${day}`, recipient: dev.name, items, now, listUrl });
+      await inboxNotice({
+        toDevId: devId,
+        subject: notice.subject,
+        body: items.map((it) => `${it.identifier} ${it.name} (${dueLabel(it.dueDate, now) ?? it.dueDate})`).join('\n'),
+        dedupeKey: `due:${devId}:${day}`,
+      });
       await pushToDev(devId, dev.email, toPush(notice, { url: (items.length === 1 ? items[0]!.url : null) ?? listUrl, tag: `due:${devId}` }), 'task_due', { urgency: 'high' });
       devs++;
       tasks += list.length;

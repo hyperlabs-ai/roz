@@ -49,6 +49,7 @@ describe('espejo de tipos de zeus (back ↔ front)', () => {
       'ZeusGraph', 'ZeusGraphNode', 'ZeusGraphEdge', 'ZeusNodeSummary', 'ZeusNodeDetail', 'ZeusNodeInput', 'ZeusSearchHit',
       'ZeusOrg', 'ZeusOrgMember', 'ZeusMe', 'ZeusTokenSummary', 'ZeusRequest', 'ZeusMessage', 'ZeusInbox', 'ZeusSource',
       'ZeusActivityEvent', 'ZeusVaultKey', 'ZeusVaultOverview',
+      'ZeusMcpStatus', 'ZeusMcpServer', 'ZeusMcpConnection', 'ZeusMcpActivityStats', 'ZeusMcpPending', 'ZeusMcpPendingItem', 'ZeusMcpRunner', 'ZeusMcpSources',
     ]) {
       expect(shared, name).toContain(name);
     }

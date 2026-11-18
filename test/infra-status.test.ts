@@ -114,7 +114,7 @@ describe('redacción de avisos', () => {
   };
   it('deploy fallido: nombra al autor, el paso, la causa y que producción sigue arriba', () => {
     const c = serviceCopy(base);
-    expect(c.title).toBe('Falló un deploy en hyperflow-core · Hyperflow');
+    expect(c.title).toBe('Falló un deploy de hyperflow-core en Hyperflow');
     expect(c.body).toContain('El deploy de Alan en hyperflow-core (main) falló en el paso buildStep.');
     expect(c.body).toContain('BUILD_FAILED: Command "npm run build" exited with 1');
     expect(c.body).toContain('Producción sigue en línea con el deploy anterior (abcdef1');
@@ -122,7 +122,7 @@ describe('redacción de avisos', () => {
   });
   it('caída no se confunde con deploy fallido y ningún aviso usa guion largo', () => {
     const down = serviceCopy({ ...base, kind: 'down', status: 'down', serving: null, lastSeenOkAt: '2026-11-11T09:00:00.000Z' });
-    expect(down.title).toBe('hyperflow-core está caído · Hyperflow');
+    expect(down.title).toBe('hyperflow-core de Hyperflow está caído');
     const up = renderServicePush({ ...base, kind: 'up', downtimeMs: 45 * 60_000 });
     expect(up.body).toContain('volvió a estar en línea tras 45 min fuera');
     for (const s of [down.title, down.body, up.title, up.body, serviceCopy(base).body]) expect(s).not.toContain('—');

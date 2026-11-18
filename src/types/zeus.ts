@@ -298,6 +298,106 @@ export interface ZeusActivityEvent {
   detail: Record<string, unknown>;
 }
 
+// ---------------------------------------------------------------- estado del MCP
+
+/** El servidor MCP de zeus tal como lo ve Claude Code al conectarse. */
+export interface ZeusMcpServer {
+  name: string;
+  version: string;
+  /** Cuándo arrancó este proceso de zeus. */
+  startedAt: string;
+  uptimeSec: number;
+  tools: number;
+  /** Las que también ve un runner (solo lectura). */
+  readOnlyTools: number;
+  prompts: string[];
+  /** Largo de las instrucciones que hacen de "skill". */
+  instructionsChars: number;
+}
+
+/** Una persona conectada a zeus: sus tokens y cuándo la usó su Claude (MCP) o su CLI. */
+export interface ZeusMcpConnection {
+  devId: string;
+  name: string;
+  githubLogin: string | null;
+  email: string | null;
+  tokens: number;
+  lastTokenUseAt: string | null;
+  lastMcpAt: string | null;
+  lastCliAt: string | null;
+  events24h: number;
+  events7d: number;
+  /** Tiene un runner latiendo ahora. */
+  runnerOnline: boolean;
+}
+
+export interface ZeusMcpActivityStats {
+  events24h: number;
+  events7d: number;
+  mcp24h: number;
+  cli24h: number;
+  activeDevs24h: number;
+  activeDevs7d: number;
+  /** Eventos MCP+CLI por hora en las últimas 24 h (24 cubetas, la última = la hora en curso). */
+  hourly: number[];
+  topActions: Array<{ action: string; count: number }>;
+}
+
+export interface ZeusMcpPendingItem {
+  kind: 'task' | 'plan' | 'request' | 'agent_plan';
+  id: string;
+  title: string;
+  from: string | null;
+  to: string | null;
+  status: string;
+  at: string;
+}
+
+export interface ZeusMcpPending {
+  tasks: number;
+  plans: number;
+  requests: number;
+  /** Planes del planificador esperando un runner. */
+  queuedPlans: number;
+  /** Planes corriendo ahora en la PC de alguien. */
+  runningPlans: number;
+  items: ZeusMcpPendingItem[];
+}
+
+export interface ZeusMcpRunner {
+  id: string;
+  devId: string;
+  devName: string;
+  name: string;
+  platform: string | null;
+  lastSeenAt: string | null;
+  online: boolean;
+}
+
+export interface ZeusMcpSources {
+  total: number;
+  withDocs: number;
+  empty: number;
+  errored: number;
+  pending: number;
+  docs: number;
+  lastSyncedAt: string | null;
+  /** Solo los repos que piden atención (con error o pendientes de leer). */
+  attention: ZeusSource[];
+}
+
+/** Vista del MCP para el dashboard: estado, conexiones, último trabajo, pendientes, runners, ingesta. */
+export interface ZeusMcpStatus {
+  server: ZeusMcpServer;
+  connections: ZeusMcpConnection[];
+  activity: ZeusMcpActivityStats;
+  recent: ZeusActivityEvent[];
+  pending: ZeusMcpPending;
+  runners: ZeusMcpRunner[];
+  sources: ZeusMcpSources;
+  now: string;
+}
+
 // ---------------------------------------------------------------- bóveda
 
 export interface ZeusVaultKey {

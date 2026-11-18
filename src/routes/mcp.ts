@@ -18,6 +18,7 @@ import { authenticateRunner } from '../plans/runners.js';
 import { looksLikeRunnerToken } from '../plans/tokens.js';
 import { actorForDev, authenticateZeusToken, looksLikeZeusToken, type ZeusActor } from '../zeus/core.js';
 import { ZEUS_MCP_INSTRUCTIONS, ZEUS_MCP_PROMPTS, zeusTools, zeusToolsByName } from '../zeus/mcp.js';
+import { MCP_SERVER_VERSION } from '../zeus/mcp-status.js';
 
 export const mcpRoutes = new Hono<RozContext>();
 
@@ -105,7 +106,7 @@ mcpRoutes.post('/', async (c) => {
         rpcResult(id, {
           protocolVersion: PROTOCOL_VERSION,
           capabilities: caller.kind === 'full' ? { tools: {} } : { tools: {}, prompts: {} },
-          serverInfo: { name: 'zeus', version: '0.3.0' },
+          serverInfo: { name: 'zeus', version: MCP_SERVER_VERSION },
           // Las instrucciones hacen de "skill" sin instalar nada: Claude Code las carga solo al conectarse.
           ...(caller.kind === 'full' ? {} : { instructions: ZEUS_MCP_INSTRUCTIONS }),
         }),

@@ -22,12 +22,13 @@ interface DevRow {
   id: string;
   name: string;
   email: string | null;
+  github_login: string | null;
 }
 
 async function devsById(ids: Array<string | null>): Promise<Map<string, DevRow>> {
   const uniq = [...new Set(ids.filter((x): x is string => !!x))];
   if (!uniq.length) return new Map();
-  const { data, error } = await db().from('dev').select('id, name, email').in('id', uniq);
+  const { data, error } = await db().from('dev').select('id, name, email, github_login').in('id', uniq);
   if (error) throw error;
   return new Map(((data ?? []) as DevRow[]).map((d) => [d.id, d]));
 }
@@ -91,6 +92,7 @@ export async function mailWorkEvent(messageId: string, event: ZeusWorkEvent): Pr
       seed: `zeus:${m.id}:${event}`,
       recipient: recipient.name,
       actor: actorId ? (devs.get(actorId)?.name ?? null) : null,
+      actorLogin: actorId ? (devs.get(actorId)?.github_login ?? null) : null,
       kind: m.kind,
       event,
       title: m.subject ?? '',

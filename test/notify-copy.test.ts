@@ -126,7 +126,9 @@ describe('redacción de avisos', () => {
   it('el correo trae el detalle estructurado, el avatar de Roz-bot y el botón', () => {
     const n = all('a').assigned!;
     const mail = renderEmail(n, 'https://roz.example/');
-    expect(mail.html).toContain('https://roz.example/brand/roz-bot.png');
+    // Cabecera ilustrada e ícono de la sección (PNG: Gmail no muestra SVG).
+    expect(mail.html).toContain('https://roz.example/brand/email/hero-tareas.png');
+    expect(mail.html).toContain('https://roz.example/brand/email/badge-tareas.png');
     expect(mail.html).toContain('Abrir tarea');
     expect(mail.text).toContain('Proyecto: HyperHub');
     expect(mail.text).toContain('Asignó: Manuel');
