@@ -542,7 +542,9 @@ export async function envStatus(ctx: Ctx, args: string[]): Promise<number> {
     }
     if ((await ctx.fs.read(file)) == null) {
       if (opts.json) ctx.out(JSON.stringify([{ file, projectKey: t.projectKey, env: t.env, error: 'no existe' }]));
-      else ctx.out(`${file} no existe: \`zeus env pull ${t.projectKey} ${t.env}\` lo crea`);
+      else if (!t.exists) {
+        ctx.out(`${label(t)} no existe en la bóveda${t.repo ? '' : ' (estás fuera de un repo: corre el comando dentro del repo para usar sus entornos)'}. Ve los que hay con \`zeus env ls\`.`);
+      } else ctx.out(`${file} no existe: \`zeus env pull ${t.projectKey} ${t.repo ? t.stage : t.env}\` lo crea`);
       return 0;
     }
     results = [await fileStatus(ctx, key, file, t, t.stage === 'development' ? await exampleNames(ctx) : null)];

@@ -54,7 +54,9 @@ export async function envInit(ctx: Ctx, args: string[]): Promise<number> {
   }
   await rememberKeys(ctx.fs, ctx.home, [{ keyId: key.keyId, fingerprint: key.fingerprint }]);
   ctx.out(`${label(t)} creado; este equipo (${key.name}) es el primero con acceso.`);
-  ctx.out(`siguiente: \`zeus env push ${t.projectKey} ${t.env}\` para subir tu .env y \`zeus env grant ${t.projectKey} ${t.env} --to <dev>\` para dar acceso.`);
+  // Dentro del repo basta la etapa (el estándar arma el nombre); fuera, el nombre completo.
+  const ref = t.repo ? t.stage : t.env;
+  ctx.out(`siguiente: \`zeus env push ${t.projectKey} ${ref}\` para subir tu archivo y \`zeus env grant ${t.projectKey} ${ref} --to <dev>\` para dar acceso.`);
   return 0;
 }
 
