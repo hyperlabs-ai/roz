@@ -982,7 +982,10 @@ describe('bóveda de punta a punta (cifrado real del CLI contra el servidor)', (
     });
     const text = ((await res.json()) as any).result.content[0].text as string;
     const data = JSON.parse(text);
-    expect(data.envs[0]).toMatchObject({ name: E, variables: ['DATABASE_URL', 'NUEVA', 'STRIPE_KEY'], youHaveAccess: false, pull: 'zeus env pull ORWEL development' });
+    expect(data.envs[0]).toMatchObject({ name: E, youHaveAccess: false, pull: 'zeus env pull ORWEL development' });
+    expect(data.envs[0].variables.map((v: { name: string }) => v.name)).toEqual(['DATABASE_URL', 'NUEVA', 'STRIPE_KEY']);
+    // Versión y quién la cambió (lo que el agente usa para decir "Fer cambió STRIPE_KEY ayer").
+    expect(data.envs[0].variables[0]).toMatchObject({ version: expect.any(Number), updatedAt: expect.any(String) });
     expect(text).not.toContain('zs1.');
   });
 

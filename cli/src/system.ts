@@ -1,7 +1,7 @@
 // Implementaciones reales de lo que los comandos reciben inyectado: disco, terminal y procesos.
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import type { FileOps, Prompter, SpawnFn } from './context.js';
@@ -36,7 +36,64 @@ export const realFs: FileOps = {
       throw err;
     }
   },
+  async list(dir) {
+    try {
+      return (await readdir(dir, { withFileTypes: true })).filter((d) => d.isFile()).map((d) => d.name);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw err;
+    }
+  },
 };
+
+// ---------------------------------------------------------------- portapapeles, navegador, stdin
+
+/** Corre un programa y devuelve su stdout. Sin shell: los argumentos no se interpretan. */
+function capture(file: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { encoding: 'utf8', maxBuffer: 1024 * 1024, windowsHide: true }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  });
+}
+
+export async function realClipboard(): Promise<string> {
+  const attempts: Array<[string, string[]]> =
+    process.platform === 'win32'
+      ? [['powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-Clipboard -Raw']]]
+      : process.platform === 'darwin'
+        ? [['pbpaste', []]]
+        : [
+            ['wl-paste', ['--no-newline']],
+            ['xclip', ['-selection', 'clipboard', '-o']],
+            ['xsel', ['--clipboard', '--output']],
+          ];
+  for (const [file, args] of attempts) {
+    try {
+      // Un solo salto final lo agrega la terminal o Get-Clipboard, no es parte del valor.
+      return (await capture(file, args)).replace(/\r?\n$/, '');
+    } catch {
+      // siguiente opción
+    }
+  }
+  throw new Error('no se pudo leer el portapapeles (en Linux instala wl-clipboard o xclip); usa --from-file o stdin');
+}
+
+export async function realOpenUrl(url: string): Promise<void> {
+  const [file, args]: [string, string[]] =
+    process.platform === 'win32' ? ['rundll32.exe', ['url.dll,FileProtocolHandler', url]] : process.platform === 'darwin' ? ['open', [url]] : ['xdg-open', [url]];
+  await new Promise<void>((resolve) => {
+    const child = spawn(file, args, { stdio: 'ignore', detached: true, windowsHide: true });
+    child.on('error', () => resolve());
+    child.unref();
+    resolve();
+  });
+}
+
+export async function realStdin(): Promise<string> {
+  if (process.stdin.isTTY) return '';
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 // ---------------------------------------------------------------- terminal
 

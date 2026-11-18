@@ -18,6 +18,7 @@ import {
   createToken,
   getInbox,
   getMe,
+  getMessage,
   listActivity,
   listTokens,
   markRead,
@@ -25,11 +26,16 @@ import {
   resolveRequest,
   revokeToken,
   sendMessage,
+  setMessageStatus,
+  sharePlan,
 } from '../zeus/inbox.js';
+import { ZEUS_MESSAGE_STATUSES, type ZeusMessageStatus } from '../types/zeus.js';
 import { listSources, markSourceDirty, reimportNode } from '../zeus/ingest.js';
 import { archiveNode, createEdge, createNode, deleteEdge, getNodeDetail, listNodes, searchNodes, updateNode } from '../zeus/nodes.js';
 import {
   createEnv,
+  envHistory,
+  envHistoryMeta,
   grantAccess,
   listKeys,
   listProjectsForCli,
@@ -38,6 +44,7 @@ import {
   registerKey,
   revokeAccess,
   revokeKey,
+  rotateDeviceKey,
   rotateEnv,
   vaultOverview,
 } from '../zeus/vault.js';
@@ -174,7 +181,43 @@ zeusDashboardRoutes.post(
   '/messages',
   web(async (c, actor) => {
     const b = await body(c);
-    return sendMessage({ to: String(b.toDevId ?? ''), subject: b.subject ?? null, body: String(b.body ?? ''), ref: b.ref ?? null }, actor);
+    return sendMessage(
+      {
+        to: String(b.toDevId ?? ''),
+        subject: b.subject ?? null,
+        body: String(b.body ?? ''),
+        ref: b.ref ?? null,
+        kind: b.kind === 'task' ? 'task' : 'message',
+        projectKey: b.projectKey ? String(b.projectKey) : null,
+      },
+      actor,
+    );
+  }),
+);
+zeusDashboardRoutes.post(
+  '/plans',
+  web(async (c, actor) => {
+    const b = await body(c);
+    return sharePlan(
+      {
+        to: String(b.toDevId ?? ''),
+        title: String(b.title ?? ''),
+        plan: String(b.plan ?? ''),
+        projectKey: b.projectKey ? String(b.projectKey) : null,
+        revises: b.revises ? String(b.revises) : null,
+      },
+      actor,
+    );
+  }),
+);
+zeusDashboardRoutes.get('/messages/:id', web((c, actor) => getMessage(param(c, 'id'), actor)));
+zeusDashboardRoutes.post(
+  '/messages/:id/status',
+  web(async (c, actor) => {
+    const b = await body(c);
+    const status = String(b.status ?? '');
+    if (!(ZEUS_MESSAGE_STATUSES as readonly string[]).includes(status)) throw new ValidationError('estado inválido');
+    return setMessageStatus(param(c, 'id'), status as ZeusMessageStatus, b.note ? String(b.note) : null, actor);
   }),
 );
 zeusDashboardRoutes.post(
@@ -216,6 +259,7 @@ zeusDashboardRoutes.post(
 zeusDashboardRoutes.get('/activity', web((c) => listActivity(c.req.query('since') ?? null)));
 
 zeusDashboardRoutes.get('/vault', web(() => vaultOverview()));
+zeusDashboardRoutes.get('/vault/envs/:projectKey/:env/history', web((c) => envHistoryMeta(param(c, 'projectKey'), param(c, 'env'), c.req.query('name') || null)));
 zeusDashboardRoutes.post(
   '/vault/keys/:id/revoke',
   web(async (c, actor) => {
@@ -288,8 +332,47 @@ zeusCliRoutes.post(
     return rotateEnv(
       param(c, 'projectKey'),
       param(c, 'env'),
-      { keyId: String(b.keyId ?? ''), dekVersion: Number(b.dekVersion), grants: Array.isArray(b.grants) ? b.grants : [], secrets: Array.isArray(b.secrets) ? b.secrets : [] },
+      {
+        keyId: String(b.keyId ?? ''),
+        dekVersion: Number(b.dekVersion),
+        grants: Array.isArray(b.grants) ? b.grants : [],
+        secrets: Array.isArray(b.secrets) ? b.secrets : [],
+        // Un CLI anterior al historial no manda el campo (ver zeus_vault_rotate).
+        ...(Array.isArray(b.revisions) ? { revisions: b.revisions } : {}),
+      },
       actor,
     );
+  }),
+);
+
+zeusCliRoutes.get(
+  '/vault/envs/:projectKey/:env/history',
+  cli((c, actor) => envHistory(param(c, 'projectKey'), param(c, 'env'), c.req.query('keyId') ?? '', c.req.query('name') || null, actor)),
+);
+
+zeusCliRoutes.post(
+  '/vault/keys/rotate',
+  cli(async (c, actor) => {
+    const b = await body(c);
+    return rotateDeviceKey(
+      { oldKeyId: String(b.oldKeyId ?? ''), newKeyId: String(b.newKeyId ?? ''), grants: Array.isArray(b.grants) ? b.grants : [], compromised: !!b.compromised },
+      actor,
+    );
+  }),
+);
+
+// Resumen para `zeus doctor` y el inicio de sesión de Claude: pendientes, sin cuerpos largos.
+zeusCliRoutes.get(
+  '/inbox',
+  cli(async (_c, actor) => {
+    const inbox = await getInbox(actor, { unreadOnly: true, limit: 20 });
+    const brief = (m: (typeof inbox.open)[number]) => ({ id: m.id, kind: m.kind, from: m.fromName, to: m.toName, subject: m.subject, status: m.status, at: m.createdAt });
+    return {
+      unread: inbox.unread,
+      open: inbox.open.map(brief),
+      waiting: inbox.waiting.map(brief),
+      envChanges: inbox.messages.filter((m) => m.kind === 'env_change').map(brief),
+      toResolve: inbox.toResolve.length,
+    };
   }),
 );

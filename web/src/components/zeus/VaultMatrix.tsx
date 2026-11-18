@@ -3,14 +3,14 @@
 // registra su llave aparece como columna fantasma, y sin entornos la matriz se queda con filas
 // fantasma: vacía conserva la misma geometría. El detalle de un entorno (nombres de variables,
 // equipos con acceso, comandos) se abre en un modal.
-import { Fragment, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, Laptop, ShieldAlert } from 'lucide-react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, History, Laptop, Loader2, ShieldAlert } from 'lucide-react';
 import { PersonAvatar, ProjectIcon } from '@/components/avatars';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import type { ZeusMe, ZeusOrgMember, ZeusVaultEnvSummary, ZeusVaultKey } from '@/lib/zeus';
+import { zeusApi, type ZeusMe, type ZeusOrgMember, type ZeusVaultEnvSummary, type ZeusVaultKey, type ZeusVaultRevisionMeta } from '@/lib/zeus';
 import { CmdLine } from './zeus-steps';
 import { RailTitle, ago, dateTime } from './zeus-ui';
 
@@ -36,6 +36,14 @@ export interface VaultProject {
 }
 
 const firstName = (s: string) => s.trim().split(/\s+/)[0] ?? s;
+
+/** Lo que se hace con un entorno ya subido: [etiqueta, comando, para qué]. */
+const DAILY_COMMANDS: Array<[string, string, string]> = [
+  ['Bajar', 'zeus env pull <proyecto> [entorno]', 'Trae un entorno y lo descifra en tu máquina (development → .env, production → .env.production).'],
+  ['Ver qué te falta', 'zeus env status', 'Compara tus .env con la bóveda: qué falta, qué está viejo y qué cambiaste sin subir. Solo nombres.'],
+  ['Rotar lo marcado', 'zeus env rotate --all', 'Llave nueva y todo vuelto a cifrar en cada entorno marcado. Hazlo después de quitar un acceso.'],
+  ['Dar acceso a todo', 'zeus env grant --all --to <dev>', 'Una sola verificación de huella para todos los entornos a los que tienes acceso (--env para solo uno).'],
+];
 
 function Legend() {
   return (
@@ -217,23 +225,74 @@ export function VaultMatrix({
       </div>
 
       {/* Día a día: lo que se hace con un entorno ya subido. */}
-      <div className="grid gap-x-5 gap-y-2 border-t bg-sidebar px-4 py-2.5 2xl:grid-cols-2">
-        <div className="flex min-w-0 items-center gap-2.5" title="Trae un entorno y lo descifra en tu máquina.">
-          <span className="label-caps shrink-0 text-foreground/80">Bajar</span>
-          <CmdLine className="min-w-0 flex-1" command="zeus env pull <proyecto> [entorno]" />
-        </div>
-        <div className="flex min-w-0 items-center gap-2.5" title="Llave nueva y todo vuelto a cifrar. Hazlo después de quitar un acceso: lo ya visto no se des-enseña.">
-          <span className="label-caps shrink-0 text-foreground/80">Rotar tras quitar un acceso</span>
-          <CmdLine className="min-w-0 flex-1" command="zeus env rotate" />
-        </div>
+      <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 border-t bg-sidebar px-4 py-2.5 2xl:grid-cols-[max-content_minmax(0,1fr)_max-content_minmax(0,1fr)]">
+        {DAILY_COMMANDS.map(([label, command, title]) => (
+          <Fragment key={label}>
+            <span className="label-caps text-foreground/80" title={title}>{label}</span>
+            <CmdLine className="min-w-0" command={command} />
+          </Fragment>
+        ))}
       </div>
     </Card>
+  );
+}
+
+/** Versiones de una variable: quién y cuándo, cuáles se borraron, y el comando para volver a una. */
+function VarHistory({ projectKey, env, name }: { projectKey: string; env: string; name: string }) {
+  const [rows, setRows] = useState<ZeusVaultRevisionMeta[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pick, setPick] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    zeusApi
+      .vaultHistory(projectKey, env, name)
+      .then((r) => live && setRows(r.revisions))
+      .catch((e: unknown) => live && setError(e instanceof Error ? e.message : 'No se pudo cargar el historial'));
+    return () => {
+      live = false;
+    };
+  }, [projectKey, env, name]);
+  if (error) return <p className="px-1 pb-1.5 text-[11.5px] text-red">{error}</p>;
+  if (!rows) return <p className="flex items-center gap-1.5 px-1 pb-1.5 text-[11.5px] text-muted-foreground"><Loader2 className="size-3 animate-spin" /> Cargando versiones…</p>;
+  const restorable = (r: ZeusVaultRevisionMeta) => !r.current && !r.deleted && r.readable;
+  return (
+    <div className="grid gap-1.5 pb-2 pl-1">
+      <ol className="grid gap-0.5 border-l pl-2.5">
+        {rows.map((r) => (
+          <li key={r.version}>
+            <button
+              type="button"
+              disabled={!restorable(r)}
+              onClick={() => setPick(pick === r.version ? null : r.version)}
+              className={cn(
+                'flex w-full items-baseline gap-2 rounded-sm px-1 py-0.5 text-left text-[11.5px]',
+                restorable(r) ? 'hover:bg-panel' : 'cursor-default',
+                pick === r.version && 'bg-panel',
+              )}
+              title={restorable(r) ? 'Ver el comando para volver a esta versión' : undefined}
+            >
+              <span className="w-7 shrink-0 tabular-nums text-faint">v{r.version}</span>
+              <span className={cn('shrink-0', r.current ? 'font-medium text-foreground' : 'text-muted-foreground')}>
+                {r.current ? 'actual' : r.deleted ? 'borrada' : !r.readable ? 'ilegible' : 'anterior'}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground" title={dateTime(r.setAt)}>
+                {r.setByName ?? 'alguien'} · {ago(r.setAt)}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      {rows.length === 1 && <p className="text-[11px] text-faint">Sin versiones anteriores todavía.</p>}
+      {pick != null && <CmdLine wrap className="mr-1" command={`zeus env restore ${projectKey} ${env} ${name} --version ${pick}`} />}
+    </div>
   );
 }
 
 /** Detalle de un entorno: nombres de variables (nunca valores), equipos con acceso y sus comandos. */
 export function VaultEnvDialog({ env, onClose }: { env: ZeusVaultEnvSummary | null; onClose: () => void }) {
   const stale = env ? env.secrets.filter((s) => s.stale).length : 0;
+  const [openVar, setOpenVar] = useState<string | null>(null);
+  useEffect(() => setOpenVar(null), [env?.id]);
   return (
     <Dialog open={!!env} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-2xl">
@@ -267,15 +326,25 @@ export function VaultEnvDialog({ env, onClose }: { env: ZeusVaultEnvSummary | nu
                 {env.secrets.length === 0 ? (
                   <p className="text-xs text-muted-foreground">Entorno vacío. Súbelas con <code className="font-mono">zeus env push</code>.</p>
                 ) : (
-                  <ul className="scroll-thin grid max-h-72 gap-px overflow-y-auto rounded-md border px-2.5 py-1.5">
+                  <ul className="scroll-thin grid max-h-80 gap-px overflow-y-auto rounded-md border px-2.5 py-1.5">
                     {env.secrets.map((s) => (
-                      <li key={s.name} className="flex items-baseline gap-2 py-1 text-xs">
-                        <span className="min-w-0 flex-1 truncate font-mono text-[12px]" title={s.name}>{s.name}</span>
-                        {s.stale && <Badge variant="human" className="px-1.5 py-0 text-[10px]" title="Cifrada con una versión anterior de la llave del entorno">llave vieja</Badge>}
-                        <span className="shrink-0 tabular-nums text-faint">v{s.version}</span>
-                        <span className="hidden shrink-0 text-muted-foreground sm:inline" title={dateTime(s.updatedAt)}>
-                          {s.updatedByName ? `${s.updatedByName} · ` : ''}{ago(s.updatedAt)}
-                        </span>
+                      <li key={s.name} className="grid">
+                        <button
+                          type="button"
+                          className="flex items-baseline gap-2 rounded-sm py-1 text-left text-xs hover:bg-panel focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={() => setOpenVar(openVar === s.name ? null : s.name)}
+                          aria-expanded={openVar === s.name}
+                          title="Ver sus versiones"
+                        >
+                          <History className={cn('size-3 shrink-0 self-center text-faint', openVar === s.name && 'text-foreground')} />
+                          <span className="min-w-0 flex-1 truncate font-mono text-[12px]" title={s.name}>{s.name}</span>
+                          {s.stale && <Badge variant="human" className="px-1.5 py-0 text-[10px]" title="Cifrada con una versión anterior de la llave del entorno">llave vieja</Badge>}
+                          <span className="shrink-0 tabular-nums text-faint">v{s.version}</span>
+                          <span className="hidden shrink-0 text-muted-foreground sm:inline" title={dateTime(s.updatedAt)}>
+                            {s.updatedByName ? `${s.updatedByName} · ` : ''}{ago(s.updatedAt)}
+                          </span>
+                        </button>
+                        {openVar === s.name && <VarHistory projectKey={env.projectKey} env={env.name} name={s.name} />}
                       </li>
                     ))}
                   </ul>
@@ -307,9 +376,27 @@ export function VaultEnvDialog({ env, onClose }: { env: ZeusVaultEnvSummary | nu
               </section>
             </div>
 
-            <div className="grid gap-1.5">
-              <span className="label-caps">Bajar estas variables a tu máquina</span>
-              <CmdLine command={`zeus env pull ${env.projectKey} ${env.name}`} />
+            <div className="grid gap-x-4 gap-y-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <span className="label-caps">Bajar a tu máquina</span>
+                <CmdLine command={`zeus env pull ${env.projectKey} ${env.name}`} />
+              </div>
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <span className="label-caps">Ver qué te falta</span>
+                <CmdLine command={`zeus env status ${env.projectKey} ${env.name}`} />
+              </div>
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <span className="label-caps">Cambiar una (copia el valor antes)</span>
+                <CmdLine wrap command={`zeus env set ${env.projectKey} ${env.name} NOMBRE --from-clipboard`} />
+              </div>
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <span className="label-caps">Comparar con {env.name === 'production' ? 'development' : 'production'}</span>
+                <CmdLine wrap command={`zeus env diff ${env.projectKey} ${env.name} ${env.name === 'production' ? 'development' : 'production'}`} />
+              </div>
+              <div className="flex min-w-0 flex-col gap-1.5 sm:col-span-2">
+                <span className="label-caps">Ver y editar valores en tu navegador (solo en tu PC)</span>
+                <CmdLine command={`zeus env ui ${env.projectKey} ${env.name}`} />
+              </div>
             </div>
           </>
         )}

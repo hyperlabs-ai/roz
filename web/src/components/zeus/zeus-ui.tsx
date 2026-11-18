@@ -10,8 +10,8 @@ import { useApi } from '@/lib/useApi';
 import { cn } from '@/lib/utils';
 import {
   zeusApi,
-  type ZeusActivityEvent, type ZeusEdgeKind, type ZeusGraphKind, type ZeusMe, type ZeusNodeStatus, type ZeusRequestKind,
-  type ZeusRequestStatus,
+  type ZeusActivityEvent, type ZeusEdgeKind, type ZeusGraphKind, type ZeusMe, type ZeusMessageKind, type ZeusMessageStatus,
+  type ZeusNodeStatus, type ZeusRequestKind, type ZeusRequestStatus,
 } from '@/lib/zeus';
 
 type Icon = typeof FileText;
@@ -134,6 +134,23 @@ export const REQUEST_STATUS: Record<ZeusRequestStatus, { label: string; variant:
   approved: { label: 'Aprobada', variant: 'ok' },
   denied: { label: 'Denegada', variant: 'bad' },
   cancelled: { label: 'Cancelada', variant: 'secondary' },
+};
+
+export const MESSAGE_KIND_LABEL: Record<ZeusMessageKind, string> = {
+  message: 'Mensaje',
+  task: 'Encargo',
+  plan: 'Plan',
+  env_change: 'Variables',
+};
+
+export const MESSAGE_STATUS: Record<ZeusMessageStatus, { label: string; variant: BadgeVariant }> = {
+  pending: { label: 'Pendiente', variant: 'human' },
+  accepted: { label: 'En curso', variant: 'info' },
+  changes_requested: { label: 'Pidió ajustes', variant: 'warn' },
+  declined: { label: 'Rechazado', variant: 'bad' },
+  done: { label: 'Hecho', variant: 'ok' },
+  cancelled: { label: 'Retirado', variant: 'secondary' },
+  superseded: { label: 'Reemplazado', variant: 'secondary' },
 };
 
 const VIA_LABEL: Record<string, string> = { mcp: 'MCP', web: 'la web', cli: 'el CLI', git: 'git', runner: 'su PC', system: 'zeus' };

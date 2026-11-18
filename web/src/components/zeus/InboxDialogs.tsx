@@ -35,11 +35,14 @@ export function ComposeDialog({
   const [to, setTo] = useState<string | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  // Encargo = trabajo que la otra persona debe hacer: queda pendiente en su bandeja hasta cerrarlo.
+  const [kind, setKind] = useState<'message' | 'task'>('message');
   useEffect(() => {
     if (!open) return;
     setTo(replyTo?.fromDevId ?? null);
     setSubject(replyTo ? (replyTo.subject ? (/^re:/i.test(replyTo.subject) ? replyTo.subject : `Re: ${replyTo.subject}`) : '') : '');
     setBody('');
+    setKind('message');
   }, [open, replyTo]);
 
   const options = useMemo<ComboboxOption[]>(
@@ -51,22 +54,40 @@ export function ComposeDialog({
     [org.data, me?.devId],
   );
   const busy = act.busy('send-message');
-  const canSend = !!to && body.trim().length > 0 && !busy;
+  const task = kind === 'task';
+  const canSend = !!to && body.trim().length > 0 && (!task || subject.trim().length > 0) && !busy;
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && !busy && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader eyebrow={replyTo ? 'Zeus · responder' : 'Zeus · mensaje'}>
-          <DialogTitle>{replyTo ? `Responder a ${replyTo.fromName}` : 'Nuevo mensaje'}</DialogTitle>
-          <DialogDescription>Le llega a su bandeja y su agente lo ve por MCP la próxima vez que consulte zeus.</DialogDescription>
+          <DialogTitle>{replyTo ? `Responder a ${replyTo.fromName}` : task ? 'Nuevo encargo' : 'Nuevo mensaje'}</DialogTitle>
+          <DialogDescription>
+            {task
+              ? 'Queda como pendiente en su bandeja (y su Claude lo ve por MCP) hasta que lo marque hecho o lo rechace. Tú ves en qué va.'
+              : 'Le llega a su bandeja y su agente lo ve por MCP la próxima vez que consulte zeus.'}
+          </DialogDescription>
         </DialogHeader>
-        <Field label="Para" htmlFor="zm-to" required error={org.error && !org.data ? 'No se pudo cargar el equipo.' : undefined}>
-          <Combobox id="zm-to" value={to} onChange={setTo} options={options} placeholder={org.loading ? 'Cargando…' : 'Elegir a alguien'} searchPlaceholder="Buscar persona…" emptyText="Nadie con ese nombre" />
+        <div className="grid gap-4 sm:grid-cols-[1fr_140px]">
+          <Field label="Para" htmlFor="zm-to" required error={org.error && !org.data ? 'No se pudo cargar el equipo.' : undefined}>
+            <Combobox id="zm-to" value={to} onChange={setTo} options={options} placeholder={org.loading ? 'Cargando…' : 'Elegir a alguien'} searchPlaceholder="Buscar persona…" emptyText="Nadie con ese nombre" />
+          </Field>
+          {!replyTo && (
+            <Field label="Tipo" htmlFor="zm-kind">
+              <Select value={kind} onValueChange={(v) => setKind(v as 'message' | 'task')}>
+                <SelectTrigger id="zm-kind"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="message">Mensaje</SelectItem>
+                  <SelectItem value="task">Encargo</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+        </div>
+        <Field label={task ? 'Qué tiene que hacer' : 'Asunto'} htmlFor="zm-subject" optional={!task} required={task}>
+          <Input id="zm-subject" value={subject} maxLength={160} onChange={(e) => setSubject(e.target.value)} placeholder={task ? 'Implementar el webhook de pagos' : undefined} />
         </Field>
-        <Field label="Asunto" htmlFor="zm-subject" optional>
-          <Input id="zm-subject" value={subject} maxLength={160} onChange={(e) => setSubject(e.target.value)} />
-        </Field>
-        <Field label="Mensaje" htmlFor="zm-body" required>
+        <Field label={task ? 'Cómo y con qué criterio' : 'Mensaje'} htmlFor="zm-body" required>
           <Textarea id="zm-body" rows={4} maxRows={12} value={body} onChange={(e) => setBody(e.target.value)} autoFocus={!!replyTo} />
         </Field>
         <DialogFooter className="gap-2">
@@ -76,8 +97,15 @@ export function ComposeDialog({
             onClick={() =>
               void act.run(
                 'send-message',
-                () => zeusApi.sendMessage({ toDevId: to!, body: body.trim(), ...(subject.trim() ? { subject: subject.trim() } : {}), ...(replyTo?.ref ? { ref: replyTo.ref } : {}) }),
-                { success: 'Mensaje enviado', error: 'No se pudo enviar', onDone: () => { refreshInbox(); onClose(); } },
+                () =>
+                  zeusApi.sendMessage({
+                    toDevId: to!,
+                    body: body.trim(),
+                    kind,
+                    ...(subject.trim() ? { subject: subject.trim() } : {}),
+                    ...(replyTo?.ref ? { ref: replyTo.ref } : {}),
+                  }),
+                { success: task ? 'Encargo enviado' : 'Mensaje enviado', error: 'No se pudo enviar', onDone: () => { refreshInbox(); onClose(); } },
               )
             }
           >
@@ -85,6 +113,115 @@ export function ComposeDialog({
             Enviar
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------- encargos y planes
+
+const STATUS_COPY: Record<'accepted' | 'changes_requested' | 'declined' | 'done' | 'cancelled', { title: string; button: string; note: string; required: boolean }> = {
+  accepted: { title: 'Aceptar', button: 'Aceptar', note: 'Algo que deba saber quien lo mandó (opcional)', required: false },
+  changes_requested: { title: 'Pedir ajustes', button: 'Pedir ajustes', note: 'Qué hay que cambiar para que lo aceptes', required: true },
+  declined: { title: 'Rechazar', button: 'Rechazar', note: 'Por qué no se hará', required: true },
+  done: { title: 'Marcar como hecho', button: 'Marcar hecho', note: 'Qué quedó, dónde verlo (opcional)', required: false },
+  cancelled: { title: 'Retirar', button: 'Retirar', note: 'Por qué ya no hace falta (opcional)', required: false },
+};
+
+export type StatusAction = keyof typeof STATUS_COPY;
+
+/** Cambiar el estado de un encargo o plan, con nota. A la otra persona le llega aviso. */
+export function StatusDialog({ target, onClose }: { target: { message: ZeusMessage; status: StatusAction } | null; onClose: () => void }) {
+  const act = useAction();
+  const [note, setNote] = useState('');
+  useEffect(() => {
+    if (target) setNote('');
+  }, [target]);
+  if (!target) return null;
+  const { message, status } = target;
+  const copy = STATUS_COPY[status];
+  const busy = act.busy(`status:${message.id}`);
+  const what = message.kind === 'plan' ? 'el plan' : 'el encargo';
+  return (
+    <Dialog open onOpenChange={(v) => !v && !busy && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader eyebrow={`Zeus · ${message.kind === 'plan' ? 'plan' : 'encargo'}`}>
+          <DialogTitle>{copy.title} {what}</DialogTitle>
+          <DialogDescription>
+            <span className="font-medium text-foreground">{status === 'cancelled' ? message.toName : message.fromName}</span> · {message.subject ?? '(sin título)'}
+          </DialogDescription>
+        </DialogHeader>
+        <Field label="Nota" htmlFor="zs-note" optional={!copy.required} required={copy.required}>
+          <Textarea id="zs-note" autoFocus rows={3} maxRows={10} value={note} onChange={(e) => setNote(e.target.value)} placeholder={copy.note} />
+        </Field>
+        <DialogFooter className="gap-2">
+          <Button variant="secondary" onClick={onClose} disabled={busy}>Volver</Button>
+          <Button
+            variant={status === 'declined' ? 'destructive' : 'default'}
+            disabled={busy || (copy.required && !note.trim())}
+            onClick={() =>
+              void act.run(`status:${message.id}`, () => zeusApi.setMessageStatus(message.id, status, note.trim() || undefined), {
+                success: 'Listo, se le avisó',
+                error: 'No se pudo cambiar el estado',
+                onDone: onClose,
+                onSettled: refreshInbox,
+              })
+            }
+          >
+            {busy && <Loader2 className="animate-spin" />}
+            {copy.button}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** El plan completo, con sus versiones anteriores si lo ajustaron. */
+export function PlanDialog({ messageId, onClose }: { messageId: string | null; onClose: () => void }) {
+  const [data, setData] = useState<(ZeusMessage & { history: ZeusMessage[] }) | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [shown, setShown] = useState<string | null>(null);
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    setShown(null);
+    if (!messageId) return;
+    let live = true;
+    zeusApi
+      .message(messageId)
+      .then((m) => live && setData(m))
+      .catch((e: unknown) => live && setError(e instanceof Error ? e.message : 'No se pudo cargar'));
+    return () => {
+      live = false;
+    };
+  }, [messageId]);
+  if (!messageId) return null;
+  const versions = data ? [data, ...(data.history ?? [])] : [];
+  const current = versions.find((v) => v.id === (shown ?? data?.id)) ?? data;
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader eyebrow={data ? `Zeus · plan de ${data.fromName}${data.projectKey ? ` · ${data.projectKey}` : ''}` : 'Zeus · plan'}>
+          <DialogTitle>{data?.subject ?? 'Cargando…'}</DialogTitle>
+          <DialogDescription>Para implementarlo con Claude: pídele que revise tu bandeja de zeus (o /mcp__zeus__pendientes) y te preguntará si lo implementa o lo ajusta.</DialogDescription>
+        </DialogHeader>
+        {error && <p className="text-sm text-red">{error}</p>}
+        {versions.length > 1 && (
+          <div className="flex flex-wrap gap-1.5">
+            {versions.map((v, i) => (
+              <Button key={v.id} size="sm" variant={(shown ?? data?.id) === v.id ? 'default' : 'secondary'} onClick={() => setShown(v.id)}>
+                {i === 0 ? 'Versión actual' : `Versión ${versions.length - i}`}
+              </Button>
+            ))}
+          </div>
+        )}
+        {current && (
+          <pre className="scroll-thin max-h-[60dvh] overflow-auto whitespace-pre-wrap break-words rounded-md bg-panel p-3 font-mono text-[12.5px] leading-relaxed">{current.body}</pre>
+        )}
+        {current?.statusNote && (
+          <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">Nota:</span> {current.statusNote}</p>
+        )}
       </DialogContent>
     </Dialog>
   );

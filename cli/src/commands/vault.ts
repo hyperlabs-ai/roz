@@ -8,6 +8,20 @@ import { loadDeviceKey, type DeviceKeyFile } from '../store.js';
 import type { VaultEnv } from '../types.js';
 
 export const DEFAULT_ENV = 'development';
+/**
+ * Cómo dice la gente los entornos → como se llaman en zeus. Solo aplica si no existe un entorno con
+ * ese nombre literal (un entorno llamado "local" de verdad gana).
+ */
+export const ENV_ALIASES: Readonly<Record<string, string>> = {
+  local: 'development',
+  dev: 'development',
+  develop: 'development',
+  prod: 'production',
+  prd: 'production',
+  stg: 'staging',
+  stage: 'staging',
+  pre: 'preview',
+};
 // La misma regla que el servidor: en minúsculas, así el entorno no tiene dos formas de escribirse.
 const ENV_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 const PROJECT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -56,8 +70,9 @@ export async function resolveTarget(ctx: Ctx, projectArg: string | undefined, en
   const pick = <T>(items: T[], name: (item: T) => string, wanted: string): T | undefined =>
     items.find((i) => name(i) === wanted) ?? only(items.filter((i) => name(i).toLowerCase() === wanted.toLowerCase()));
   const project = pick(projects, (p) => p.key, projectArg);
-  const env = project ? pick(project.envs, (e) => e.name, envName) : undefined;
-  return { projectKey: project?.key ?? projectArg, env: env?.name ?? envName, exists: Boolean(env) };
+  const alias = ENV_ALIASES[envName];
+  const env = project ? (pick(project.envs, (e) => e.name, envName) ?? (alias ? pick(project.envs, (e) => e.name, alias) : undefined)) : undefined;
+  return { projectKey: project?.key ?? projectArg, env: env?.name ?? alias ?? envName, exists: Boolean(env) };
 }
 
 function only<T>(items: T[]): T | undefined {

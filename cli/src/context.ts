@@ -10,6 +10,8 @@ export interface FileOps {
   /** Crea la carpeta (0700) si no existe. */
   mkdirPrivate(dir: string): Promise<void>;
   remove(path: string): Promise<boolean>;
+  /** Nombres de los ARCHIVOS de una carpeta (sin subcarpetas); [] si no existe. */
+  list(dir: string): Promise<string[]>;
 }
 
 export interface Prompter {
@@ -41,6 +43,12 @@ export interface Ctx {
   env: NodeJS.ProcessEnv;
   hostname: string;
   spawn: SpawnFn;
+  /** Texto del portapapeles (para subir un valor sin escribirlo en la terminal ni en un chat). */
+  clipboard(): Promise<string>;
+  /** Abre una URL en el navegador de la persona. */
+  openUrl(url: string): Promise<void>;
+  /** Todo stdin como texto (lo que Claude Code le pasa a un hook). */
+  stdin(): Promise<string>;
 }
 
 /** Error para la persona: una línea, sin stack. */

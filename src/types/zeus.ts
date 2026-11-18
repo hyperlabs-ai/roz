@@ -175,6 +175,8 @@ export interface ZeusMe {
   needsAdmin: boolean;
   unreadMessages: number;
   pendingForMe: number;
+  /** Encargos y planes abiertos que me mandaron. */
+  openForMe: number;
   /** URL del MCP para configurar Claude Code (origen público de zeus + /mcp). */
   mcpUrl: string;
   /** Origen público de zeus (para el CLI). */
@@ -218,8 +220,23 @@ export interface ZeusRequest {
   canResolve: boolean;
 }
 
+/**
+ * message: aviso o pregunta (solo leído / no leído).
+ * task: un encargo ("implementa X así"); tiene estado hasta que se hace o se rechaza.
+ * plan: un plan de implementación compartido; quien lo recibe lo acepta, pide ajustes o lo rechaza.
+ * env_change: aviso de que cambiaron variables de un entorno al que tienes acceso.
+ */
+export const ZEUS_MESSAGE_KINDS = ['message', 'task', 'plan', 'env_change'] as const;
+export type ZeusMessageKind = (typeof ZEUS_MESSAGE_KINDS)[number];
+
+export const ZEUS_MESSAGE_STATUSES = ['pending', 'accepted', 'changes_requested', 'declined', 'done', 'cancelled', 'superseded'] as const;
+export type ZeusMessageStatus = (typeof ZEUS_MESSAGE_STATUSES)[number];
+/** Estados en los que un encargo o plan sigue pidiendo atención. */
+export const ZEUS_OPEN_STATUSES: readonly ZeusMessageStatus[] = ['pending', 'accepted', 'changes_requested'];
+
 export interface ZeusMessage {
   id: string;
+  kind: ZeusMessageKind;
   fromDevId: string | null;
   /** "zeus" cuando es un aviso del sistema. */
   fromName: string;
@@ -232,12 +249,23 @@ export interface ZeusMessage {
   via: 'mcp' | 'web' | 'cli' | 'system';
   readAt: string | null;
   createdAt: string;
+  /** Solo encargos y planes; null en mensajes y avisos. */
+  status: ZeusMessageStatus | null;
+  statusNote: string | null;
+  statusAt: string | null;
+  /** Versión anterior del plan, o el encargo/plan al que responde este aviso. */
+  parentId: string | null;
+  projectKey: string | null;
 }
 
 export interface ZeusInbox {
   messages: ZeusMessage[];
   /** Mensajes que yo envié (los más recientes). */
   sent: ZeusMessage[];
+  /** Encargos y planes que me mandaron y siguen abiertos: mis pendientes. */
+  open: ZeusMessage[];
+  /** Encargos y planes que yo mandé y siguen abiertos: lo que espero de otros. */
+  waiting: ZeusMessage[];
   /** Solicitudes que me toca resolver. */
   toResolve: ZeusRequest[];
   /** Solicitudes que yo abrí. */

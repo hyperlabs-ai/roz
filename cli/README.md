@@ -106,9 +106,29 @@ zeus env ls                              # proyectos/entornos y si este equipo t
 cd ~/dev/hyper/roz
 zeus env pull ROZ                        # escribe ./.env
 
-# Opcional: conectar Claude Code con el MCP de zeus.
-zeus mcp                                 # imprime el comando `claude mcp add …` (lleva tu token)
+# Conectar Claude Code: MCP de zeus + hooks que protegen los secretos (ver abajo).
+zeus setup claude
 ```
+
+### (c) Claude Code con zeus
+
+`zeus setup claude` hace dos cosas (es idempotente):
+
+1. **Conecta el MCP de zeus.** El servidor manda sus *instrucciones* al conectarse y Claude Code las
+   carga solas en cada sesión: no hace falta instalar ninguna skill. Ahí va cómo usar el contexto del
+   equipo, qué hacer cuando te llega un plan o un encargo y cómo manejar variables sin ver valores.
+   También expone prompts: `/mcp__zeus__pendientes`, `/mcp__zeus__compartir-plan`, `/mcp__zeus__variables`.
+2. **Instala los hooks de `zeus guard`** en `~/.claude/settings.json` (o en el del repo con `--project`):
+   - antes de cada herramienta, bloquea leer `.env*` (`cat`, `Read`, `Grep`…), `zeus env pull --stdout`,
+     entubar un valor a `zeus env set` y abrir `zeus env ui` (ese lo abre la persona);
+   - antes de mandar tu mensaje, si trae algo con forma de secreto (llaves de Stripe, GitHub, AWS,
+     JWT, URLs con contraseña…) o el valor de una variable de tus `.env`, **no se envía** y no queda en
+     la conversación. Si no es secreto (una llave pública "anon"), agrégale `[zeus-ok]`;
+   - al abrir sesión, le da a Claude tus pendientes de la bandeja y el estado de tus `.env` (`zeus doctor`).
+
+Con eso le puedes pedir a Claude, por ejemplo: "baja las variables de prod de orwel", "¿qué me falta
+en el .env?", "sube la nueva STRIPE_KEY a prod" (tú la copias; él corre `zeus env set … --from-clipboard`),
+"avísale a Alan que implemente X así" (encargo en su bandeja) o "compártele este plan a Alan".
 
 ## Comandos
 
@@ -116,28 +136,55 @@ zeus mcp                                 # imprime el comando `claude mcp add �
 |---|---|
 | `login` | Valida el token con zeus y guarda URL y token en `~/.zeus/config.json` (0600). `--url`, `--token`; también lee `ZEUS_URL` y `ZEUS_TOKEN`. Nunca imprime el token. |
 | `whoami` | Quién eres en zeus, si eres admin y el estado de la llave de este equipo. |
-| `mcp` | Imprime el comando para conectar Claude Code. Es el único comando que muestra el token completo. |
+| `setup claude` | Conecta Claude Code: MCP de zeus + hooks de `zeus guard`. `--project` (hooks en el repo), `--no-mcp`, `--no-hooks`. |
+| `mcp` | Imprime el comando para conectar el MCP a mano. Es el único comando que muestra el token completo. |
+| `doctor` | Conexión, llave, pendientes de tu bandeja y estado de los `.env` de esta carpeta. |
+| `guard` | El hook de Claude Code (lo instala `setup claude`). Lee el evento por stdin; sale con 2 para bloquear. |
 | `key init` | Genera la llave del equipo (si no hay), la guarda en `~/.zeus/key.json` (0600) y registra la pública. `--name`, `--force` (genera otra: pierdes el acceso hasta que te lo vuelvan a dar; la anterior queda en `key.json.bak`). |
+| `key rotate` | Cambia la llave de este equipo **sin perder accesos**: abre cada llave de entorno con la vieja, la envuelve para la nueva y zeus revoca la vieja. `--compromised` (equipo perdido) marca esos entornos para rotar. |
 | `key show` | Pública, huella e id de la llave. Nunca la privada. |
-| `env ls` | Proyectos y entornos de la bóveda, y si este equipo tiene acceso. |
-| `env pull <proyecto> [entorno]` | Baja, descifra y escribe `./.env`. `--out <ruta>`, `--stdout` (no escribe a disco), `--format dotenv\|json`, `--yes`. |
-| `env push <proyecto> [entorno]` | Sube lo que cambió en `./.env`. `--from <ruta>`, `--prune` (borra de la bóveda lo que no esté en el archivo), `--yes`. |
-| `env set <proyecto> <entorno> NOMBRE` | Sube un valor. Lo lee de stdin o lo pregunta sin eco; nunca como argumento. `--empty` para un valor vacío. |
-| `env rm <proyecto> <entorno> NOMBRE` | Borra una variable de la bóveda. |
+| `env ls` | Proyectos y entornos de la bóveda, si este equipo tiene acceso y cuáles están por rotar. `--json`. |
+| `env status [<proyecto> [entorno]]` | Compara tus `.env` con la bóveda, **solo nombres**: qué falta, qué está desactualizado (quién y cuándo lo cambió), qué cambiaste tú sin subir, qué es solo local, qué pide `.env.example`. Sin argumentos revisa todos los `.env` de la carpeta. `--file`, `--json`. |
+| `env pull <proyecto> [entorno]` | Baja, descifra y escribe el archivo de ese entorno. `--out <ruta>`, `--stdout` (no escribe a disco), `--format dotenv\|json`, `--yes`. Avisa si pisas un cambio local que no subiste. |
+| `env push <proyecto> [entorno]` | Sube lo que cambió en el archivo de ese entorno. `--from <ruta>`, `--prune` (borra de la bóveda lo que no esté en el archivo), `--yes`. Avisa si pisas un cambio que otra persona hizo después de tu último pull. |
+| `env set <proyecto> <entorno> NOMBRE` | Sube o reemplaza un valor. `--from-clipboard` o `--from-file <ruta>`; sin ellas lo lee de stdin o lo pregunta sin eco; nunca como argumento. `--empty` para un valor vacío. |
+| `env rm <proyecto> <entorno> NOMBRE` | Borra una variable (queda en el historial). |
+| `env diff <proyecto> <A> <B>` | Diferencias entre dos entornos (p. ej. `local prod`): solo en uno, valor distinto, mismo valor. Solo nombres. `--json`. |
+| `env history <proyecto> <entorno> [NOMBRE]` | Versiones de cada variable: quién, cuándo, borradas y cuáles repiten valor. Sin valores. `--json`. |
+| `env restore <proyecto> <entorno> NOMBRE --version N` | Regresa una variable al valor de una versión anterior (también una borrada). |
+| `env ui [proyecto] [entorno]` | Visor local en tu navegador (solo `127.0.0.1`, con token): ver, copiar, historial y cambiar valores. Se cierra solo tras 15 min sin uso. |
 | `run <proyecto> [entorno] -- <comando…>` | Corre el comando con los secretos en su entorno, sin escribirlos a disco. Devuelve el código de salida del comando. |
 | `env init <proyecto> [entorno]` | (admin) Crea el entorno con una DEK nueva. |
-| `env grant <proyecto> [entorno] --to <…>` | (admin) Da acceso a los equipos de un dev. `--to` acepta nombre del dev o id de llave; `--all-devices` si tiene varios. |
+| `env grant <proyecto> [entorno] --to <…>` | (admin) Da acceso a los equipos de un dev. `--to` acepta nombre del dev o id de llave; `--all-devices` si tiene varios. `--all-envs` (todos los entornos del proyecto) o `--all [--env <entorno>]` (todos los proyectos), con una sola verificación de huella. |
 | `env revoke <proyecto> [entorno] --key <id>` | (admin) Quita el acceso de una llave. Después hay que rotar. |
-| `env rotate <proyecto> [entorno]` | (admin) DEK nueva para los accesos vigentes y todos los secretos vueltos a cifrar. |
+| `env rotate <proyecto> [entorno]` | (admin) DEK nueva para los accesos vigentes y todos los secretos (y su historial) vueltos a cifrar. `--all` rota todos los entornos marcados; `--include-ok`, todos a los que tienes acceso. |
 
-El entorno por defecto es `development`. Los comandos que cambian algo muestran antes una diferencia
-**solo de nombres** (nunca valores) y piden confirmar; `--yes` la salta (necesario si no hay terminal,
-p. ej. en un script).
+El entorno por defecto es `development`; alias: `local`/`dev` → `development`, `prod` → `production`,
+`stg` → `staging`. Los comandos que cambian algo muestran antes una diferencia **solo de nombres**
+(nunca valores) y piden confirmar; `--yes` la salta (necesario si no hay terminal, p. ej. en un script).
 
-### El archivo `.env`
+**Una llave por entorno, una llave por equipo.** Cada entorno tiene su propia llave de datos (así dar
+acceso a dev no da acceso a prod, y quitarle el acceso a alguien solo obliga a rotar lo que veía).
+Para ti es una sola llave: la de tu equipo abre todos los entornos a los que tienes acceso.
+`rotate --all` y `grant --all` hacen la operación en todos de una vez.
+
+### Los archivos `.env`
+
+Cada entorno va a su archivo, para que local y prod nunca se mezclen: `development` → `.env`,
+`production` → `.env.production`, cualquier otro → `.env.<entorno>`. Si ya tienes un archivo que diga
+venir de ese entorno (p. ej. `.env.local` bajado con `--out`), se usa ese.
+
+La cabecera dice de dónde salió y qué versión tenía cada variable al bajarla. Con eso `status` sabe si
+una diferencia es porque la bóveda cambió (te toca `pull`) o porque tú la cambiaste (te toca `push`):
+
+```dotenv
+# zeus:source orwel/production
+# zeus:versions DATABASE_URL=3 STRIPE_KEY=5
+```
 
 `pull` reescribe el archivo completo, ordenado por nombre. Si ya existía y difiere, te muestra qué nombres
-entran, cambian o salen, pide confirmar y deja el anterior en `.env.bak`.
+entran, cambian o salen, pide confirmar y deja el anterior en `.env.bak`. Cada cambio en la bóveda le
+llega como aviso (bandeja y notificación) a quien tiene acceso a ese entorno.
 
 Lo que sea solo de tu máquina va entre estos marcadores: `pull` lo conserva tal cual y `push` nunca lo
 sube. Como va al final del archivo, pisa a lo de arriba.
@@ -160,6 +207,10 @@ Ejemplos:
 ```bash
 zeus env pull ROZ production --stdout --format json | jq 'keys'
 printf '%s' "$NUEVO_VALOR" | zeus env set ROZ production STRIPE_SECRET_KEY
+zeus env set ROZ prod STRIPE_SECRET_KEY --from-clipboard   # copiaste el valor del dashboard de Stripe
+zeus env status                                            # todos los .env de esta carpeta
+zeus env diff ROZ local prod
+zeus env history ROZ prod STRIPE_SECRET_KEY
 zeus run ROZ -- npm run dev
 ```
 

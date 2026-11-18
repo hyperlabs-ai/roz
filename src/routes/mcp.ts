@@ -17,7 +17,7 @@ import { tools, toolsByName, toInputSchema } from '../mcp/server.js';
 import { authenticateRunner } from '../plans/runners.js';
 import { looksLikeRunnerToken } from '../plans/tokens.js';
 import { actorForDev, authenticateZeusToken, looksLikeZeusToken, type ZeusActor } from '../zeus/core.js';
-import { zeusTools, zeusToolsByName } from '../zeus/mcp.js';
+import { ZEUS_MCP_INSTRUCTIONS, ZEUS_MCP_PROMPTS, zeusTools, zeusToolsByName } from '../zeus/mcp.js';
 
 export const mcpRoutes = new Hono<RozContext>();
 
@@ -104,23 +104,34 @@ mcpRoutes.post('/', async (c) => {
       return c.json(
         rpcResult(id, {
           protocolVersion: PROTOCOL_VERSION,
-          capabilities: { tools: {} },
-          serverInfo: { name: 'zeus', version: '0.2.0' },
-          ...(caller.kind === 'full'
-            ? {}
-            : {
-                instructions:
-                  'zeus es el contexto compartido del equipo. Antes de planear o tocar código de un proyecto llama ' +
-                  'zeus_context_index, y trae con zeus_get solo lo que aplique. Las reglas y decisiones vigentes se respetan. ' +
-                  'El registro de zeus es la fuente de verdad de ADR, specs, reglas y documentos: para cambiar uno edítalo AQUÍ ' +
-                  'con zeus_write (también los importados de un repo), no en su archivo del repo, que solo fue el origen de la importación. ' +
-                  'Nunca escribas secretos ni valores de variables de entorno en mensajes o documentos.',
-              }),
+          capabilities: caller.kind === 'full' ? { tools: {} } : { tools: {}, prompts: {} },
+          serverInfo: { name: 'zeus', version: '0.3.0' },
+          // Las instrucciones hacen de "skill" sin instalar nada: Claude Code las carga solo al conectarse.
+          ...(caller.kind === 'full' ? {} : { instructions: ZEUS_MCP_INSTRUCTIONS }),
         }),
       );
 
     case 'notifications/initialized':
       return c.body(null, 202);
+
+    case 'prompts/list':
+      return c.json(
+        rpcResult(id, {
+          prompts: caller.kind === 'full' ? [] : ZEUS_MCP_PROMPTS.map((p) => ({ name: p.name, description: p.description, arguments: p.arguments })),
+        }),
+      );
+
+    case 'prompts/get': {
+      const prompt = caller.kind === 'full' ? undefined : ZEUS_MCP_PROMPTS.find((p) => p.name === String(params?.name ?? ''));
+      if (!prompt) return c.json(rpcError(id, -32602, `Unknown prompt: ${String(params?.name ?? '')}`), 400);
+      const args = Object.fromEntries(Object.entries((params?.arguments ?? {}) as Record<string, unknown>).map(([k, v]) => [k, String(v)]));
+      return c.json(
+        rpcResult(id, {
+          description: prompt.description,
+          messages: [{ role: 'user', content: { type: 'text', text: prompt.render(args) } }],
+        }),
+      );
+    }
 
     case 'tools/list':
       return c.json(

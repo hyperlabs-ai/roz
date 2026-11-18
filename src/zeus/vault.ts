@@ -14,6 +14,7 @@ import { db } from '../db/supabase.js';
 import type { ZeusVaultEnvSummary, ZeusVaultKey, ZeusVaultOverview } from '../types/zeus.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { isUuid, logActivity, requireAdmin, resolveProject, actorActivity, type ZeusActor } from './core.js';
+import { notifyEnvChange } from './inbox.js';
 
 export const VAULT_STALE_CODE = 'ZEUS_VAULT_STALE';
 export const VAULT_NO_ACCESS_CODE = 'ZEUS_VAULT_NO_ACCESS';
@@ -28,6 +29,8 @@ const ENV_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 /** 64 KiB de valor + nonce + tag, en base64url. */
 const MAX_CIPHERTEXT_CHARS = 90_000;
 const MAX_SECRETS_PER_ENV = 500;
+/** Versiones anteriores que se guardan de cada variable (además de la vigente). */
+export const REVISIONS_KEPT = 10;
 
 export const isWrappedDek = (s: unknown): s is string => typeof s === 'string' && WRAPPED_DEK_RE.test(s);
 export const isSecretEnvelope = (s: unknown): s is string => typeof s === 'string' && s.length <= MAX_CIPHERTEXT_CHARS && SECRET_RE.test(s);
@@ -231,8 +234,9 @@ export interface PullResult {
   envId: string;
   dekVersion: number;
   wrappedDek: string;
-  secrets: Array<{ name: string; ciphertext: string; dekVersion: number; version: number; updatedAt: string }>;
+  secrets: Array<{ name: string; ciphertext: string; dekVersion: number; version: number; updatedAt: string; updatedByName: string | null }>;
   grants: Array<{ keyId: string; devName: string; keyName: string; fingerprint: string; publicKey: string }>;
+  needsRotation: boolean;
 }
 
 export async function pullEnv(projectKey: string, envName: string, keyId: string, actor: ZeusActor): Promise<PullResult> {
@@ -241,14 +245,16 @@ export async function pullEnv(projectKey: string, envName: string, keyId: string
   const grant = await currentGrant(env, key);
   const supabase = db();
   const [secrets, grants] = await Promise.all([
-    supabase.from('zeus_vault_secret').select('name, ciphertext, dek_version, version, updated_at').eq('env_id', env.id).order('name'),
+    supabase.from('zeus_vault_secret').select('name, ciphertext, dek_version, version, updated_at, updated_by').eq('env_id', env.id).order('name'),
     supabase.from('zeus_vault_grant').select('key_id, key:key_id(dev_id, name, fingerprint, public_key)').eq('env_id', env.id).eq('dek_version', env.dek_version),
   ]);
   if (secrets.error) throw secrets.error;
   if (grants.error) throw grants.error;
   type G = { key_id: string; key: { dev_id: string; name: string; fingerprint: string; public_key: string } | null };
+  type S = { name: string; ciphertext: string; dek_version: number; version: number; updated_at: string; updated_by: string | null };
   const grantRows = (grants.data ?? []) as unknown as G[];
-  const names = await devNames(grantRows.map((g) => g.key?.dev_id ?? null));
+  const secretRows = (secrets.data ?? []) as S[];
+  const names = await devNames([...grantRows.map((g) => g.key?.dev_id ?? null), ...secretRows.map((s) => s.updated_by)]);
   touchKey(key);
   audit(actor, 'pull', env.id, key.id, { project: project.key, env: env.name });
   logActivity(actorActivity(actor), 'env.pull', `project:${project.id}`, { env: env.name });
@@ -256,17 +262,19 @@ export async function pullEnv(projectKey: string, envName: string, keyId: string
     envId: env.id,
     dekVersion: env.dek_version,
     wrappedDek: grant.wrapped_dek,
-    secrets: ((secrets.data ?? []) as Array<{ name: string; ciphertext: string; dek_version: number; version: number; updated_at: string }>).map((s) => ({
+    secrets: secretRows.map((s) => ({
       name: s.name,
       ciphertext: s.ciphertext,
       dekVersion: s.dek_version,
       version: s.version,
       updatedAt: s.updated_at,
+      updatedByName: s.updated_by ? (names.get(s.updated_by) ?? null) : null,
     })),
     // Las públicas viajan para que quien rota pueda re-envolver la DEK a cada equipo con acceso.
     grants: grantRows.flatMap((g) =>
       g.key ? [{ keyId: g.key_id, devName: names.get(g.key.dev_id) ?? 'alguien', keyName: g.key.name, fingerprint: g.key.fingerprint, publicKey: g.key.public_key }] : [],
     ),
+    needsRotation: env.needs_rotation,
   };
 }
 
@@ -298,13 +306,49 @@ export async function pushSecrets(projectKey: string, envName: string, input: Pu
   for (const n of del) if (!isSecretName(n)) throw new ValidationError('nombre de variable inválido en delete');
 
   const supabase = db();
-  const { data: existing, error: exErr } = await supabase.from('zeus_vault_secret').select('name, version').eq('env_id', env.id);
+  const { data: existing, error: exErr } = await supabase
+    .from('zeus_vault_secret')
+    .select('name, version, ciphertext, dek_version, updated_by, updated_at')
+    .eq('env_id', env.id);
   if (exErr) throw exErr;
-  const versions = new Map(((existing ?? []) as Array<{ name: string; version: number }>).map((s) => [s.name, s.version]));
-  const added = set.filter((s) => !versions.has(s.name)).length;
-  if (versions.size + added > MAX_SECRETS_PER_ENV) throw new ValidationError(`un entorno no puede pasar de ${MAX_SECRETS_PER_ENV} variables`);
+  type Cur = { name: string; version: number; ciphertext: string; dek_version: number; updated_by: string | null; updated_at: string };
+  const current = new Map(((existing ?? []) as Cur[]).map((s) => [s.name, s]));
+  const added = set.filter((s) => !current.has(s.name)).length;
+  if (current.size + added > MAX_SECRETS_PER_ENV) throw new ValidationError(`un entorno no puede pasar de ${MAX_SECRETS_PER_ENV} variables`);
+
+  // Una variable que se borró y vuelve sigue su numeración: su historial no se pisa.
+  const versions = new Map([...current].map(([n, s]) => [n, s.version]));
+  const reborn = set.map((s) => s.name).filter((n) => !current.has(n));
+  if (reborn.length) {
+    const { data: revs, error: revErr } = await supabase.from('zeus_vault_secret_revision').select('name, version').eq('env_id', env.id).in('name', reborn);
+    if (revErr) throw revErr;
+    for (const r of (revs ?? []) as Array<{ name: string; version: number }>) versions.set(r.name, Math.max(versions.get(r.name) ?? 0, r.version));
+  }
 
   const now = new Date().toISOString();
+  // Lo que deja de estar vigente pasa al historial ANTES de pisarlo.
+  const replaced = [...set.map((s) => s.name), ...del].flatMap((n) => {
+    const c = current.get(n);
+    return c ? [c] : [];
+  });
+  if (replaced.length) {
+    const { error } = await supabase.from('zeus_vault_secret_revision').upsert(
+      replaced.map((c) => ({
+        env_id: env.id,
+        name: c.name,
+        version: c.version,
+        ciphertext: c.ciphertext,
+        dek_version: c.dek_version,
+        set_by: c.updated_by,
+        set_at: c.updated_at,
+        replaced_by: actor.devId,
+        replaced_at: now,
+      })),
+      { onConflict: 'env_id,name,version' },
+    );
+    if (error) throw error;
+  }
+
   if (set.length) {
     const { error } = await supabase.from('zeus_vault_secret').upsert(
       set.map((s) => ({
@@ -320,17 +364,211 @@ export async function pushSecrets(projectKey: string, envName: string, input: Pu
     );
     if (error) throw error;
   }
-  let deleted = 0;
+  let deletedNames: string[] = [];
   if (del.length) {
     const { data, error } = await supabase.from('zeus_vault_secret').delete().eq('env_id', env.id).in('name', del).select('name');
     if (error) throw error;
-    deleted = (data ?? []).length;
+    deletedNames = ((data ?? []) as Array<{ name: string }>).map((d) => d.name);
+    // El borrado queda como una versión más (sin valor): se sabe quién la quitó y se puede restaurar.
+    if (deletedNames.length) {
+      const { error: tombErr } = await supabase.from('zeus_vault_secret_revision').upsert(
+        deletedNames.map((n) => ({
+          env_id: env.id,
+          name: n,
+          version: (current.get(n)?.version ?? 0) + 1,
+          ciphertext: null,
+          dek_version: env.dek_version,
+          set_by: actor.devId,
+          set_at: now,
+          replaced_by: actor.devId,
+          replaced_at: now,
+        })),
+        { onConflict: 'env_id,name,version' },
+      );
+      if (tombErr) throw tombErr;
+    }
   }
+  const deleted = deletedNames.length;
+  await pruneRevisions(env.id, [...new Set([...set.map((s) => s.name), ...deletedNames])]);
   touchKey(key);
   // En la auditoría quedan los NOMBRES tocados, nunca los valores (que el servidor ni tiene).
   audit(actor, 'push', env.id, key.id, { project: project.key, env: env.name, set: set.map((s) => s.name), deleted: del });
   logActivity(actorActivity(actor), 'env.push', `project:${project.id}`, { env: env.name, written: set.length, deleted });
+  await announceChange(env, project, actor, {
+    added: set.filter((s) => !current.has(s.name)).map((s) => s.name),
+    changed: set.filter((s) => current.has(s.name)).map((s) => s.name),
+    deleted: deletedNames,
+  });
   return { ok: true, written: set.length, deleted };
+}
+
+/** Deja solo las últimas REVISIONS_KEPT versiones anteriores de cada nombre. */
+async function pruneRevisions(envId: string, names: string[]): Promise<void> {
+  if (!names.length) return;
+  const supabase = db();
+  const { data, error } = await supabase.from('zeus_vault_secret_revision').select('name, version').eq('env_id', envId).in('name', names);
+  if (error) throw error;
+  const byName = new Map<string, number[]>();
+  for (const r of (data ?? []) as Array<{ name: string; version: number }>) byName.set(r.name, [...(byName.get(r.name) ?? []), r.version]);
+  await Promise.all(
+    [...byName].map(async ([name, list]) => {
+      const sorted = list.sort((a, b) => b - a);
+      const keepFrom = sorted[REVISIONS_KEPT - 1];
+      if (sorted.length <= REVISIONS_KEPT || keepFrom == null) return;
+      const { error: delErr } = await supabase.from('zeus_vault_secret_revision').delete().eq('env_id', envId).eq('name', name).lt('version', keepFrom);
+      if (delErr) throw delErr;
+    }),
+  );
+}
+
+/**
+ * Avisa a cada persona con acceso vigente (menos a quien hizo el cambio) qué variables cambiaron:
+ * solo NOMBRES y el comando para bajarlas. Nunca hace fallar el cambio que lo dispara.
+ */
+async function announceChange(
+  env: EnvRow,
+  project: { id: string; key: string; name: string },
+  actor: ZeusActor,
+  change: { added: string[]; changed: string[]; deleted: string[]; rotated?: boolean },
+): Promise<void> {
+  try {
+    const { data, error } = await db().from('zeus_vault_grant').select('key:key_id(dev_id)').eq('env_id', env.id).eq('dek_version', env.dek_version);
+    if (error) throw error;
+    const devIds = [
+      ...new Set(((data ?? []) as unknown as Array<{ key: { dev_id: string } | null }>).flatMap((g) => (g.key ? [g.key.dev_id] : []))),
+    ].filter((id) => id !== actor.devId);
+    if (!devIds.length) return;
+    await notifyEnvChange({ actor, devIds, projectId: project.id, projectKey: project.key, env: env.name, ...change });
+  } catch {
+    // El aviso es un extra: si falla, el cambio en la bóveda ya quedó hecho.
+  }
+}
+
+// ---------------------------------------------------------------- historial
+
+export type RevisionMeta = Omit<RevisionView, 'ciphertext' | 'dekVersion'> & { deleted: boolean; readable: boolean };
+
+/**
+ * Para el dashboard: el historial de un entorno SIN texto cifrado (quién, cuándo, borradas). Lo
+ * mismo que ya muestra la bóveda del dashboard, una versión hacia atrás; no requiere llave.
+ */
+export async function envHistoryMeta(projectKey: string, envName: string, name: string | null): Promise<{ revisions: RevisionMeta[] }> {
+  const { env } = await loadEnv(projectKey, envName);
+  if (name != null && !isSecretName(name)) throw new ValidationError('nombre de variable inválido');
+  const supabase = db();
+  let cur = supabase.from('zeus_vault_secret').select('name, dek_version, version, updated_at, updated_by').eq('env_id', env.id);
+  let old = supabase.from('zeus_vault_secret_revision').select('name, version, ciphertext, dek_version, set_by, set_at, replaced_by, replaced_at').eq('env_id', env.id);
+  if (name != null) {
+    cur = cur.eq('name', name);
+    old = old.eq('name', name);
+  }
+  const [a, b] = await Promise.all([cur, old]);
+  if (a.error) throw a.error;
+  if (b.error) throw b.error;
+  type Cur = { name: string; dek_version: number; version: number; updated_at: string; updated_by: string | null };
+  type Old = { name: string; version: number; ciphertext: string | null; dek_version: number; set_by: string | null; set_at: string; replaced_by: string | null; replaced_at: string };
+  const curRows = (a.data ?? []) as Cur[];
+  const oldRows = (b.data ?? []) as Old[];
+  const names = await devNames([...curRows.map((r) => r.updated_by), ...oldRows.flatMap((r) => [r.set_by, r.replaced_by])]);
+  const nameOf = (id: string | null) => (id ? (names.get(id) ?? null) : null);
+  const revisions: RevisionMeta[] = [
+    ...curRows.map((r) => ({
+      name: r.name,
+      version: r.version,
+      setAt: r.updated_at,
+      setByName: nameOf(r.updated_by),
+      replacedAt: null,
+      replacedByName: null,
+      current: true,
+      deleted: false,
+      readable: r.dek_version === env.dek_version,
+    })),
+    ...oldRows.map((r) => ({
+      name: r.name,
+      version: r.version,
+      setAt: r.set_at,
+      setByName: nameOf(r.set_by),
+      replacedAt: r.replaced_at,
+      replacedByName: nameOf(r.replaced_by),
+      current: false,
+      deleted: r.ciphertext == null,
+      readable: r.ciphertext == null || r.dek_version === env.dek_version,
+    })),
+  ].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : y.version - x.version));
+  return { revisions };
+}
+
+export interface RevisionView {
+  name: string;
+  version: number;
+  /** NULL = en esa versión la variable se borró. */
+  ciphertext: string | null;
+  dekVersion: number;
+  setAt: string;
+  setByName: string | null;
+  replacedAt: string | null;
+  replacedByName: string | null;
+  current: boolean;
+}
+
+/** Versiones de las variables de un entorno (la vigente primero), cifradas. Requiere acceso. */
+export async function envHistory(
+  projectKey: string,
+  envName: string,
+  keyId: string,
+  name: string | null,
+  actor: ZeusActor,
+): Promise<{ dekVersion: number; revisions: RevisionView[] }> {
+  const { env, project } = await loadEnv(projectKey, envName);
+  const key = await ownKey(keyId, actor);
+  await currentGrant(env, key);
+  if (name != null && !isSecretName(name)) throw new ValidationError('nombre de variable inválido');
+  const supabase = db();
+  let cur = supabase.from('zeus_vault_secret').select('name, ciphertext, dek_version, version, updated_at, updated_by').eq('env_id', env.id);
+  let old = supabase
+    .from('zeus_vault_secret_revision')
+    .select('name, version, ciphertext, dek_version, set_by, set_at, replaced_by, replaced_at')
+    .eq('env_id', env.id);
+  if (name != null) {
+    cur = cur.eq('name', name);
+    old = old.eq('name', name);
+  }
+  const [a, b] = await Promise.all([cur, old.order('version', { ascending: false })]);
+  if (a.error) throw a.error;
+  if (b.error) throw b.error;
+  type Cur = { name: string; ciphertext: string; dek_version: number; version: number; updated_at: string; updated_by: string | null };
+  type Old = { name: string; version: number; ciphertext: string | null; dek_version: number; set_by: string | null; set_at: string; replaced_by: string | null; replaced_at: string };
+  const curRows = (a.data ?? []) as Cur[];
+  const oldRows = (b.data ?? []) as Old[];
+  const names = await devNames([...curRows.map((r) => r.updated_by), ...oldRows.flatMap((r) => [r.set_by, r.replaced_by])]);
+  const nameOf = (id: string | null) => (id ? (names.get(id) ?? null) : null);
+  const revisions: RevisionView[] = [
+    ...curRows.map((r) => ({
+      name: r.name,
+      version: r.version,
+      ciphertext: r.ciphertext,
+      dekVersion: r.dek_version,
+      setAt: r.updated_at,
+      setByName: nameOf(r.updated_by),
+      replacedAt: null,
+      replacedByName: null,
+      current: true,
+    })),
+    ...oldRows.map((r) => ({
+      name: r.name,
+      version: r.version,
+      ciphertext: r.ciphertext,
+      dekVersion: r.dek_version,
+      setAt: r.set_at,
+      setByName: nameOf(r.set_by),
+      replacedAt: r.replaced_at,
+      replacedByName: nameOf(r.replaced_by),
+      current: false,
+    })),
+  ].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : y.version - x.version));
+  touchKey(key);
+  audit(actor, 'history', env.id, key.id, { project: project.key, env: env.name, name });
+  return { dekVersion: env.dek_version, revisions };
 }
 
 export async function grantAccess(
@@ -390,6 +628,8 @@ export interface RotateInput {
   dekVersion: number;
   grants: Array<{ keyId: string; wrappedDek: string }>;
   secrets: Array<{ name: string; ciphertext: string }>;
+  /** Versiones anteriores re-cifradas con la DEK nueva (todas las que se podían leer). */
+  revisions?: Array<{ name: string; version: number; ciphertext: string }>;
 }
 
 export async function rotateEnv(projectKey: string, envName: string, input: RotateInput, actor: ZeusActor): Promise<{ ok: true; dekVersion: number }> {
@@ -409,24 +649,91 @@ export async function rotateEnv(projectKey: string, envName: string, input: Rota
   for (const s of secrets) {
     if (!isSecretName(s?.name) || !isSecretEnvelope(s.ciphertext)) throw new ValidationError('secreto inválido en la rotación');
   }
+  // Sin el campo = un CLI anterior al historial: rota igual y el historial legible se descarta.
+  const revisions = input.revisions ?? null;
+  for (const r of revisions ?? []) {
+    if (!isSecretName(r?.name) || !Number.isInteger(r.version) || !isSecretEnvelope(r.ciphertext)) {
+      throw new ValidationError('versión anterior inválida en la rotación');
+    }
+  }
   const { data, error } = await db().rpc('zeus_vault_rotate', {
     p_env_id: env.id,
     p_from_version: env.dek_version,
     p_grants: grants,
     p_secrets: secrets,
     p_dev_id: actor.devId,
+    p_revisions: revisions,
   });
   if (error) {
     const msg = error.message ?? '';
     if (msg.includes('ZEUS_VAULT_STALE')) throw new AppError(VAULT_STALE_CODE, 'el entorno cambió durante la rotación: baja de nuevo y repítela', 409);
     if (msg.includes('ZEUS_VAULT_INCOMPLETE')) {
-      throw new AppError('ZEUS_VAULT_INCOMPLETE', 'la rotación debe traer TODAS las variables re-cifradas: baja de nuevo (alguien agregó o quitó una)', 409);
+      throw new AppError(
+        'ZEUS_VAULT_INCOMPLETE',
+        'la rotación debe traer TODAS las variables (y su historial) re-cifradas: baja de nuevo (alguien agregó o quitó una)',
+        409,
+      );
     }
     throw error;
   }
   audit(actor, 'rotate', env.id, key.id, { project: project.key, env: env.name, dekVersion: Number(data), keys: grants.length, secrets: secrets.length });
   logActivity(actorActivity(actor), 'env.rotate', `project:${project.id}`, { env: env.name });
+  await announceChange({ ...env, dek_version: Number(data) }, project, actor, { added: [], changed: [], deleted: [], rotated: true });
   return { ok: true, dekVersion: Number(data) };
+}
+
+// ---------------------------------------------------------------- cambiar la llave de un equipo
+
+export interface DeviceKeyRotateInput {
+  oldKeyId: string;
+  newKeyId: string;
+  /** La DEK vigente de cada entorno, envuelta para la llave NUEVA (este equipo la abrió con la vieja). */
+  grants: Array<{ projectKey: string; env: string; dekVersion: number; wrappedDek: string }>;
+  /** La llave vieja pudo quedar expuesta (equipo perdido): sus entornos quedan marcados para rotar. */
+  compromised?: boolean;
+}
+
+/**
+ * Cambiar la llave de un equipo sin pedirle nada a nadie: el CLI abre cada DEK con la llave vieja,
+ * la envuelve para la nueva, y aquí se mueven los accesos y se revoca la vieja. Solo entornos donde
+ * la vieja tenía acceso vigente: por este camino no se gana acceso a nada.
+ */
+export async function rotateDeviceKey(input: DeviceKeyRotateInput, actor: ZeusActor): Promise<{ ok: true; moved: number }> {
+  const oldKey = await ownKey(input.oldKeyId, actor);
+  const newKey = await ownKey(input.newKeyId, actor);
+  if (oldKey.id === newKey.id) throw new ValidationError('la llave nueva es la misma que la vieja');
+  const grants = input.grants ?? [];
+  const supabase = db();
+  const { data: held, error: heldErr } = await supabase.from('zeus_vault_grant').select('env_id, dek_version').eq('key_id', oldKey.id);
+  if (heldErr) throw heldErr;
+  const heldRows = (held ?? []) as Array<{ env_id: string; dek_version: number }>;
+  const heldSet = new Set(heldRows.map((g) => `${g.env_id}:${g.dek_version}`));
+
+  const rows: Array<{ env_id: string; key_id: string; dek_version: number; wrapped_dek: string; granted_by: string }> = [];
+  for (const g of grants) {
+    if (!isWrappedDek(g?.wrappedDek)) throw new ValidationError('wrappedDek con formato inválido');
+    const { env } = await loadEnv(String(g.projectKey ?? ''), String(g.env ?? ''));
+    if (g.dekVersion !== env.dek_version) throw new AppError(VAULT_STALE_CODE, `la llave de ${g.projectKey}/${g.env} cambió: repite el comando`, 409);
+    if (!heldSet.has(`${env.id}:${env.dek_version}`)) throw new AppError(VAULT_NO_ACCESS_CODE, `la llave vieja no tiene acceso a ${g.projectKey}/${g.env}`, 403);
+    rows.push({ env_id: env.id, key_id: newKey.id, dek_version: env.dek_version, wrapped_dek: g.wrappedDek, granted_by: actor.devId });
+  }
+  if (rows.length) {
+    const { error } = await supabase.from('zeus_vault_grant').upsert(rows, { onConflict: 'env_id,key_id,dek_version' });
+    if (error) throw error;
+  }
+  const { error: delErr } = await supabase.from('zeus_vault_grant').delete().eq('key_id', oldKey.id);
+  if (delErr) throw delErr;
+  if (input.compromised) {
+    const envIds = [...new Set(heldRows.map((g) => g.env_id))];
+    if (envIds.length) {
+      const { error } = await supabase.from('zeus_vault_env').update({ needs_rotation: true, updated_at: new Date().toISOString() }).in('id', envIds);
+      if (error) throw error;
+    }
+  }
+  const { error: revErr } = await supabase.from('zeus_vault_key').update({ revoked_at: new Date().toISOString() }).eq('id', oldKey.id);
+  if (revErr) throw revErr;
+  audit(actor, 'key.rotate', null, newKey.id, { from: oldKey.id, moved: rows.length, compromised: !!input.compromised });
+  return { ok: true, moved: rows.length };
 }
 
 // ---------------------------------------------------------------- vistas
@@ -522,7 +829,14 @@ export async function vaultOverview(): Promise<ZeusVaultOverview> {
 /** Para el agente (zeus_env_status): qué variables existen y si quien pregunta puede bajarlas. */
 export async function envStatus(projectKey: string, actor: ZeusActor): Promise<{
   project: string;
-  envs: Array<{ name: string; variables: string[]; youHaveAccess: boolean; needsRotation: boolean; pull: string }>;
+  envs: Array<{
+    name: string;
+    variables: Array<{ name: string; version: number; updatedAt: string; updatedBy: string | null }>;
+    youHaveAccess: boolean;
+    needsRotation: boolean;
+    pull: string;
+    status: string;
+  }>;
   note: string;
 }> {
   const project = await resolveProject(projectKey);
@@ -532,20 +846,26 @@ export async function envStatus(projectKey: string, actor: ZeusActor): Promise<{
   const envRows = (envs ?? []) as EnvRow[];
   const mine = (await listProjectsForCli(actor)).find((p) => p.key === project.key);
   const { data: secrets, error: sErr } = envRows.length
-    ? await supabase.from('zeus_vault_secret').select('env_id, name').in('env_id', envRows.map((e) => e.id)).order('name')
+    ? await supabase.from('zeus_vault_secret').select('env_id, name, version, updated_at, updated_by').in('env_id', envRows.map((e) => e.id)).order('name')
     : { data: [], error: null };
   if (sErr) throw sErr;
+  type S = { env_id: string; name: string; version: number; updated_at: string; updated_by: string | null };
+  const rows = (secrets ?? []) as S[];
+  const names = await devNames(rows.map((s) => s.updated_by));
   return {
     project: project.key,
     envs: envRows.map((e) => ({
       name: e.name,
-      variables: ((secrets ?? []) as Array<{ env_id: string; name: string }>).filter((s) => s.env_id === e.id).map((s) => s.name),
+      variables: rows
+        .filter((s) => s.env_id === e.id)
+        .map((s) => ({ name: s.name, version: s.version, updatedAt: s.updated_at, updatedBy: s.updated_by ? (names.get(s.updated_by) ?? null) : null })),
       youHaveAccess: !!mine?.envs.find((x) => x.name === e.name)?.hasGrant,
       needsRotation: e.needs_rotation,
       pull: `zeus env pull ${project.key} ${e.name}`,
+      status: `zeus env status ${project.key} ${e.name}`,
     })),
     note:
       'zeus no puede leer los valores: se descifran solo en la PC del dev con el CLI. No pidas ni pegues valores de secretos en el chat; ' +
-      'si falta acceso, abre una solicitud con zeus_request.',
+      'para comparar tu archivo local con la bóveda corre el comando `status` (solo muestra nombres). Si falta acceso, abre una solicitud con zeus_request.',
   };
 }
