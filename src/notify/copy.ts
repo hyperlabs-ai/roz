@@ -9,6 +9,7 @@
 //   · título de push <= 50 caracteres, cuerpo <= 120;
 //   · el nombre del destinatario aparece en el título o en el cuerpo cuando se conoce.
 import type { PushPayload } from '../adapters/web-push.js';
+import { renderEmailDoc, type EmailFact, type EmailPerson, type EmailTone } from './email-layout.js';
 
 export const PUSH_TITLE_MAX = 50;
 export const PUSH_BODY_MAX = 120;
@@ -45,8 +46,20 @@ export interface Notice {
   /** Correo: el detalle estructurado, pares etiqueta/valor. */
   facts: [string, string][];
   /** Correo: lista de elementos (cambios documentados, tareas por vencer). */
-  items?: { code: string; text: string; url?: string | null }[];
+  items?: { code: string; text: string; url?: string | null; meta?: string | null; chip?: { label: string; tone: EmailTone } | null }[];
+  /** Título de la lista de `items` en el correo. */
+  itemsTitle?: string;
+  /** Correo: comandos o líneas de terminal (en mono, fondo oscuro). */
+  code?: { title?: string; lines: string[] } | null;
   cta?: { label: string; url: string } | null;
+  /** Correo: enlace secundario junto al botón. */
+  secondary?: { label: string; url: string } | null;
+  /** Correo: sección de roz de donde viene ("Tareas", "Código", "Zeus · Bandeja"). */
+  section?: string;
+  /** Correo: cómo se pinta cada dato (por etiqueta): persona con avatar, chip de estado o mono. */
+  decor?: Record<string, { person?: EmailPerson; chip?: EmailTone; mono?: boolean }>;
+  /** Correo: por qué le llega a la persona (una línea en el pie). */
+  reason?: string;
 }
 
 // ------------------------------------------------------------------ utilidades
@@ -114,6 +127,10 @@ function body(...parts: (string | null | undefined | false)[]): string {
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 const PRIORITY_LABEL: Record<string, string> = { urgent: 'Urgente', high: 'Alta', medium: 'Media', low: 'Baja' };
+/** Color del chip de prioridad en el correo. */
+const PRIORITY_TONE: Record<string, EmailTone> = { urgent: 'alert', high: 'warn', medium: 'info', low: 'neutral' };
+/** Decoración de un dato que es una persona: avatar de GitHub si se sabe su login. */
+const person = (name: string, login?: string | null): { person: EmailPerson } => ({ person: { name, login: login ?? null } });
 export function priorityLabel(p?: string | null): string | null {
   return p ? PRIORITY_LABEL[p] ?? null : null;
 }
@@ -194,6 +211,8 @@ export interface AssignedInput {
   recipient?: string | null;
   /** Quien asignó. null = roz (asignación automática) o desconocido. */
   actor?: string | null;
+  /** Login de GitHub de quien asignó (su avatar en el correo). */
+  actorLogin?: string | null;
   /** La asignó roz por reglas (skill, disponibilidad, carga). */
   auto?: boolean;
   /** A quién se la quitaron para dártela. */
@@ -260,6 +279,15 @@ export function assignedNotice(i: AssignedInput): Notice {
       ['Antes la llevaba', prev],
     ],
     cta: i.url ? { label: 'Abrir tarea', url: i.url } : null,
+    section: 'Tareas',
+    reason: 'Te llega porque te asignaron esta tarea.',
+    decor: {
+      Tarea: { mono: true },
+      ...(t.priority && PRIORITY_TONE[t.priority] ? { Prioridad: { chip: PRIORITY_TONE[t.priority] } } : {}),
+      ...(due && days !== null && days <= 1 ? { 'Fecha límite': { chip: days < 0 ? ('alert' as const) : ('warn' as const) } } : {}),
+      ...(actor ? { Asignó: person(actor, i.actorLogin) } : {}),
+      ...(prev ? { 'Antes la llevaba': person(prev) } : {}),
+    },
   });
 }
 
@@ -276,8 +304,11 @@ export function workDoneNotice(i: { seed: string; recipient?: string | null; ide
     kicker: 'Completado',
     headline: name || i.identifier,
     lead: `${me ? `Hola ${me}. ` : ''}Lo que pediste en ${i.identifier} ya quedó cerrado${who ? ` por ${who}` : ''} y lo dejé documentado.`,
-    facts: [['Solicitud', i.identifier], ['Cerró', who]],
+    facts: [['Solicitud', i.identifier], ['Estado', 'Completada'], ['Cerró', who]],
     cta: i.url ? { label: 'Ver tarea', url: i.url } : null,
+    section: 'Tareas',
+    reason: 'Te llega porque tú pediste este cambio.',
+    decor: { Solicitud: { mono: true }, Estado: { chip: 'ok' }, ...(who ? { Cerró: person(who) } : {}) },
   });
 }
 
@@ -302,7 +333,10 @@ export function documentedNotice(i: { seed: string; recipient?: string | null; i
     headline: single ? one.name || one.identifier : `${n} cambios tuyos quedaron registrados`,
     lead: `${me ? `Hola ${me}. ` : ''}Vi tu trabajo en código y lo registré como ${single ? 'tarea completada' : 'tareas completadas'}. No necesitas hacer nada.`,
     facts: [],
-    items: i.items.map((x) => ({ code: x.identifier, text: x.name, url: x.url })),
+    items: i.items.map((x) => ({ code: x.identifier, text: x.name, url: x.url, meta: x.repo ?? null, chip: { label: 'Completada', tone: 'ok' as const } })),
+    itemsTitle: single ? undefined : `${n} tareas registradas`,
+    section: 'Tareas',
+    reason: 'Te llega porque roz documenta solo el trabajo que ve en tus commits.',
     cta: single && one.url ? { label: 'Ver tarea', url: one.url } : i.listUrl ? { label: 'Ver mis tareas', url: i.listUrl } : null,
   });
 }
@@ -337,8 +371,20 @@ export function dueNotice(i: { seed: string; recipient?: string | null; items: D
     headline: single ? first.name || first.identifier : cap(leadParts.join(' y ')),
     lead: `${me ? `Hola ${me}. ` : ''}Revisé tus fechas: ${leadParts.join(' y ')}. Si alguna ya no aplica, muévele la fecha y dejo de recordártela.`,
     facts: [],
-    items: [...late, ...today].map((x) => ({ code: x.identifier, text: `${x.name} (${dueLabel(x.dueDate, i.now)})`, url: x.url })),
+    items: [...late, ...today].map((x) => {
+      const isLate = (daysUntil(x.dueDate, i.now) ?? 0) < 0;
+      return {
+        code: x.identifier,
+        text: x.name,
+        url: x.url,
+        meta: cap([x.project, dueLabel(x.dueDate, i.now)].filter(Boolean).join(', ')) || null,
+        chip: isLate ? { label: 'Vencida', tone: 'alert' as const } : { label: 'Hoy', tone: 'warn' as const },
+      };
+    }),
+    itemsTitle: single ? undefined : 'Por orden de urgencia',
     cta: single && first.url ? { label: 'Abrir tarea', url: first.url } : i.listUrl ? { label: 'Ver mis tareas', url: i.listUrl } : null,
+    section: 'Tareas',
+    reason: 'Te recuerdo tus fechas cada día hábil a las 9:00.',
   });
 }
 
@@ -357,7 +403,7 @@ export interface PrRef {
 
 const shortRepo = (repo: string) => repo.split('/').pop() ?? repo;
 
-export function prMergedNotice(i: { seed: string; recipient?: string | null; merger?: string | null; pr: PrRef; reviewers?: string[] }): Notice {
+export function prMergedNotice(i: { seed: string; recipient?: string | null; merger?: string | null; mergerLogin?: string | null; pr: PrRef; reviewers?: string[] }): Notice {
   const me = firstName(i.recipient);
   const who = firstName(i.merger);
   const pr = i.pr;
@@ -383,12 +429,21 @@ export function prMergedNotice(i: { seed: string; recipient?: string | null; mer
       ['Revisó', (i.reviewers ?? []).map(firstName).filter(Boolean).join(', ')],
     ],
     cta: pr.url ? { label: 'Ver PR', url: pr.url } : null,
+    section: 'Código',
+    reason: 'Te llega porque la PR es tuya.',
+    decor: { Repo: { mono: true }, Rama: { mono: true }, Tarea: { mono: true }, ...(who ? { 'Integró': person(who, i.mergerLogin) } : {}) },
   });
 }
 
 export type ReviewState = 'approved' | 'changes_requested' | 'commented';
 
-export function prReviewedNotice(i: { seed: string; recipient?: string | null; reviewer?: string | null; state: ReviewState; pr: PrRef }): Notice {
+const VERDICT: Record<ReviewState, { label: string; tone: EmailTone }> = {
+  approved: { label: 'Aprobada', tone: 'ok' },
+  changes_requested: { label: 'Pide cambios', tone: 'alert' },
+  commented: { label: 'Comentarios', tone: 'info' },
+};
+
+export function prReviewedNotice(i: { seed: string; recipient?: string | null; reviewer?: string | null; reviewerLogin?: string | null; state: ReviewState; pr: PrRef }): Notice {
   const me = firstName(i.recipient);
   const who = firstName(i.reviewer) || 'Alguien';
   const pr = i.pr;
@@ -412,13 +467,16 @@ export function prReviewedNotice(i: { seed: string; recipient?: string | null; r
   return finish({
     title: title(i.seed, variants[i.state]),
     body: body(pr.title || `PR ${ref}`, repo, pr.identifier, next[i.state]),
-    subject: `${variants[i.state][2]!.replace(/^.*?, /, '')} en ${repo}`,
+    subject: `${cap(variants[i.state][2]!.replace(/^.*?, /, ''))} en ${repo}`,
     mood: i.state === 'approved' ? 'happy' : i.state === 'changes_requested' ? 'alert' : 'default',
     kicker: i.state === 'approved' ? 'PR aprobada' : i.state === 'changes_requested' ? 'Cambios solicitados' : 'Comentarios en tu PR',
     headline: clean(pr.title) || `PR ${ref}`,
     lead: `${me ? `Hola ${me}. ` : ''}${lead[i.state]}`,
-    facts: [['Repo', pr.repo], ['Rama', pr.branch ?? ''], ['Tarea', pr.identifier ?? ''], ['Revisó', who]],
+    facts: [['Repo', pr.repo], ['Rama', pr.branch ?? ''], ['Tarea', pr.identifier ?? ''], ['Veredicto', VERDICT[i.state].label], ['Revisó', who]],
     cta: pr.url ? { label: 'Ver PR', url: pr.url } : null,
+    section: 'Código',
+    reason: 'Te llega porque la PR es tuya.',
+    decor: { Repo: { mono: true }, Rama: { mono: true }, Tarea: { mono: true }, Veredicto: { chip: VERDICT[i.state].tone }, 'Revisó': person(who, i.reviewerLogin) },
   });
 }
 
@@ -442,6 +500,9 @@ export function repoDetectedNotice(i: { seed: string; recipient?: string | null;
         lead: `${me ? `Hola ${me}. ` : ''}Detecté el repo ${i.repo} y lo vinculé al proyecto ${proj}. Desde ahora sus commits y PRs cuentan ahí.`,
         facts: [['Repo', i.repo], ['Proyecto', proj]],
         cta: i.repoUrl ? { label: 'Ver en GitHub', url: i.repoUrl } : null,
+        section: 'Repos',
+        reason: 'Te llega porque roz sigue los repos de la organización.',
+        decor: { Repo: { mono: true }, Proyecto: { chip: 'ok' } },
       }
     : {
         title: ttl,
@@ -453,6 +514,9 @@ export function repoDetectedNotice(i: { seed: string; recipient?: string | null;
         lead: `${me ? `Hola ${me}. ` : ''}Detecté el repo ${i.repo} y no encontré a qué proyecto pertenece. Mientras nadie lo vincule, su trabajo no suma a ningún proyecto.`,
         facts: [['Repo', i.repo], ['Proyecto', 'Sin asignar']],
         cta: i.repoUrl ? { label: 'Ver en GitHub', url: i.repoUrl } : null,
+        section: 'Repos',
+        reason: 'Te llega porque roz sigue los repos de la organización.',
+        decor: { Repo: { mono: true }, Proyecto: { chip: 'warn' } },
       });
 }
 
@@ -474,8 +538,10 @@ export function planClaimableNotice(i: { seed: string; identifier: string; name?
     kicker: 'Plan reclamable',
     headline: clean(i.name) || i.identifier,
     lead: `El plan de ${i.identifier} ${why}. Si tienes tu runner encendido, puedes reclamarlo.`,
-    facts: [['Tarea', i.identifier], ['Proyecto', i.project ?? ''], ['Dueño', owner]],
+    facts: [['Tarea', i.identifier], ['Proyecto', i.project ?? ''], ['Dueño', owner], ['Estado', 'Reclamable']],
     cta: i.url ? { label: 'Ver plan', url: i.url } : null,
+    section: 'Agentes',
+    decor: { Tarea: { mono: true }, Estado: { chip: 'thinking' }, ...(owner ? { 'Dueño': person(owner) } : {}) },
   });
 }
 
@@ -494,6 +560,8 @@ export function meetingReadyNotice(i: { seed: string; recipient?: string | null;
         lead: `${me ? `Hola ${me}. ` : ''}Terminé de leer la junta y saqué ${plural(n, 'tarea candidata', 'tareas candidatas')}. Ninguna se crea sola: te esperan en la bandeja para que decidas.`,
         facts: [['Proyecto', i.project ?? ''], ['Candidatas', String(n)], ['Posibles duplicados', i.duplicates ? String(i.duplicates) : ''], ['Decisiones', i.decisions ? String(i.decisions) : '']],
         cta: i.url ? { label: 'Abrir la bandeja', url: i.url } : null,
+        section: 'Juntas',
+        decor: { Candidatas: { chip: 'brand' }, ...(i.duplicates ? { 'Posibles duplicados': { chip: 'warn' as const } } : {}) },
       }
     : {
         title: title(i.seed, [`${hi(me)}leí tu junta, sin tareas`, `Junta leída${me ? `, ${me}` : ''}: sin tareas`]),
@@ -505,6 +573,7 @@ export function meetingReadyNotice(i: { seed: string; recipient?: string | null;
         lead: `${me ? `Hola ${me}. ` : ''}Leí la junta completa y no encontré tareas accionables.`,
         facts: [['Proyecto', i.project ?? ''], ['Decisiones', i.decisions ? String(i.decisions) : '']],
         cta: i.url ? { label: 'Ver la junta', url: i.url } : null,
+        section: 'Juntas',
       });
 }
 
@@ -599,6 +668,133 @@ export function discordAssignedLine(i: { seed: string; identifier: string; title
   return clean([opener, t, i.project && !urgent ? clean(i.project) : null].filter(Boolean).join(' · '));
 }
 
+// ------------------------------------------------------------------ zeus: encargos, planes y variables
+
+export type ZeusWorkEvent = 'new' | 'revised' | 'changes_requested' | 'declined';
+
+export interface ZeusWorkInput {
+  seed: string;
+  /** Quien recibe el correo. */
+  recipient?: string | null;
+  /** Quien hizo la acción (mandó el encargo/plan, o respondió). */
+  actor?: string | null;
+  /** Login de GitHub de quien hizo la acción (su avatar en el correo). */
+  actorLogin?: string | null;
+  kind: 'task' | 'plan';
+  event: ZeusWorkEvent;
+  title: string;
+  project?: string | null;
+  /** Nota de quien respondió (ajustes pedidos, motivo del rechazo). */
+  note?: string | null;
+  /** Primeras líneas del encargo o plan. */
+  excerpt?: string | null;
+  url: string;
+}
+
+/** Correo inmediato de la bandeja de zeus: algo que pide acción de quien lo recibe. */
+export function zeusWorkNotice(i: ZeusWorkInput): Notice {
+  const me = firstName(i.recipient);
+  const actor = firstName(i.actor) || 'Alguien del equipo';
+  const what = i.kind === 'plan' ? 'plan' : 'encargo';
+  const name = clean(i.title) || (i.kind === 'plan' ? 'Plan sin título' : 'Encargo sin título');
+  let ttl: string;
+  let headline: string;
+  let lead: string;
+  let kicker: string;
+  let mood: BotMood = 'default';
+  if (i.event === 'changes_requested') {
+    kicker = 'Ajustes pedidos';
+    mood = 'thinking';
+    ttl = title(i.seed, [`${actor} pidió ajustes a tu plan`, `${hi(me)}${actor} quiere ajustes`, `Ajustes para tu plan${me ? `, ${me}` : ''}`]);
+    headline = `${actor} pidió ajustes a tu plan`;
+    lead = `Antes de implementarlo, ${actor} necesita que cambies algo. Ajusta el plan y mándalo de nuevo como versión nueva: tu Claude lo hace con zeus_share_plan.`;
+  } else if (i.event === 'declined') {
+    kicker = i.kind === 'plan' ? 'Plan rechazado' : 'Encargo rechazado';
+    mood = 'alert';
+    ttl = title(i.seed, [`${actor} rechazó tu ${what}`, `${hi(me)}${actor} no tomará tu ${what}`]);
+    headline = `${actor} rechazó tu ${what}`;
+    lead = `${actor} no lo va a hacer. Abajo va su motivo; si sigue haciendo falta, ajústalo o mándaselo a otra persona.`;
+  } else if (i.kind === 'plan') {
+    kicker = i.event === 'revised' ? 'Plan ajustado' : 'Plan compartido';
+    ttl = title(i.seed, i.event === 'revised'
+      ? [`${actor} ajustó su plan`, `${hi(me)}hay versión nueva del plan`]
+      : [`${actor} te compartió un plan`, `${hi(me)}${actor} te mandó un plan`, `Plan nuevo de ${actor}${me ? `, ${me}` : ''}`]);
+    headline = i.event === 'revised' ? `${actor} ajustó el plan que te mandó` : `${actor} te compartió un plan de implementación`;
+    lead = `Revísalo y decide: lo implementas tal cual, pides ajustes o lo rechazas. Si se lo pides a tu Claude ("revisa mi bandeja de zeus"), te lo resume y te pregunta.`;
+  } else {
+    kicker = 'Encargo nuevo';
+    ttl = title(i.seed, [`${actor} te encargó algo`, `${hi(me)}${actor} te dejó un encargo`, `Encargo de ${actor}${me ? `, ${me}` : ''}`]);
+    headline = `${actor} te dejó un encargo`;
+    lead = `Queda como pendiente en tu bandeja hasta que lo marques hecho o lo rechaces. ${actor} ve en qué va.`;
+  }
+  const excerpt = i.excerpt ? clip(clean(i.excerpt.replace(/^#+\s*/gm, '').replace(/\s+/g, ' ')), 280) : '';
+  return finish({
+    title: ttl,
+    body: body(name, i.project),
+    subject: `${kicker}: ${name}`,
+    mood,
+    kicker,
+    headline,
+    lead,
+    facts: [
+      [i.kind === 'plan' ? 'Plan' : 'Encargo', name],
+      [i.event === 'changes_requested' || i.event === 'declined' ? 'Respondió' : 'De', actor],
+      ...(i.project ? ([['Proyecto', i.project]] as [string, string][]) : []),
+      ...(i.note ? ([['Nota', clip(clean(i.note), 400)]] as [string, string][]) : []),
+      ...(excerpt && (i.event === 'new' || i.event === 'revised') ? ([['Resumen', excerpt]] as [string, string][]) : []),
+    ],
+    cta: { label: 'Abrir mi bandeja', url: i.url },
+    section: 'Bandeja de zeus',
+    reason: i.event === 'changes_requested' || i.event === 'declined' ? 'Te llega porque tú lo mandaste.' : `Te llega porque ${actor} te lo mandó a ti.`,
+    decor: {
+      [i.event === 'changes_requested' || i.event === 'declined' ? 'Respondió' : 'De']: person(actor, i.actorLogin),
+    },
+  });
+}
+
+export interface ZeusEnvChangeItem {
+  /** `PROYECTO/entorno`. */
+  label: string;
+  actor: string;
+  added: string[];
+  changed: string[];
+  deleted: string[];
+  rotated: boolean;
+}
+
+/** Resumen diario de variables que cambiaron en entornos a los que tienes acceso. Solo NOMBRES. */
+export function zeusEnvDigestNotice(i: { seed: string; recipient?: string | null; changes: ZeusEnvChangeItem[]; url: string }): Notice {
+  const me = firstName(i.recipient);
+  const envs = [...new Set(i.changes.map((c) => c.label))];
+  const total = i.changes.reduce((n, c) => n + c.added.length + c.changed.length + c.deleted.length, 0);
+  const describe = (c: ZeusEnvChangeItem): string => {
+    const parts = [
+      c.added.length && `nuevas: ${c.added.join(', ')}`,
+      c.changed.length && `cambiaron: ${c.changed.join(', ')}`,
+      c.deleted.length && `se quitaron: ${c.deleted.join(', ')}`,
+      c.rotated && 'rotó la llave (los valores no cambiaron)',
+    ].filter(Boolean);
+    return parts.join('; ');
+  };
+  const nEnv = envs.length;
+  return finish({
+    title: title(i.seed, [`${hi(me)}cambiaron variables en ${nEnv === 1 ? envs[0] : `${nEnv} entornos`}`, `Variables nuevas en ${nEnv === 1 ? envs[0] : `${nEnv} entornos`}`]),
+    body: body(`${total} cambio${total === 1 ? '' : 's'} de variables`, nEnv === 1 ? envs[0] : `${nEnv} entornos`),
+    subject: `Cambiaron variables en ${nEnv === 1 ? envs[0] : `${nEnv} entornos`}`,
+    mood: 'default',
+    kicker: 'Variables de entorno',
+    headline: nEnv === 1 ? `Cambiaron variables en ${envs[0]}` : `Cambiaron variables en ${nEnv} entornos`,
+    lead: 'Solo van los nombres: los valores nunca salen de la bóveda. Dentro de cada repo, status te dice qué te falta y pull te pone al día.',
+    facts: [],
+    items: i.changes.map((c) => ({ code: c.label, text: cap(describe(c)), meta: `Lo cambió ${firstName(c.actor) || c.actor}` })),
+    itemsTitle: 'Qué cambió',
+    code: { title: 'Para ponerte al día, dentro del repo', lines: ['zeus env status', 'zeus env pull <proyecto> <etapa>'] },
+    cta: { label: 'Ver en mi bandeja', url: i.url },
+    section: 'Variables de zeus',
+    reason: 'Te llega una vez al día si cambió algo en un entorno al que tienes acceso y no lo has visto en roz.',
+  });
+}
+
 // ------------------------------------------------------------------ salida: push y correo
 
 /** Payload de push listo para enviar: texto del aviso + avatar de Roz-bot según el ánimo. */
@@ -606,86 +802,36 @@ export function toPush(n: Pick<Notice, 'title' | 'body' | 'mood'>, extra: Omit<P
   return { title: n.title, body: n.body, icon: botIcon(n.mood), ...extra };
 }
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const MOOD_TONE: Record<BotMood, EmailTone> = { default: 'brand', happy: 'ok', alert: 'alert', thinking: 'thinking' };
 
-const MOOD_COLOR: Record<BotMood, { ink: string; soft: string }> = {
-  default: { ink: '#b23a0e', soft: '#ffe4d8' },
-  happy: { ink: '#15803d', soft: '#dcfce7' },
-  alert: { ink: '#b91c1c', soft: '#fee2e2' },
-  thinking: { ink: '#6d28d9', soft: '#ede9fe' },
-};
-
-const FONT = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
-
-/** Cabecera común de los correos: Roz-bot como remitente, con la expresión del aviso. */
-export function emailHeader(mood: BotMood, base: string, tagline = 'te escribe Roz'): string {
-  const img = base
-    ? `<img src="${botIcon(mood, base)}" width="40" height="40" alt="Roz" style="display:block;border-radius:12px;background:#ff5b23">`
-    : `<div style="width:40px;height:40px;border-radius:12px;background:#ff5b23;color:#fff;font:800 15px ${FONT};line-height:40px;text-align:center">rz</div>`;
-  return `<tr><td style="background:#171614;padding:18px 28px">
-        <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-          <td style="vertical-align:middle">${img}</td>
-          <td style="vertical-align:middle;padding-left:12px">
-            <div style="color:#ffffff;font:700 16px ${FONT}">Roz</div>
-            <div style="color:#a8a29a;font:400 12px ${FONT}">${esc(tagline)}</div>
-          </td>
-        </tr></table>
-      </td></tr>`;
-}
-
-export function emailFooter(note = 'Puedes silenciar mis avisos en Configuración.'): string {
-  return `<tr><td style="padding:16px 28px;border-top:1px solid #eeeae4"><span style="color:#a8a29a;font:400 12px ${FONT}">Roz, el bot de tu equipo · ${esc(note)}</span></td></tr>`;
-}
-
-/** Correo breve con el detalle estructurado. `base` = URL pública del dashboard (para el avatar). */
+/**
+ * El correo de un aviso, en el layout único de roz (./email-layout.ts). `base` = URL pública del
+ * dashboard (avatar de Roz y enlace a Configuración).
+ */
 export function renderEmail(n: Notice, base = ''): { subject: string; html: string; text: string } {
-  const c = MOOD_COLOR[n.mood];
-  const facts = n.facts.length
-    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf8f5;border:1px solid #eeeae4;border-radius:10px;margin:0 0 20px">${n.facts
-        .map(([k, v], idx) => `<tr>
-          <td style="padding:9px 16px;color:#8a847b;font:600 11px ${FONT};text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;width:1%;${idx ? 'border-top:1px solid #eeeae4' : ''}">${esc(k)}</td>
-          <td style="padding:9px 16px 9px 0;color:#171614;font:500 14px ${FONT};${idx ? 'border-top:1px solid #eeeae4' : ''}">${esc(v)}</td>
-        </tr>`)
-        .join('')}</table>`
-    : '';
-  const items = n.items?.length
-    ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#faf8f5;border:1px solid #eeeae4;border-radius:10px;margin:0 0 20px">${n.items
-        .map((it, idx) => `<tr><td style="padding:10px 16px;${idx ? 'border-top:1px solid #eeeae4' : ''}">
-          <span style="color:#b23a0e;font:700 12px ui-monospace,Menlo,monospace">${esc(it.code)}</span>
-          <div style="color:#171614;font:400 14px/1.4 ${FONT};margin-top:2px">${it.url ? `<a href="${it.url}" style="color:#171614;text-decoration:none">${esc(it.text)}</a>` : esc(it.text)}</div>
-        </td></tr>`)
-        .join('')}</table>`
-    : '';
-  const button = n.cta
-    ? `<a href="${n.cta.url}" style="display:inline-block;background:#ff5b23;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:9px;font:600 14px ${FONT}">${esc(n.cta.label)}</a>`
-    : '';
-
-  const html = `<!doctype html><html><body style="margin:0;background:#f3efe9;padding:24px 0;font-family:${FONT}">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-    <table role="presentation" width="500" cellpadding="0" cellspacing="0" style="max-width:500px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e7e2da">
-      ${emailHeader(n.mood, base)}
-      <tr><td style="padding:26px 28px 24px">
-        <span style="display:inline-block;background:${c.soft};color:${c.ink};border-radius:6px;padding:3px 9px;font:700 11px ${FONT};text-transform:uppercase;letter-spacing:.5px">${esc(n.kicker)}</span>
-        <p style="margin:12px 0 8px;color:#171614;font:700 19px/1.3 ${FONT}">${esc(n.headline)}</p>
-        <p style="margin:0 0 20px;color:#57524b;font:400 14px/1.55 ${FONT}">${esc(n.lead)}</p>
-        ${facts}${items}${button}
-      </td></tr>
-      ${emailFooter()}
-    </table>
-  </td></tr></table>
-</body></html>`;
-
-  const text = [
-    n.headline,
-    '',
-    n.lead,
-    '',
-    ...n.facts.map(([k, v]) => `${k}: ${v}`),
-    ...(n.items ?? []).map((it) => `· ${it.code}: ${it.text}${it.url ? ` (${it.url})` : ''}`),
-    ...(n.cta ? ['', `${n.cta.label}: ${n.cta.url}`] : []),
-    '',
-    'Roz',
-  ].join('\n').replace(/\n{3,}/g, '\n\n');
-
-  return { subject: n.subject, html, text };
+  const facts: EmailFact[] = n.facts.map(([label, value]) => {
+    const d = n.decor?.[label];
+    return { label, value, ...(d?.mono ? { mono: true } : {}), ...(d?.chip ? { chip: d.chip } : {}), ...(d?.person ? { person: { ...d.person, name: value || d.person.name } } : {}) };
+  });
+  return renderEmailDoc({
+    subject: n.subject,
+    preheader: n.body,
+    botFile: BOT_FILE[n.mood],
+    section: n.section ?? 'Roz',
+    kicker: n.kicker,
+    tone: MOOD_TONE[n.mood],
+    headline: n.headline,
+    lead: n.lead,
+    blocks: [
+      { kind: 'facts', rows: facts },
+      ...(n.items?.length
+        ? [{ kind: 'list' as const, title: n.itemsTitle, items: n.items.map((it) => ({ code: it.code, text: it.text, url: it.url, meta: it.meta, chip: it.chip })) }]
+        : []),
+      ...(n.code?.lines.length ? [{ kind: 'code' as const, title: n.code.title, lines: n.code.lines }] : []),
+    ],
+    cta: n.cta,
+    secondary: n.secondary,
+    reason: n.reason,
+    base,
+  });
 }

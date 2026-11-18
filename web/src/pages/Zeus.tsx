@@ -53,8 +53,8 @@ export default function Zeus({ section = 'mapa' }: { section?: ZeusSection }) {
       {section === 'biblioteca' && <DocsTab />}
       {section === 'bandeja' && <InboxTab me={me.data} />}
       {section === 'equipo' && <OrgTab me={me.data} />}
-      {section === 'llaves' && <VaultTab me={me.data} />}
-      {section === 'acceso' && <AccessTab me={me.data} />}
+      {section === 'variables' && <VaultTab me={me.data} />}
+      {section === 'mcp' && <AccessTab me={me.data} />}
     </Layout>
   );
 }

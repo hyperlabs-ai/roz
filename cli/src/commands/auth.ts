@@ -23,7 +23,7 @@ export async function login(deps: LoginDeps, args: string[]): Promise<number> {
     token = (await deps.prompt.secret('Token de zeus (zeus_…, no se muestra): ')).trim();
   }
   if (!TOKEN_RE.test(token)) {
-    throw new CliError('ese no parece un token de zeus (zeus_ y 43 caracteres). Créalo en el dashboard: zeus → Acceso → Nuevo token.');
+    throw new CliError('ese no parece un token de zeus (zeus_ y 43 caracteres). Créalo en el dashboard: zeus → MCP → Nuevo token.');
   }
 
   let me;

@@ -5,6 +5,8 @@ import { config } from '../config.js';
 import { pushToDev } from '../notify/push.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { inBackground } from '../utils/background.js';
+import { mailWorkEvent } from './mail.js';
+import { claimOnce, releaseOnce } from '../events/outbox.js';
 import {
   ZEUS_OPEN_STATUSES,
   type ZeusActivityEvent,
@@ -193,6 +195,9 @@ export async function sendMessage(input: SendMessageInput, actor: ZeusActor): Pr
   logActivity(actorActivity(actor), kind === 'task' ? 'task' : 'message', `dev:${to.id}`, { to: to.name });
   if (to.id !== actor.devId) {
     notify(to.id, to.email, kind === 'task' ? `${actor.name} te encargó algo` : `${actor.name} te escribió`, subject || body, 'bandeja');
+    // Un encargo pide acción: también va por correo. Un mensaje suelto se queda en bandeja y push.
+    const id = (data as MessageRow).id;
+    if (kind === 'task') inBackground(() => mailWorkEvent(id, 'new'));
   }
   return toMessage(data as MessageRow, new Map([[actor.devId, actor.name], [to.id, to.name]]), new Map(project ? [[project.id, project.key]] : []));
 }
@@ -203,6 +208,51 @@ async function systemMessage(toDevId: string, subject: string, body: string, req
     .from('zeus_message')
     .insert({ from_dev_id: extra.fromDevId ?? null, to_dev_id: toDevId, subject, body, request_id: requestId, parent_id: extra.parentId ?? null, via: 'system' });
   if (error) throw error;
+}
+
+export interface InboxNoticeInput {
+  toDevId: string;
+  subject: string;
+  body: string;
+  /** Quien originó el evento (asignó, revisó…); null = lo avisa zeus. */
+  fromDevId?: string | null;
+  /** Referencia del grafo (`project:<id>`, `repo:<owner/name>`…); una inválida se descarta. */
+  ref?: string | null;
+  projectId?: string | null;
+  /** Llave de idempotencia: el mismo evento no deja dos mensajes aunque se reintente. */
+  dedupeKey?: string | null;
+}
+
+/**
+ * Deja un aviso del sistema en la bandeja de un dev (tarea asignada, PR revisada, deploy caído…):
+ * lo que tiene pendiente debe estar ahí al entrar, aunque haya silenciado el correo o el push.
+ * Nunca lanza: el aviso es un extra y no puede tumbar el efecto que lo dispara.
+ */
+export async function inboxNotice(input: InboxNoticeInput): Promise<boolean> {
+  try {
+    if (!input.toDevId || !isUuid(input.toDevId)) return false;
+    if (input.dedupeKey && !(await claimOnce(`inbox:${input.dedupeKey}`, 'zeus-inbox'))) return false;
+    const ref = input.ref && parseRef(input.ref) ? input.ref : null;
+    const { error } = await db()
+      .from('zeus_message')
+      .insert({
+        kind: 'message',
+        from_dev_id: input.fromDevId && input.fromDevId !== input.toDevId ? input.fromDevId : null,
+        to_dev_id: input.toDevId,
+        subject: input.subject.trim().slice(0, 160) || null,
+        body: input.body.trim().slice(0, MAX_MESSAGE_CHARS) || input.subject.trim(),
+        ref,
+        project_id: input.projectId && isUuid(input.projectId) ? input.projectId : null,
+        via: 'system',
+      });
+    if (error) {
+      if (input.dedupeKey) await releaseOnce(`inbox:${input.dedupeKey}`).catch(() => undefined);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function loadMessage(id: string): Promise<MessageRow> {
@@ -289,6 +339,8 @@ export async function sharePlan(input: SharePlanInput, actor: ZeusActor): Promis
   logActivity(actorActivity(actor), 'plan.share', `dev:${to.id}`, { to: to.name, title });
   if (to.id !== actor.devId) {
     notify(to.id, to.email, previous ? `${actor.name} ajustó un plan` : `${actor.name} te compartió un plan`, title, 'bandeja');
+    const id = (data as MessageRow).id;
+    inBackground(() => mailWorkEvent(id, previous ? 'revised' : 'new'));
   }
   return (await hydrate([data as MessageRow]))[0]!;
 }
@@ -342,6 +394,8 @@ export async function setMessageStatus(id: string, status: ZeusMessageStatus, no
     await systemMessage(otherId, subject, body, null, { parentId: row.id, fromDevId: actor.devId }).catch(() => undefined);
     const { data: other } = await db().from('dev').select('email').eq('id', otherId).maybeSingle();
     notify(otherId, (other as { email: string | null } | null)?.email ?? null, subject, row.subject ?? '', 'bandeja');
+    // Que te pidan ajustes o te rechacen algo pide acción tuya: va por correo a quien lo mandó.
+    if (isRecipient && (status === 'changes_requested' || status === 'declined')) inBackground(() => mailWorkEvent(row.id, status));
   }
   logActivity(actorActivity(actor), `${row.kind}.${status}`, null, { title: row.subject });
   return (await hydrate([data as MessageRow]))[0]!;

@@ -80,11 +80,10 @@ describe('CLI de zeus contra el servidor', () => {
     expect(sent.join('\n')).not.toContain(priv);
   });
 
-  it('un dev sin rol de admin no puede crear el entorno; el admin sí', async () => {
-    await expect(envInit(ana.ctx, ['orwel'])).rejects.toThrow();
-    expect(await pg.sql(`select 1 from roz.zeus_vault_env`)).toHaveLength(0);
+  it('cualquier dev crea un entorno (sin ser admin); el mismo entorno no se crea dos veces', async () => {
     expect(await envInit(fer.ctx, ['orwel'])).toBe(0);
     expect(await pg.sql(`select name, dek_version from roz.zeus_vault_env`)).toEqual([{ name: 'development', dek_version: 1 }]);
+    await expect(envInit(ana.ctx, ['orwel'])).rejects.toThrow(/ya existe/);
   });
 
   it('push sube todo cifrado: ni la base ni la red ven un valor', async () => {
@@ -147,7 +146,8 @@ describe('CLI de zeus contra el servidor', () => {
     expect((await pg.sql(`select needs_rotation from roz.zeus_vault_env`))[0]).toEqual({ needs_rotation: true });
     await expect(envPull(ana.ctx, ['ORWEL', '--stdout'])).rejects.toThrow(/acceso/i);
 
-    await expect(envRotate(beto.ctx, ['ORWEL', '--yes'])).rejects.toThrow();
+    // Rota quien tiene acceso; Ana ya no lo tiene.
+    await expect(envRotate(ana.ctx, ['ORWEL', '--yes'])).rejects.toThrow(/acceso/i);
     expect(await envRotate(fer.ctx, ['ORWEL', '--yes'])).toBe(0);
     expect((await pg.sql(`select dek_version, needs_rotation from roz.zeus_vault_env`))[0]).toEqual({ dek_version: 2, needs_rotation: false });
     expect(await pg.sql(`select distinct dek_version from roz.zeus_vault_secret`)).toEqual([{ dek_version: 2 }]);

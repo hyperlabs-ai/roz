@@ -31,6 +31,7 @@ import {
 } from '../zeus/inbox.js';
 import { ZEUS_MESSAGE_STATUSES, type ZeusMessageStatus } from '../types/zeus.js';
 import { listSources, markSourceDirty, reimportNode } from '../zeus/ingest.js';
+import { mcpStatus } from '../zeus/mcp-status.js';
 import { archiveNode, createEdge, createNode, deleteEdge, getNodeDetail, listNodes, searchNodes, updateNode } from '../zeus/nodes.js';
 import {
   createEnv,
@@ -257,6 +258,8 @@ zeusDashboardRoutes.post(
 );
 
 zeusDashboardRoutes.get('/activity', web((c) => listActivity(c.req.query('since') ?? null)));
+// Página "MCP": estado del servidor, conexiones, último trabajo, pendientes, runners e ingesta.
+zeusDashboardRoutes.get('/mcp', web(() => mcpStatus()));
 
 zeusDashboardRoutes.get('/vault', web(() => vaultOverview()));
 zeusDashboardRoutes.get('/vault/envs/:projectKey/:env/history', web((c) => envHistoryMeta(param(c, 'projectKey'), param(c, 'env'), c.req.query('name') || null)));
@@ -274,7 +277,7 @@ export const zeusCliRoutes = new Hono<RozContext>();
 
 async function cliActor(c: C): Promise<ZeusActor> {
   const actor = await authenticateZeusToken(bearerToken(c.req.header('authorization')), 'cli');
-  if (!actor) throw new AppError('UNAUTHORIZED', 'token de zeus inválido o revocado (crea uno en roz → Zeus → Acceso)', 401);
+  if (!actor) throw new AppError('UNAUTHORIZED', 'token de zeus inválido o revocado (crea uno en roz → Zeus → MCP)', 401);
   return actor;
 }
 const cli = <R>(fn: (c: C, actor: ZeusActor) => Promise<R>) => run(cliActor, fn);

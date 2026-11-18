@@ -30,6 +30,8 @@ export const JOBS: readonly ScheduledJob[] = [
   { path: 'plan-watchdog', cron: '*/5 * * * *' },
   { path: 'task-reminders', cron: '0 15 * * 1-5' },
   { path: 'zeus-sweep', cron: '*/10 * * * *' },
+  // 15:00 UTC = 9:00 en México, junto con el recordatorio de fechas.
+  { path: 'zeus-env-digest', cron: '0 15 * * *' },
 ];
 
 /** Cada cuánto se drena el outbox. En Vercel era cada minuto (el mínimo de un cron). */

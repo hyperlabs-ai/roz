@@ -6,7 +6,7 @@
 // Toda la vista vive en la URL (`?lente=&k=&p=&nodo=&leer=`) para poder compartir "mira este ADR".
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ChevronRight, FolderGit2, History, Layers, Link2, Network, PenLine, Pin, Plus, Radio, Search, ShieldCheck, Wifi, X } from 'lucide-react';
+import { ChevronRight, FolderGit2, History, Layers, Link2, Network, Plus, Radio, Search, ShieldCheck, X } from 'lucide-react';
 import { EmptyState, ErrorCard, RefreshButton } from '@/components/bits';
 import { Segmented } from '@/components/pulse/roz-v2';
 import { fold } from '@/components/projects/project-ui';
@@ -22,7 +22,7 @@ import { useZeusGraph } from './hooks';
 import { KIND_ORDER, zoneLayout, type LayoutNode, type ZoneGroup } from './layout';
 import { IsoCanvas } from './IsoCanvas';
 import { supportsWebGL } from './webgl';
-import { HudCard, IconHolder, LeaderRow, Metric, Mix, Pips, Skyline, Timeline, TimelineItem, Waffle, toneVar } from './MapHud';
+import { HudCard, IconHolder, LeaderRow, Mix, Pips, Skyline, Timeline, TimelineItem, Waffle, toneVar } from './MapHud';
 import { NodeDialog } from './NodeDialogs';
 import { Reader } from './Reader';
 import type { ZoneCanvasHandle, ZoneInfo } from './ZoneCanvas';
@@ -591,14 +591,9 @@ export function MapTab() {
   );
 
   const rightHud = (
-    <aside className="scroll-none flex min-h-0 flex-col gap-2 lg:absolute lg:bottom-3 lg:right-3 lg:top-[52px] lg:w-[300px] lg:overflow-y-auto" aria-label="Estado del contexto">
-      <div className="grid shrink-0 grid-cols-2 gap-2">
-        <Metric label="Conexiones" value={stats.edges} icon={<Link2 />} />
-        <Metric label="Fijadas" value={stats.pinned} icon={<Pin />} accent />
-        <Metric label="Escritas aquí" value={stats.manual} icon={<PenLine />} />
-        <Metric label="En línea" value={stats.online} icon={<Wifi />} />
-      </div>
-
+    // Sin scroll propio: el panel cabe en el alto de la pantalla. "Actividad en vivo" toma lo que
+    // sobre y, en pantallas bajas, "De quién es" se oculta antes que forzar un scroll.
+    <aside className="flex min-h-0 flex-col gap-2 lg:absolute lg:bottom-3 lg:right-3 lg:top-[52px] lg:w-[300px] lg:overflow-hidden" aria-label="Estado del contexto">
       <HudCard title="Vigencia" sub="Estado de cada entrada" icon={<ShieldCheck />} className="shrink-0">
         <Mix
           parts={[
@@ -610,7 +605,7 @@ export function MapTab() {
         />
       </HudCard>
 
-      <HudCard title="De quién es" sub="Proyecto u organización" icon={<FolderGit2 />} className="shrink-0">
+      <HudCard title="De quién es" sub="Proyecto u organización" icon={<FolderGit2 />} className="shrink-0 [@media(max-height:950px)]:lg:hidden">
         <Waffle
           a={{ label: 'de un proyecto', value: stats.ofProject, token: '--blue' }}
           b={{ label: 'de la organización', value: stats.ofOrg, token: '--orange' }}
@@ -618,7 +613,7 @@ export function MapTab() {
       </HudCard>
 
       {stats.hubs.length > 0 && (
-        <HudCard title="Más conectadas" sub="Las que más enlaces tienen" icon={<Link2 />} className="shrink-0" bodyClassName="p-1.5">
+        <HudCard title="Más conectadas" sub="Las que más enlaces tienen" icon={<Link2 />} className="shrink-0 [@media(max-height:760px)]:lg:hidden" bodyClassName="p-1.5">
           <ol className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
             {stats.hubs.map((h, i) => (
               <li key={h.node.ref} className="min-w-0">

@@ -90,8 +90,8 @@ const I = {
   biblioteca: { to: R.biblioteca, label: 'Biblioteca', icon: FileText, end: false },
   bandeja: { to: R.bandeja, label: 'Bandeja', icon: Inbox, end: false, badge: 'inbox' },
   equipo: { to: R.equipo, label: 'Equipo', icon: Building2, end: false, badge: 'admin' },
-  llaves: { to: R.llaves, label: 'Llaves', icon: KeyRound, end: false },
-  acceso: { to: R.acceso, label: 'Acceso', icon: Plug, end: false },
+  variables: { to: R.variables, label: 'Variables', icon: KeyRound, end: false },
+  mcp: { to: R.mcp, label: 'MCP', icon: Plug, end: false },
   pulse: { to: R.pulso, label: 'Pulso', icon: HeartPulse, end: false },
   overview: { to: R.resumen, label: 'Resumen', icon: LayoutDashboard, end: false },
   chat: { to: R.chat, label: 'Chat', icon: MessagesSquare, end: false, badge: 'chat' },
@@ -126,7 +126,7 @@ function useNav(): NavSection[] {
   const visibility = sot ? [I.pulse, I.overview] : [I.overview, I.pulse];
   return [
     // Zeus no depende del flag de Linear: el contexto del equipo existe con o sin él.
-    { label: 'Zeus', items: [I.mapa, I.biblioteca, I.bandeja, I.equipo, I.llaves, I.acceso] },
+    { label: 'Zeus', items: [I.mapa, I.biblioteca, I.bandeja, I.equipo, I.variables, I.mcp] },
     { label: 'Visibilidad', items: [...visibility, I.developers, I.capacity, I.projects] },
     { label: 'Entrada', items: [I.meetings, I.ticket, I.tasks, chat] },
     { label: 'Agentes', items: [...(sot ? [I.plans] : []), I.skills] },

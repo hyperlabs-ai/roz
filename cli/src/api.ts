@@ -141,7 +141,7 @@ export class ZeusClient implements ZeusApi {
       const code = e?.code ?? `HTTP_${res.status}`;
       let message = e?.message ?? `zeus respondió ${res.status}`;
       if (res.status === 401) {
-        message = 'token de zeus inválido o revocado: crea uno nuevo en el dashboard (zeus → Acceso) y corre `zeus login`';
+        message = 'token de zeus inválido o revocado: crea uno nuevo en el dashboard (zeus → MCP) y corre `zeus login`';
       }
       throw new ZeusApiError(message, res.status, code);
     }

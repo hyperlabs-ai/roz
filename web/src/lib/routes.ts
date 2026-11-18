@@ -18,8 +18,8 @@ export const R = {
   biblioteca: '/biblioteca',
   bandeja: '/bandeja',
   equipo: '/equipo',
-  llaves: '/llaves',
-  acceso: '/acceso',
+  variables: '/variables',
+  mcp: '/mcp',
   // Visibilidad
   pulso: '/pulso',
   resumen: '/resumen',
@@ -61,15 +61,15 @@ export function stripAppPrefix(pathname: string): string {
   return pathname.replace(/^\/app(?=\/|$)/, '') || '/';
 }
 
-export type ZeusSection = 'mapa' | 'biblioteca' | 'bandeja' | 'equipo' | 'llaves' | 'acceso';
+export type ZeusSection = 'mapa' | 'biblioteca' | 'bandeja' | 'equipo' | 'variables' | 'mcp';
 
 export const ZEUS_SECTIONS: { id: ZeusSection; path: string; label: string }[] = [
   { id: 'mapa', path: R.mapa, label: 'Mapa' },
   { id: 'biblioteca', path: R.biblioteca, label: 'Biblioteca' },
   { id: 'bandeja', path: R.bandeja, label: 'Bandeja' },
   { id: 'equipo', path: R.equipo, label: 'Equipo' },
-  { id: 'llaves', path: R.llaves, label: 'Llaves' },
-  { id: 'acceso', path: R.acceso, label: 'Acceso' },
+  { id: 'variables', path: R.variables, label: 'Variables' },
+  { id: 'mcp', path: R.mcp, label: 'MCP' },
 ];
 
 /** Valores que tuvo `?tab=` cuando las secciones de zeus eran pestañas de una sola página. */
@@ -80,8 +80,11 @@ const ZEUS_TAB: Record<string, ZeusSection> = {
   bandeja: 'bandeja',
   organizacion: 'equipo',
   equipo: 'equipo',
-  llaves: 'llaves',
-  acceso: 'acceso',
+  llaves: 'variables',
+  env: 'variables',
+  variables: 'variables',
+  acceso: 'mcp',
+  mcp: 'mcp',
 };
 
 /**
@@ -112,4 +115,8 @@ export const LEGACY_ROUTES: [from: string, to: string][] = [
   ['capacity', 'capacidad'],
   ['tickets', 'reportes'],
   ['settings', 'configuracion'],
+  // Zeus: "Llaves" pasó a llamarse Variables (un tiempo fue Env) y "Acceso" pasó a ser la página del MCP.
+  ['llaves', 'variables'],
+  ['env', 'variables'],
+  ['acceso', 'mcp'],
 ];

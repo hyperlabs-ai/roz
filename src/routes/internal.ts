@@ -11,6 +11,7 @@ import { recordJobRun } from '../events/job-run.js';
 import { brainSweep } from '../brain/sweep.js';
 import { sendWeeklyDigest, sendDevWeeklyDigests } from '../notify/digest.js';
 import { notifyDueTasks } from '../notify/notifications.js';
+import { sendZeusEnvDigests } from '../zeus/mail.js';
 import { pollInfra } from '../infra/poll.js';
 import { pollCalendars } from '../calendar/poll.js';
 import { reconcileOpsBridge, auditOpsBridge } from '../reconcile/ops-bridge.js';
@@ -229,6 +230,15 @@ internalRoutes.get('/task-reminders', async (c) => {
   if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
   const result = await notifyDueTasks();
   c.get('logger')?.info(result, 'task reminders sent');
+  return c.json({ ok: true, ...result });
+});
+
+// Resumen diario de zeus: a cada dev, UN correo con las variables de entorno que cambiaron en las
+// últimas 24 h y que no ha leído en roz (solo nombres). Idempotente por dev y día.
+internalRoutes.get('/zeus-env-digest', async (c) => {
+  if (!requireCron(c)) return c.json({ error: 'forbidden' }, 403);
+  const result = await sendZeusEnvDigests();
+  c.get('logger')?.info(result, 'zeus env digest sent');
   return c.json({ ok: true, ...result });
 });
 

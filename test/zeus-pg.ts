@@ -178,6 +178,14 @@ export async function createZeusPg() {
       this.wheres.push(`${ident(c)} < ${this.p(v)}`);
       return this;
     }
+    gte(c: string, v: unknown) {
+      this.wheres.push(`${ident(c)} >= ${this.p(v)}`);
+      return this;
+    }
+    lte(c: string, v: unknown) {
+      this.wheres.push(`${ident(c)} <= ${this.p(v)}`);
+      return this;
+    }
     in(c: string, vs: unknown[]) {
       this.wheres.push(vs.length ? `${ident(c)} in (${vs.map((v) => this.p(v)).join(', ')})` : 'false');
       return this;

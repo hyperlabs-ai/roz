@@ -1,4 +1,4 @@
-// Pestaña "Llaves": la bóveda de variables de entorno. Aquí solo hay NOMBRES: los valores se cifran
+// Pestaña "Variables": la bóveda de variables de entorno. Aquí solo hay NOMBRES: los valores se cifran
 // en la PC de cada dev y el servidor guarda texto cifrado que no puede leer. Leer, subir, dar acceso
 // y rotar se hace con el CLI `zeus`; la web muestra el estado y permite revocar una llave de equipo.
 //
@@ -6,7 +6,7 @@
 // debajo la puesta en marcha con estado real, la matriz de quién puede descifrar qué, las llaves de
 // equipo y la auditoría.
 import { useMemo, useState } from 'react';
-import { Laptop, Loader2 } from 'lucide-react';
+import { Laptop, Loader2, Plug } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
@@ -107,29 +107,48 @@ export function VaultTab({ me }: { me: ZeusMe | null }) {
       <VaultDiagram data={data ?? null} me={me} refetching={vault.refetching} onRefresh={vault.reload} className="shrink-0" />
 
       <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[296px_minmax(0,1fr)_280px] 2xl:grid-cols-[336px_minmax(0,1fr)_312px]">
-        {/* Puesta en marcha */}
+        {/* Cómo funciona: los pasos con estado real y las dudas que siempre salen. */}
         <Card className="flex min-h-0 flex-col overflow-hidden">
           <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
-            <h2 className="text-sm font-semibold tracking-[-0.01em]">Puesta en marcha</h2>
+            <h2 className="text-sm font-semibold tracking-[-0.01em]">Cómo funciona</h2>
             <span className="label-caps tabular-nums">{data ? `${doneCount} de 3` : '– de 3'}</span>
           </div>
           <div className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-3.5">
             <Steps>
-              <Step n={1} state={stepState(0)} title="Registra tu llave" stateLabel={myKey ? `Hecho · ${myKey.name}` : undefined}>
-                <StepNote>Crea tu par de llaves en esta PC y sube solo la parte pública. Una vez por máquina. Sin el CLI, instálalo primero (Node 20+).</StepNote>
-                <CmdLine command={CLI_INSTALL} />
+              <Step n={1} state={stepState(0)} title="Crea tu llave (una vez por PC)" stateLabel={myKey ? `Hecho · ${myKey.name}` : undefined}>
+                <StepNote>Se genera en tu PC y ahí se queda. zeus solo recibe la parte pública: ni la web ni la base pueden descifrar nada.</StepNote>
+                <CmdLine wrap command={CLI_INSTALL} />
                 <CmdLine command="zeus key init" />
               </Step>
-              <Step n={2} state={stepState(1)} title="Sube un entorno">
-                <StepNote>Cifra tus variables en tu máquina y sube los cambios.</StepNote>
-                <CmdLine command="zeus env push" />
+              <Step n={2} state={stepState(1)} title="Sube las variables de tu repo">
+                <StepNote>Dentro del repo, solo dices la etapa: zeus arma el nombre (api-hyperhub-production).</StepNote>
+                <CmdLine wrap command="zeus env push <proyecto> local" />
+                <CmdLine wrap command="zeus env push <proyecto> prod" />
               </Step>
-              <Step n={3} state={stepState(2)} title="Da acceso a alguien" last>
-                <StepNote>Envuelves la llave del entorno para la llave pública de esa persona. Solo admins.</StepNote>
-                <CmdLine command="zeus env grant" />
+              <Step n={3} state={stepState(2)} title="Comparte con alguien" last>
+                <StepNote>Cualquiera con acceso al entorno puede compartirlo. La persona corre antes `zeus key init` y te lee su huella.</StepNote>
+                <CmdLine wrap command="zeus env grant <proyecto> prod --to <persona>" />
               </Step>
             </Steps>
 
+            <div className="mt-4 grid gap-2.5 border-t pt-3.5">
+              <span className="label-caps">Dos llaves distintas</span>
+              <dl className="grid gap-2 text-[12px] leading-snug">
+                <div className="grid gap-0.5 rounded-md bg-panel px-3 py-2">
+                  <dt className="flex items-center gap-1.5 font-semibold"><Laptop className="size-3.5 text-orange" /> Llave de tu PC</dt>
+                  <dd className="text-muted-foreground">Cifra y descifra las variables. La crea <code className="font-mono text-[11px] text-foreground">zeus key init</code> en <code className="font-mono text-[11px] text-foreground">~/.zeus/key.json</code> y nunca sale de tu PC.</dd>
+                </div>
+                <div className="grid gap-0.5 rounded-md bg-panel px-3 py-2">
+                  <dt className="flex items-center gap-1.5 font-semibold"><Plug className="size-3.5 text-muted-foreground" /> Token del MCP</dt>
+                  <dd className="text-muted-foreground">Te identifica ante zeus (Claude y el CLI). Se crea en MCP. Solo con él no se descifra ninguna variable.</dd>
+                </div>
+              </dl>
+              <span className="label-caps pt-1">Si se compromete</span>
+              <ul className="grid gap-1 text-[12px] leading-snug text-muted-foreground">
+                <li><span className="font-medium text-foreground">Token:</span> revócalo en MCP y crea otro.</li>
+                <li><span className="font-medium text-foreground">PC o llave:</span> desde otra PC, <code className="font-mono text-[11px] text-foreground">zeus key rotate --compromised</code> y luego <code className="font-mono text-[11px] text-foreground">zeus env rotate --all</code>. Cambia en el proveedor los secretos que importen.</li>
+              </ul>
+            </div>
           </div>
         </Card>
 

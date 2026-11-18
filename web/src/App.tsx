@@ -178,8 +178,8 @@ export function dashboardRoutes() {
       <Route path="biblioteca" element={<Zeus section="biblioteca" />} />
       <Route path="bandeja" element={<Zeus section="bandeja" />} />
       <Route path="equipo" element={<Zeus section="equipo" />} />
-      <Route path="llaves" element={<Zeus section="llaves" />} />
-      <Route path="acceso" element={<Zeus section="acceso" />} />
+      <Route path="variables" element={<Zeus section="variables" />} />
+      <Route path="mcp" element={<Zeus section="mcp" />} />
 
       <Route path="pulso" element={<Pulse />} />
       <Route path="resumen" element={<Overview />} />

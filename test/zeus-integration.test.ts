@@ -904,15 +904,19 @@ describe('bóveda de punta a punta (cifrado real del CLI contra el servidor)', (
     }
     expect((await http(anaToken, 'POST', '/vault/keys', { name: 'otra', publicKey: anaKey.publicKey })).json.error.code).toBe('ZEUS_VAULT_KEY_EXISTS');
     expect((await http(anaToken, 'POST', '/vault/keys', { name: 'mala', publicKey: 'no-es-una-llave' })).status).toBe(400);
-    // Cada quien ve sus llaves; solo un admin ve las de todos.
+    // Por defecto cada quien ve sus llaves; con all=1 cualquiera ve las públicas de todos (para dar acceso).
     expect((await http(anaToken, 'GET', '/vault/keys')).json.keys.map((k: any) => k.name)).toEqual(['laptop-ana']);
-    expect((await http(anaToken, 'GET', '/vault/keys?all=1')).status).toBe(403);
+    expect((await http(anaToken, 'GET', '/vault/keys?all=1')).json.keys).toHaveLength(3);
     expect((await http(adminToken, 'GET', '/vault/keys?all=1')).json.keys).toHaveLength(3);
   });
 
-  it('solo un admin crea el entorno, con la DEK envuelta para su propio equipo', async () => {
+  it('cualquier dev crea un entorno, con la DEK envuelta para su propio equipo', async () => {
     const wrapped = wrapDek(dek, adminKey.publicKey, wrapAad(P, E, 1));
-    expect((await http(anaToken, 'POST', '/vault/envs', { projectKey: P, env: E, keyId: keyIds.ana, wrappedDek: wrapDek(dek, anaKey.publicKey, wrapAad(P, E, 1)) })).status).toBe(403);
+    // Ana (sin rol de admin) crea uno propio; se borra para que el resto de la historia siga con Fer.
+    const sandbox = 'ana-hyperhub-development';
+    const anaEnv = await http(anaToken, 'POST', '/vault/envs', { projectKey: P, env: sandbox, keyId: keyIds.ana, wrappedDek: wrapDek(dek, anaKey.publicKey, wrapAad(P, sandbox, 1)) });
+    expect(anaEnv.json).toMatchObject({ dekVersion: 1 });
+    await pg.sql(`delete from roz.zeus_vault_env where name = $1`, [sandbox]);
     // No puede usar la llave de otro.
     expect((await http(adminToken, 'POST', '/vault/envs', { projectKey: P, env: E, keyId: keyIds.ana, wrappedDek: wrapped })).json.error.code).toBe('ZEUS_VAULT_NO_ACCESS');
     expect((await http(adminToken, 'POST', '/vault/envs', { projectKey: P, env: 'Producción', keyId: keyIds.admin, wrappedDek: wrapped })).status).toBe(400);
@@ -990,7 +994,8 @@ describe('bóveda de punta a punta (cifrado real del CLI contra el servidor)', (
   });
 
   it('quitar un acceso marca el entorno para rotar; el último acceso no se puede quitar', async () => {
-    expect((await http(anaToken, 'DELETE', `/vault/envs/${P}/${E}/grants/${keyIds.admin}`)).status).toBe(403);
+    // Quitar accesos lo hace quien tiene acceso a ese entorno (o un admin): Beto no tiene, no puede.
+    expect((await http(betoToken, 'DELETE', `/vault/envs/${P}/${E}/grants/${keyIds.admin}`)).status).toBe(403);
     expect((await http(adminToken, 'DELETE', `/vault/envs/${P}/${E}/grants/${keyIds.beto}`)).status).toBe(404);
     expect((await http(adminToken, 'DELETE', `/vault/envs/${P}/${E}/grants/${keyIds.ana}`)).json).toEqual({ ok: true });
     expect((await http(anaToken, 'GET', `/vault/envs/${P}/${E}?keyId=${keyIds.ana}`)).json.error.code).toBe('ZEUS_VAULT_NO_ACCESS');

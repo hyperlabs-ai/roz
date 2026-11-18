@@ -24,8 +24,9 @@ export interface ZeusHeader {
   versions: Map<string, number>;
 }
 
-export function defaultEnvFile(env: string): string {
-  return env === 'development' ? '.env' : `.env.${env}`;
+/** El archivo de una ETAPA: development → .env, production → .env.production, <otra> → .env.<otra>. */
+export function defaultEnvFile(stage: string): string {
+  return stage === 'development' ? '.env' : `.env.${stage}`;
 }
 
 /** La cabecera de zeus de un archivo, o null si no la tiene (no lo bajó zeus). */
@@ -78,7 +79,7 @@ export async function findZeusFiles(fs: FileOps, dir: string): Promise<FoundEnvF
  * El archivo de un entorno en esta carpeta: el que diga venir de él en su cabecera (aunque se llame
  * .env.local, por ejemplo) y, si ninguno, el nombre por defecto.
  */
-export async function locateEnvFile(fs: FileOps, dir: string, projectKey: string, env: string): Promise<string> {
+export async function locateEnvFile(fs: FileOps, dir: string, projectKey: string, env: string, stage: string): Promise<string> {
   const found = (await findZeusFiles(fs, dir)).find((f) => f.header.projectKey.toLowerCase() === projectKey.toLowerCase() && f.header.env === env);
-  return found?.file ?? path.join(dir, defaultEnvFile(env));
+  return found?.file ?? path.join(dir, defaultEnvFile(stage));
 }

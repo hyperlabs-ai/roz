@@ -130,7 +130,7 @@ export async function envPull(ctx: Ctx, args: string[]): Promise<number> {
 
   // Cada entorno a su archivo: development → .env, production → .env.production (o el que ya diga
   // venir de ese entorno en su cabecera).
-  const target = opts.out ? path.resolve(ctx.cwd, opts.out) : format === 'json' ? path.resolve(ctx.cwd, '.env.json') : await locateEnvFile(ctx.fs, ctx.cwd, t.projectKey, t.env);
+  const target = opts.out ? path.resolve(ctx.cwd, opts.out) : format === 'json' ? path.resolve(ctx.cwd, '.env.json') : await locateEnvFile(ctx.fs, ctx.cwd, t.projectKey, t.env, t.stage);
   const existing = await ctx.fs.read(target);
   const versions = remoteVersions(remote, values);
   let content: string;
@@ -225,7 +225,7 @@ export async function envPush(ctx: Ctx, args: string[]): Promise<number> {
 
   const key = await requireKey(ctx);
   const t = await resolveTarget(ctx, positionals[0], positionals[1]);
-  const file = opts.from ? path.resolve(ctx.cwd, opts.from) : await locateEnvFile(ctx.fs, ctx.cwd, t.projectKey, t.env);
+  const file = opts.from ? path.resolve(ctx.cwd, opts.from) : await locateEnvFile(ctx.fs, ctx.cwd, t.projectKey, t.env, t.stage);
   const text = await ctx.fs.read(file);
   if (text == null) throw new CliError(`no existe ${file} (indica otro archivo con --from)`);
   const header = readHeader(text);
@@ -509,7 +509,7 @@ export async function folderStatus(ctx: Ctx, key: RegisteredKey): Promise<FileSt
   for (const f of found) {
     const t = await resolveTarget(ctx, f.header.projectKey, f.header.env);
     // .env.example describe el entorno de trabajo, no prod: solo se exige al de development.
-    out.push(await fileStatus(ctx, key, f.file, t, t.env === 'development' ? example : null));
+    out.push(await fileStatus(ctx, key, f.file, t, t.stage === 'development' ? example : null));
   }
   return out;
 }
@@ -538,14 +538,16 @@ export async function envStatus(ctx: Ctx, args: string[]): Promise<number> {
       t = await resolveTarget(ctx, header.projectKey, header.env);
     } else {
       t = await resolveTarget(ctx, positionals[0], positionals[1]);
-      file = opts.file ? path.resolve(ctx.cwd, opts.file) : await locateEnvFile(ctx.fs, ctx.cwd, t.projectKey, t.env);
+      file = opts.file ? path.resolve(ctx.cwd, opts.file) : await locateEnvFile(ctx.fs, ctx.cwd, t.projectKey, t.env, t.stage);
     }
     if ((await ctx.fs.read(file)) == null) {
       if (opts.json) ctx.out(JSON.stringify([{ file, projectKey: t.projectKey, env: t.env, error: 'no existe' }]));
-      else ctx.out(`${file} no existe: \`zeus env pull ${t.projectKey} ${t.env}\` lo crea`);
+      else if (!t.exists) {
+        ctx.out(`${label(t)} no existe en la bóveda${t.repo ? '' : ' (estás fuera de un repo: corre el comando dentro del repo para usar sus entornos)'}. Ve los que hay con \`zeus env ls\`.`);
+      } else ctx.out(`${file} no existe: \`zeus env pull ${t.projectKey} ${t.repo ? t.stage : t.env}\` lo crea`);
       return 0;
     }
-    results = [await fileStatus(ctx, key, file, t, t.env === 'development' ? await exampleNames(ctx) : null)];
+    results = [await fileStatus(ctx, key, file, t, t.stage === 'development' ? await exampleNames(ctx) : null)];
   }
 
   if (opts.json) ctx.out(JSON.stringify(results));

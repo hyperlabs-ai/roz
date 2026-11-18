@@ -1,14 +1,15 @@
-// Digest semanal por correo. Lo dispara el cron de Vercel los viernes en la noche
-// (ver vercel.json → /v1/internal/weekly-digest). Resume la última semana (commits, tickets
-// resueltos, contribuidores, líneas, cycle time) comparada con la semana previa, lista los
-// proyectos con más movimiento y enlaza al Resumen del dashboard. Destinatarios y URL son
-// configurables (config.digest.recipients, config.dashboard.url).
+// Digest semanal por correo (equipo y por dev). Lo dispara el planificador los viernes en la noche
+// (/v1/internal/weekly-digest). Resume la última semana (commits, tickets resueltos, contribuidores,
+// líneas, cycle time) comparada con la semana previa, lista los proyectos con más movimiento y
+// enlaza al dashboard. Destinatarios y URL son configurables (config.digest.recipients,
+// config.dashboard.url). El HTML sale del layout único de correo (./email-layout.ts).
 import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { sendEmail } from '../adapters/email.js';
 import { pushToDev, pushToEmail } from './push.js';
 import { emailAllowed, emailEnabled } from './switches.js';
-import { devDigestNotice, emailFooter, emailHeader, rangeLabel as fmtRange, teamDigestNotice, toPush } from './copy.js';
+import { devDigestNotice, rangeLabel as fmtRange, teamDigestNotice, toPush } from './copy.js';
+import { renderEmailDoc, type EmailBlock, type EmailKpi, type EmailListItem, type EmailTone } from './email-layout.js';
 import { getOverview, getDeveloper, listInfra, previousPeriod, type Metric, type Period } from '../dashboard/queries.js';
 
 export interface DigestResult {
@@ -28,129 +29,81 @@ function fmtNum(n: number): string {
   return Math.abs(n) >= 1000 ? `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k` : String(n);
 }
 
-/** Chip de variación vs. semana pasada (verde sube / rojo baja). invert: menos es mejor. */
-function deltaChip(m: Metric, invert = false): string {
-  if (m.direction === 'none' || m.changePct === null || m.direction === 'flat') {
-    return `<span style="color:#9ca3af;font-size:12px">sin cambio</span>`;
-  }
+/** Variación vs. la semana pasada, como texto y tono (verde mejora, rojo empeora). invert: menos es mejor. */
+function delta(m: Metric, invert = false): EmailKpi['delta'] {
+  if (m.direction === 'none' || m.changePct === null || m.direction === 'flat') return { text: 'sin cambio', tone: 'neutral' };
   const good = invert ? m.direction === 'down' : m.direction === 'up';
-  const color = good ? '#16a34a' : '#dc2626';
-  const bg = good ? '#dcfce7' : '#fee2e2';
-  const arrow = m.direction === 'up' ? '▲' : '▼';
-  return `<span style="display:inline-block;background:${bg};color:${color};border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700">${arrow} ${Math.abs(m.changePct)}%</span>`;
+  return { text: `${m.direction === 'up' ? '+' : '-'}${Math.abs(m.changePct)}%`, tone: good ? 'ok' : 'alert' };
 }
 
-function kpiCell(label: string, value: string, m: Metric, invert = false): string {
-  return `<td style="padding:14px 10px;text-align:center;border:1px solid #eef0f2;border-radius:10px">
-    <div style="color:#111827;font-size:22px;font-weight:800;line-height:1">${value}</div>
-    <div style="color:#6b7280;font-size:12px;margin:6px 0 8px">${label}</div>
-    ${deltaChip(m, invert)}
-  </td>`;
-}
+const kpi = (label: string, value: string, m: Metric, invert = false): EmailKpi => ({ label, value, delta: delta(m, invert) });
 
-// Bloque de infraestructura para el digest de equipo: salud agregada + por proyecto. Vacío si no
-// hay servicios vinculados (no se inserta).
-const INFRA_COLOR: Record<string, string> = { healthy: '#16a34a', degraded: '#d97706', down: '#dc2626', paused: '#6b7280', unknown: '#9ca3af' };
-const INFRA_LABEL: Record<string, string> = { healthy: 'operativos', degraded: 'degradados', down: 'caídos', paused: 'pausados', unknown: 'sin datos' };
+// Infraestructura en el digest de equipo: estado por proyecto. Vacío si no hay servicios vinculados.
+const INFRA_TONE: Record<string, EmailTone> = { healthy: 'ok', degraded: 'warn', down: 'alert', paused: 'neutral', unknown: 'neutral' };
+const INFRA_LABEL: Record<string, [string, string]> = { healthy: ['operativo', 'operativos'], degraded: ['degradado', 'degradados'], down: ['caído', 'caídos'], paused: ['pausado', 'pausados'], unknown: ['sin datos', 'sin datos'] };
 const INFRA_ORDER = ['down', 'degraded', 'paused', 'healthy', 'unknown'];
 
-function renderInfraBlock(infra: Awaited<ReturnType<typeof listInfra>>): { html: string; text: string } {
+function infraBlocks(infra: Awaited<ReturnType<typeof listInfra>>): EmailBlock[] {
   const projects = infra.projects.filter((p) => p.services.length);
   const services = projects.flatMap((p) => p.services);
-  if (!services.length) return { html: '', text: '' };
-
+  if (!services.length) return [];
   const counts: Record<string, number> = {};
   services.forEach((s) => (counts[s.status] = (counts[s.status] ?? 0) + 1));
   const worst = (sts: string[]) => INFRA_ORDER.find((o) => sts.includes(o)) ?? 'unknown';
   const isIssue = (st: string) => st === 'down' || st === 'degraded' || st === 'paused';
   const totalReq = services.reduce((a, s) => a + (s.metrics?.requests ?? 0), 0);
-  const summary = `${services.length} servicios · ${INFRA_ORDER.filter((o) => counts[o]).map((o) => `${counts[o]} ${INFRA_LABEL[o]}`).join(' · ')}`;
-
-  const rows = projects
-    .map((p) => {
-      const w = worst(p.services.map((s) => s.status));
-      const issues = p.services.filter((s) => isIssue(s.status)).length;
-      const right = issues > 0 ? `<span style="color:#d97706;font-weight:600">${issues} con alerta</span> · ${p.services.length} svc` : `OK · ${p.services.length} svc`;
-      return `<tr>
-        <td style="padding:7px 0;color:#111827;font-size:14px"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${INFRA_COLOR[w]};margin-right:8px"></span>${p.name}</td>
-        <td style="padding:7px 0;text-align:right;color:#6b7280;font-size:13px">${right}</td>
-      </tr>`;
-    })
-    .join('');
-
-  const reqLine = totalReq > 0 ? `<p style="margin:2px 0 8px;color:#6b7280;font-size:12px">${fmtNum(totalReq)} peticiones en las últimas 24 h</p>` : '';
-  const html = `<tr><td style="padding:12px 28px 8px">
-        <p style="margin:0 0 6px;color:#111827;font-size:14px;font-weight:700">Infraestructura</p>
-        <p style="margin:0 0 6px;color:#6b7280;font-size:13px">${summary}</p>
-        ${reqLine}
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
-      </td></tr>`;
-
-  const text =
-    `\nInfraestructura: ${summary}\n` +
-    projects.map((p) => `- ${p.name}: ${p.services.filter((s) => isIssue(s.status)).length > 0 ? `${p.services.filter((s) => isIssue(s.status)).length} con alerta` : 'OK'} (${p.services.length} svc)`).join('\n');
-
-  return { html, text };
+  const summary = `${services.length} servicios: ${INFRA_ORDER.filter((o) => counts[o]).map((o) => `${counts[o]} ${INFRA_LABEL[o]![counts[o] === 1 ? 0 : 1]}`).join(', ')}${totalReq > 0 ? `. ${fmtNum(totalReq)} peticiones en las últimas 24 h` : ''}`;
+  const items: EmailListItem[] = projects.map((p) => {
+    const issues = p.services.filter((s) => isIssue(s.status)).length;
+    const w = worst(p.services.map((s) => s.status));
+    return {
+      text: p.name,
+      meta: `${p.services.length} ${p.services.length === 1 ? 'servicio' : 'servicios'}`,
+      chip: issues > 0 ? { label: `${issues} con alerta`, tone: INFRA_TONE[w] ?? 'warn' } : { label: 'Todo en línea', tone: 'ok' },
+    };
+  });
+  return [{ kind: 'callout', tone: counts.down ? 'alert' : counts.degraded ? 'warn' : 'ok', text: `Infraestructura: ${summary}.` }, { kind: 'list', title: 'Servicios por proyecto', items }];
 }
 
 export function renderDigest(opts: { overview: Awaited<ReturnType<typeof getOverview>>; infra: Awaited<ReturnType<typeof listInfra>>; url: string; rangeLabel: string }): { html: string; text: string } {
   const { overview: o, infra, url, rangeLabel } = opts;
   const k = o.kpis;
-  const topProjects = o.byProject.slice(0, 5);
-  const infraBlock = renderInfraBlock(infra);
-
-  const projectRows = topProjects.length
-    ? topProjects
-        .map(
-          (p) =>
-            `<tr><td style="padding:8px 0;color:#111827;font-size:14px">${p.name}</td>
-             <td style="padding:8px 0;text-align:right;color:#6b7280;font-size:13px">${p.commits} commits · ${p.ticketsResolved} tickets</td></tr>`,
-        )
-        .join('')
-    : `<tr><td style="padding:8px 0;color:#9ca3af;font-size:13px">Sin actividad registrada esta semana</td></tr>`;
-
-  const button = `<a href="${url}/" style="display:inline-block;background:#ff5b23;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver el resumen completo</a>`;
-
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-    <table role="presentation" width="540" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e8eb">
-      ${emailHeader('default', url, 'el resumen semanal del equipo')}
-      <tr><td style="padding:28px 28px 8px">
-        <p style="margin:0 0 4px;color:#111827;font-size:18px;font-weight:700">Lo que se trabajó esta semana</p>
-        <p style="margin:0 0 20px;color:#6b7280;font-size:13px">${rangeLabel} · comparado con la semana anterior</p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="6" style="border-collapse:separate"><tr>
-          ${kpiCell('Commits', fmtNum(k.commits.value), k.commits)}
-          ${kpiCell('Tickets', fmtNum(k.ticketsResolved.value), k.ticketsResolved)}
-          ${kpiCell('Activos', fmtNum(k.activeContributors.value), k.activeContributors)}
-        </tr><tr style="height:6px"></tr><tr>
-          ${kpiCell('Líneas', fmtNum(k.linesChanged.value), k.linesChanged)}
-          ${kpiCell('Cycle time', k.avgCycleTimeHours.value ? `${k.avgCycleTimeHours.value}h` : 'n/d', k.avgCycleTimeHours, true)}
-          <td style="border:1px solid #ffffff"></td>
-        </tr></table>
-      </td></tr>
-      <tr><td style="padding:12px 28px 8px">
-        <p style="margin:0 0 6px;color:#111827;font-size:14px;font-weight:700">Proyectos con más movimiento</p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${projectRows}</table>
-      </td></tr>
-      ${infraBlock.html}
-      <tr><td style="padding:20px 28px 28px" align="center">${button}</td></tr>
-      ${emailFooter()}
-    </table>
-  </td></tr></table>
-</body></html>`;
-
-  const text =
-    `La semana del equipo, ${rangeLabel}\n\n` +
-    `Commits: ${k.commits.value}\nTickets resueltos: ${k.ticketsResolved.value}\n` +
-    `Contribuidores activos: ${k.activeContributors.value}\nLíneas cambiadas: ${k.linesChanged.value}\n` +
-    `Cycle time: ${k.avgCycleTimeHours.value}h\n` +
-    `${infraBlock.text}\n\n` +
-    `Ver el resumen completo: ${url}/\n\nRoz`;
-
+  const base = url.replace(/\/+$/, '');
+  const { html, text } = renderEmailDoc({
+    subject: `La semana del equipo, ${rangeLabel}`,
+    preheader: `${k.commits.value} commits y ${k.ticketsResolved.value} tickets resueltos, ${rangeLabel}`,
+    botFile: 'roz-bot.png',
+    section: 'Resumen semanal',
+    kicker: 'Resumen del equipo',
+    tone: 'brand',
+    headline: 'Lo que se trabajó esta semana',
+    lead: `${rangeLabel}. Cada número trae su variación contra la semana anterior.`,
+    blocks: [
+      {
+        kind: 'kpis',
+        items: [
+          kpi('Commits', fmtNum(k.commits.value), k.commits),
+          kpi('Tickets', fmtNum(k.ticketsResolved.value), k.ticketsResolved),
+          kpi('Activos', fmtNum(k.activeContributors.value), k.activeContributors),
+          kpi('Líneas', fmtNum(k.linesChanged.value), k.linesChanged),
+          kpi('Cycle time', k.avgCycleTimeHours.value ? `${k.avgCycleTimeHours.value}h` : 'n/d', k.avgCycleTimeHours, true),
+        ],
+      },
+      {
+        kind: 'list',
+        title: 'Proyectos con más movimiento',
+        empty: 'Sin actividad registrada esta semana.',
+        items: o.byProject.slice(0, 5).map((p) => ({ text: p.name, meta: `${p.commits} commits y ${p.ticketsResolved} tickets` })),
+      },
+      ...infraBlocks(infra),
+    ],
+    cta: { label: 'Ver el resumen completo', url: `${base}/resumen` },
+    reason: 'Te llega porque recibes el resumen semanal del equipo.',
+    base,
+  });
   return { html, text };
 }
 
-const MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 export function label(p: Period): string {
   const f = new Date(p.from);
   const t = new Date(p.to);
@@ -166,69 +119,44 @@ function firstName(name: string | null): string {
 export function renderDevDigest(opts: { profile: NonNullable<Awaited<ReturnType<typeof getDeveloper>>>; url: string; rangeLabel: string }): { html: string; text: string } {
   const { profile: p, url, rangeLabel } = opts;
   const k = p.kpis;
-  const greeting = p.dev.name ? `Hola ${firstName(p.dev.name)},` : 'Hola,';
-  const projects = p.projects.slice(0, 5);
-  const resolved = p.tickets.resolved.slice(0, 8);
-
-  const projectRows = projects.length
-    ? projects
-        .map(
-          (pr) =>
-            `<tr><td style="padding:7px 0;color:#111827;font-size:14px">${pr.name}</td>
-             <td style="padding:7px 0;text-align:right;color:#6b7280;font-size:13px">${pr.commits} commits</td></tr>`,
-        )
-        .join('')
-    : `<tr><td style="padding:7px 0;color:#9ca3af;font-size:13px">Sin commits esta semana</td></tr>`;
-
-  const resolvedRows = resolved.length
-    ? resolved
-        .map(
-          (t) =>
-            `<tr><td style="padding:6px 0;color:#6b7280;font-size:12px;font-family:ui-monospace,monospace;white-space:nowrap;padding-right:10px;vertical-align:top">${t.identifier}</td>
-             <td style="padding:6px 0;color:#111827;font-size:13px">${t.name}</td></tr>`,
-        )
-        .join('')
-    : `<tr><td style="padding:6px 0;color:#9ca3af;font-size:13px">Sin tickets cerrados esta semana</td></tr>`;
-
-  const button = `<a href="${url}/app/developers/${p.dev.id}" style="display:inline-block;background:#ff5b23;color:#ffffff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;font-size:14px">Ver tu perfil completo</a>`;
-
-  const html = `<!doctype html><html><body style="margin:0;background:#f4f5f7;padding:24px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
-    <table role="presentation" width="540" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e8eb">
-      ${emailHeader('happy', url, 'tu semana en números')}
-      <tr><td style="padding:28px 28px 8px">
-        <p style="margin:0 0 4px;color:#111827;font-size:18px;font-weight:700">${greeting}</p>
-        <p style="margin:0 0 20px;color:#6b7280;font-size:13px">Revisé tu trabajo del ${rangeLabel} y lo comparé con la semana anterior.</p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="6" style="border-collapse:separate"><tr>
-          ${kpiCell('Commits', fmtNum(k.commits.value), k.commits)}
-          ${kpiCell('Tickets', fmtNum(k.ticketsResolved.value), k.ticketsResolved)}
-        </tr><tr style="height:6px"></tr><tr>
-          ${kpiCell('Líneas', fmtNum(k.linesChanged.value), k.linesChanged)}
-          ${kpiCell('Cycle time', k.avgCycleTimeHours.value ? `${k.avgCycleTimeHours.value}h` : 'n/d', k.avgCycleTimeHours, true)}
-        </tr></table>
-      </td></tr>
-      <tr><td style="padding:12px 28px 4px">
-        <p style="margin:0 0 6px;color:#111827;font-size:14px;font-weight:700">En qué trabajaste</p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${projectRows}</table>
-      </td></tr>
-      <tr><td style="padding:14px 28px 4px">
-        <p style="margin:0 0 6px;color:#111827;font-size:14px;font-weight:700">Tickets que cerraste</p>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${resolvedRows}</table>
-      </td></tr>
-      <tr><td style="padding:20px 28px 28px" align="center">${button}</td></tr>
-      ${emailFooter()}
-    </table>
-  </td></tr></table>
-</body></html>`;
-
-  const text =
-    `${greeting} Este es el resumen de tu semana, ${rangeLabel}.\n\n` +
-    `Commits: ${k.commits.value}\nTickets resueltos: ${k.ticketsResolved.value}\n` +
-    `Líneas cambiadas: ${k.linesChanged.value}\nCycle time: ${k.avgCycleTimeHours.value}h\n\n` +
-    `En qué trabajaste:\n${projects.map((pr) => `- ${pr.name}: ${pr.commits} commits`).join('\n') || '- Sin commits esta semana'}\n\n` +
-    `Tickets que cerraste:\n${resolved.map((t) => `- ${t.identifier}: ${t.name}`).join('\n') || '- Ninguno'}\n\n` +
-    `Tu perfil: ${url}/app/developers/${p.dev.id}\n\nRoz`;
-
+  const base = url.replace(/\/+$/, '');
+  const name = firstName(p.dev.name);
+  const { html, text } = renderEmailDoc({
+    subject: `Tu semana, ${rangeLabel}`,
+    preheader: `${k.commits.value} commits y ${k.ticketsResolved.value} tickets cerrados, ${rangeLabel}`,
+    botFile: 'roz-bot-happy.png',
+    section: 'Tu semana',
+    kicker: 'Tu semana en números',
+    tone: 'ok',
+    headline: name ? `${name}, así te fue esta semana` : 'Así te fue esta semana',
+    lead: `Revisé tu trabajo del ${rangeLabel} y lo comparé con la semana anterior.`,
+    blocks: [
+      {
+        kind: 'kpis',
+        items: [
+          kpi('Commits', fmtNum(k.commits.value), k.commits),
+          kpi('Tickets', fmtNum(k.ticketsResolved.value), k.ticketsResolved),
+          kpi('Líneas', fmtNum(k.linesChanged.value), k.linesChanged),
+          kpi('Cycle time', k.avgCycleTimeHours.value ? `${k.avgCycleTimeHours.value}h` : 'n/d', k.avgCycleTimeHours, true),
+        ],
+      },
+      {
+        kind: 'list',
+        title: 'En qué trabajaste',
+        empty: 'Sin commits esta semana.',
+        items: p.projects.slice(0, 5).map((pr) => ({ text: pr.name, meta: `${pr.commits} commits` })),
+      },
+      {
+        kind: 'list',
+        title: 'Tickets que cerraste',
+        empty: 'Sin tickets cerrados esta semana.',
+        items: p.tickets.resolved.slice(0, 8).map((t) => ({ code: t.identifier, text: t.name })),
+      },
+    ],
+    cta: { label: 'Ver tu perfil completo', url: `${base}/developers/${p.dev.id}` },
+    reason: 'Te llega cada viernes si trabajaste en algo esa semana.',
+    base,
+  });
   return { html, text };
 }
 

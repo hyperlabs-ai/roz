@@ -83,13 +83,13 @@ Base `/v1/zeus`, `Authorization: Bearer zeus_<43 caracteres base64url>`. El domi
 | `POST /vault/keys` | `{ name, publicKey }` | `{ key: ZeusVaultKey }` |
 | `GET /vault/projects` | | `{ projects: [{ key, name, envs: [{ name, dekVersion, hasGrant, needsRotation }] }] }` |
 | `POST /vault/keys/rotate` | `{ oldKeyId, newKeyId, grants: [{ projectKey, env, dekVersion, wrappedDek }], compromised }` | `{ ok, moved }`. Ambas llaves del dev del token; solo entornos donde la vieja tiene acceso vigente. Revoca la vieja; con `compromised` marca sus entornos `needsRotation` |
-| `POST /vault/envs` | `{ projectKey, env, keyId, wrappedDek }` | `{ envId, dekVersion: 1 }` (admin) |
+| `POST /vault/envs` | `{ projectKey, env, keyId, wrappedDek }` | `{ envId, dekVersion: 1 }` (cualquier dev; su llave queda como primer acceso). Nombre `^[a-z][a-z0-9_-]{0,63}$`; el CLI lo arma `<repo>-<etapa>` dentro de un repo |
 | `GET /vault/envs/:projectKey/:env` | `?keyId=` | `{ envId, dekVersion, wrappedDek, secrets: [{ name, ciphertext, dekVersion, version, updatedAt, updatedByName }], grants: [{ keyId, devName, keyName, fingerprint }], needsRotation }` |
 | `GET /vault/envs/:projectKey/:env/history` | `?keyId=&name=` | `{ dekVersion, revisions: [{ name, version, ciphertext \| null, dekVersion, setAt, setByName, replacedAt, replacedByName, current }] }` (vigente + hasta 10 anteriores por nombre; `ciphertext: null` = borrada en esa versión) |
 | `PUT /vault/envs/:projectKey/:env/secrets` | `{ keyId, dekVersion, set: [{ name, ciphertext }], delete: string[] }` | `{ ok, written, deleted }`. Lo reemplazado pasa al historial y a quien tiene acceso le llega un aviso `env_change` (solo nombres) |
-| `POST /vault/envs/:projectKey/:env/grants` | `{ keyId, grants: [{ keyId, wrappedDek }] }` | `{ ok, granted }` (admin) |
-| `DELETE /vault/envs/:projectKey/:env/grants/:keyId` | | `{ ok }` (admin; deja `needsRotation`) |
-| `POST /vault/envs/:projectKey/:env/rotate` | `{ keyId, dekVersion, grants: [{ keyId, wrappedDek }], secrets: [{ name, ciphertext }], revisions?: [{ name, version, ciphertext }] }` | `{ ok, dekVersion }` (admin) |
+| `POST /vault/envs/:projectKey/:env/grants` | `{ keyId, grants: [{ keyId, wrappedDek }] }` | `{ ok, granted }` (quien tiene acceso vigente) |
+| `DELETE /vault/envs/:projectKey/:env/grants/:keyId` | | `{ ok }` (quien tiene acceso al entorno, o un admin; deja `needsRotation`) |
+| `POST /vault/envs/:projectKey/:env/rotate` | `{ keyId, dekVersion, grants: [{ keyId, wrappedDek }], secrets: [{ name, ciphertext }], revisions?: [{ name, version, ciphertext }] }` | `{ ok, dekVersion }` (quien tiene acceso vigente) |
 | `GET /inbox` | | `{ unread, open, waiting, envChanges, toResolve }` resumido (para `zeus doctor` y el inicio de sesión de Claude) |
 
 Reglas: leer y escribir secretos exige un `grant` vigente de `keyId` (que debe ser del dev del
@@ -155,6 +155,18 @@ que en Claude Code aparecen como `/mcp__zeus__<nombre>`.
 de B lo ve en `zeus_inbox`, se lo resume y pregunta: implementar (`accepted` → `done`), ajustar
 (`changes_requested` con nota → A manda `revises`, la anterior queda `superseded`) o rechazar
 (`declined`). Cada cambio de estado le deja un aviso al otro lado.
+
+**Canales de la bandeja** (`src/zeus/inbox.ts`, `src/zeus/mail.ts`). Todo queda en la bandeja de roz
+(y la ve el Claude de cada quien con `zeus_inbox`) y sale por push si la persona lo activó. Por
+correo (Resend) solo lo que pide acción, respetando los interruptores global y por dev:
+
+| Evento | Correo a | Cuándo |
+|---|---|---|
+| Encargo nuevo (`kind: task`) | quien lo recibe | inmediato |
+| Plan nuevo o versión ajustada | quien lo recibe | inmediato |
+| Ajustes pedidos / rechazo | quien lo mandó | inmediato |
+| Cambios de variables (`env_change`) | cada persona con acceso | resumen diario 15:00 UTC (`/v1/internal/zeus-env-digest`), solo lo no leído de las últimas 24 h, un correo por persona y día |
+| Mensajes sueltos, aceptado, hecho, retirado | nadie | solo bandeja y push |
 
 Ruta de una solicitud (`zeus_request`): dueño del recurso → si no hay, líder del proyecto (el
 `pm`/`ceo` asignado) → jefe directo de quien pide → un admin de zeus. La respuesta dice a quién se le
