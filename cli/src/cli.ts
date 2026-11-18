@@ -34,6 +34,7 @@ Variables (etapa por defecto: development; alias: local/dev → development, pro
   zeus env ls [--json]
   zeus env status [<proyecto> [entorno]] [--file <ruta>] [--json]   qué falta, qué está viejo, qué no subiste
   zeus env pull <proyecto> [entorno] [--out <ruta>] [--stdout] [--format dotenv|json] [--yes]
+                 [--keep-local | --push-local | --replace]   qué hacer con las que solo tienes en tu archivo
   zeus env push <proyecto> [entorno] [--from <ruta>] [--prune] [--yes]
   zeus env set  <proyecto> <entorno> NOMBRE [--from-clipboard | --from-file <ruta>] [--empty]
                 (sin esas banderas: por stdin o pregunta sin eco; nunca como argumento)

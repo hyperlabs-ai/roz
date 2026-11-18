@@ -145,7 +145,7 @@ en el .env?", "sube la nueva STRIPE_KEY a prod" (tú la copias; él corre `zeus 
 | `key show` | Pública, huella e id de la llave. Nunca la privada. |
 | `env ls` | Proyectos y entornos de la bóveda, si este equipo tiene acceso y cuáles están por rotar. `--json`. |
 | `env status [<proyecto> [entorno]]` | Compara tus `.env` con la bóveda, **solo nombres**: qué falta, qué está desactualizado (quién y cuándo lo cambió), qué cambiaste tú sin subir, qué es solo local, qué pide `.env.example`. Sin argumentos revisa todos los `.env` de la carpeta. `--file`, `--json`. |
-| `env pull <proyecto> [entorno]` | Baja, descifra y escribe el archivo de ese entorno. `--out <ruta>`, `--stdout` (no escribe a disco), `--format dotenv\|json`, `--yes`. Avisa si pisas un cambio local que no subiste. |
+| `env pull <proyecto> [entorno]` | Baja, descifra y escribe el archivo de ese entorno. `--out <ruta>`, `--stdout` (no escribe a disco), `--format dotenv\|json`, `--yes`, `--keep-local`/`--push-local`/`--replace` (qué hacer con las que solo tienes tú). Avisa si pisas un cambio local que no subiste. |
 | `env push <proyecto> [entorno]` | Sube lo que cambió en el archivo de ese entorno. `--from <ruta>`, `--prune` (borra de la bóveda lo que no esté en el archivo), `--yes`. Avisa si pisas un cambio que otra persona hizo después de tu último pull. |
 | `env set <proyecto> <entorno> NOMBRE` | Sube o reemplaza un valor. `--from-clipboard` o `--from-file <ruta>`; sin ellas lo lee de stdin o lo pregunta sin eco; nunca como argumento. `--empty` para un valor vacío. |
 | `env rm <proyecto> <entorno> NOMBRE` | Borra una variable (queda en el historial). |
@@ -183,7 +183,10 @@ una diferencia es porque la bóveda cambió (te toca `pull`) o porque tú la cam
 ```
 
 `pull` reescribe el archivo completo, ordenado por nombre. Si ya existía y difiere, te muestra qué nombres
-entran, cambian o salen, pide confirmar y deja el anterior en `.env.bak`. Cada cambio en la bóveda le
+entran o cambian, pide confirmar y deja el anterior en `.env.bak`. Si tu archivo tiene variables que la
+bóveda no tiene, pregunta si conservarlas y, si sí, si subirlas: subidas quedan para todo el equipo; si
+no, pasan a tu bloque local y el siguiente `pull` ya no pregunta. Sin terminal, `--yes` las conserva sin
+subirlas; `--push-local` las sube y `--replace` deja el archivo igual que la bóveda. Cada cambio en la bóveda le
 llega como aviso (bandeja y notificación) a quien tiene acceso a ese entorno.
 
 Lo que sea solo de tu máquina va entre estos marcadores: `pull` lo conserva tal cual y `push` nunca lo

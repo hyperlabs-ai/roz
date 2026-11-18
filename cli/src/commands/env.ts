@@ -4,7 +4,7 @@
 import path from 'node:path';
 import { CliError, UsageError, confirmOrAbort, type Ctx } from '../context.js';
 import { MAX_SECRET_VALUE_BYTES, VaultCryptoError, decryptSecret, encryptSecret, isValidSecretName, secretAad, zeroize } from '../crypto.js';
-import { LOCAL_END, LOCAL_START, diffNames, parseDotenv, serializeDotenv } from '../dotenv.js';
+import { LOCAL_END, LOCAL_START, diffNames, parseDotenv, quoteValue, serializeDotenv } from '../dotenv.js';
 import { findZeusFiles, headerLines, locateEnvFile, readHeader, type ZeusHeader } from '../envfile.js';
 import { loadDeviceKey } from '../store.js';
 import type { CipherEntry, VaultEnv, VaultRevision } from '../types.js';
@@ -98,29 +98,64 @@ function localEdits(header: ZeusHeader | null, t: Target, local: ReadonlyMap<str
     .sort();
 }
 
+/** Mete variables al bloque local (lo que nunca se sube), creándolo si no existe. */
+function addToLocalBlock(block: string | null, vars: ReadonlyMap<string, string>): string {
+  const lines = [...vars].map(([n, v]) => `${n}=${quoteValue(v)}`);
+  if (!block) return [LOCAL_START, '# solo en este equipo: zeus no las sube', ...lines, LOCAL_END].join('\n');
+  const end = block.lastIndexOf(LOCAL_END);
+  if (end === -1) return `${block.replace(/\n+$/, '')}\n${lines.join('\n')}`;
+  return `${block.slice(0, end).replace(/\n+$/, '')}\n${lines.join('\n')}\n${block.slice(end)}`;
+}
+
+/** Respuesta a una pregunta de pull: la bandera manda; sin terminal, `fallback`; si no, se pregunta. */
+async function decide(ctx: Ctx, question: string, flag: boolean | undefined, fallback: boolean, yes: boolean): Promise<boolean> {
+  if (flag !== undefined) return flag;
+  if (yes || !ctx.prompt.interactive) return fallback;
+  return ctx.prompt.confirm(question);
+}
+
 export async function envPull(ctx: Ctx, args: string[]): Promise<number> {
   const { values: opts, positionals } = parse(args, {
     out: { type: 'string' },
     stdout: { type: 'boolean' },
     format: { type: 'string' },
     yes: { type: 'boolean', short: 'y' },
+    replace: { type: 'boolean' },
+    'keep-local': { type: 'boolean' },
+    'push-local': { type: 'boolean' },
   });
-  if (positionals.length > 2) throw new UsageError('uso: zeus env pull <proyecto> [entorno] [--out <ruta>] [--stdout] [--format dotenv|json] [--yes]');
+  if (positionals.length > 2) {
+    throw new UsageError('uso: zeus env pull <proyecto> [entorno] [--out <ruta>] [--stdout] [--format dotenv|json] [--yes] [--replace | --keep-local | --push-local]');
+  }
   const format = opts.format ?? 'dotenv';
   if (format !== 'dotenv' && format !== 'json') throw new UsageError('--format debe ser dotenv o json');
   if (opts.stdout && opts.out) throw new UsageError('usa --out o --stdout, no los dos');
+  if (opts.replace && (opts['keep-local'] || opts['push-local'])) throw new UsageError('usa --replace o --keep-local/--push-local, no los dos');
 
   const key = await requireKey(ctx);
   const t = await resolveTarget(ctx, positionals[0], positionals[1]);
   const { remote, dek } = await openEnv(ctx, key, t);
-  let values: Map<string, string>;
+  // La llave del entorno se queda abierta hasta el final: hace falta si la persona decide subir
+  // las variables que solo tenía en su archivo.
   try {
-    const res = decryptAll(t, remote, dek);
-    values = res.values;
-    warnStale(ctx, t, res.stale);
+    return await pullWith(ctx, key, t, remote, dek, opts, format);
   } finally {
     zeroize(dek);
   }
+}
+
+async function pullWith(
+  ctx: Ctx,
+  key: RegisteredKey,
+  t: Target,
+  remote: VaultEnv,
+  dek: Buffer,
+  opts: { out?: string; stdout?: boolean; yes?: boolean; replace?: boolean; 'keep-local'?: boolean; 'push-local'?: boolean },
+  format: string,
+): Promise<number> {
+  const res = decryptAll(t, remote, dek);
+  const values = res.values;
+  warnStale(ctx, t, res.stale);
 
   const asJson = (): string => JSON.stringify(Object.fromEntries(values), null, 2) + '\n';
   if (opts.stdout) {
@@ -136,16 +171,19 @@ export async function envPull(ctx: Ctx, args: string[]): Promise<number> {
   let content: string;
   let current: Map<string, string> | null = null;
   let edits: string[] = [];
+  let parsed: ReturnType<typeof parseDotenv> | null = null;
+  let sameSource = true;
   if (format === 'json') {
     content = asJson();
     if (existing != null) current = parseJsonVars(existing) ?? new Map();
   } else {
-    const parsed = existing != null ? parseDotenv(existing) : null;
+    parsed = existing != null ? parseDotenv(existing) : null;
     current = parsed?.vars ?? null;
     if (existing != null && current) {
       const header = readHeader(existing);
       if (header && (header.projectKey.toLowerCase() !== t.projectKey.toLowerCase() || header.env !== t.env)) {
         // Bajar prod encima del .env de local (o al revés) es justo lo que no debe pasar sin querer.
+        sameSource = false;
         ctx.log(`OJO: ${target} viene de ${header.projectKey}/${header.env}, no de ${label(t)}.`);
         await confirmOrAbort(ctx, `¿Reemplazarlo con ${label(t)}?`, opts.yes ?? false);
       }
@@ -157,6 +195,7 @@ export async function envPull(ctx: Ctx, args: string[]): Promise<number> {
     });
   }
 
+  let toPush: Map<string, string> | null = null;
   if (existing != null && current) {
     const diff = diffNames(current, values);
     if (diff.added.length + diff.changed.length + diff.removed.length === 0) {
@@ -165,22 +204,63 @@ export async function envPull(ctx: Ctx, args: string[]): Promise<number> {
       ctx.out(`${target} ya está al día con ${label(t)} (${values.size} variables)`);
       return 0;
     }
+    // Lo que solo existe en el archivo (y no en otro entorno): se puede conservar y hasta subir.
+    const onlyHere = format === 'dotenv' && sameSource ? diff.removed : [];
     ctx.log(`${target} cambia así (solo nombres):`);
     printDiff(ctx, [
       { sign: '+', names: diff.added, note: 'nueva' },
       { sign: '~', names: diff.changed.filter((n) => !edits.includes(n)), note: 'cambia de valor' },
       { sign: '~', names: edits, note: 'LA CAMBIASTE AQUÍ Y NO LA SUBISTE: se pisa (súbela antes con `zeus env push`)' },
-      { sign: '-', names: diff.removed, note: 'no está en la bóveda: se quita del archivo' },
+      onlyHere.length
+        ? { sign: '=', names: onlyHere, note: 'solo en tu archivo, no en la bóveda' }
+        : { sign: '-', names: diff.removed, note: 'no está en la bóveda: se quita del archivo' },
     ]);
-    if (diff.removed.length > 0 && format === 'dotenv') {
+    await confirmOrAbort(ctx, `¿Actualizar ${target} con ${label(t)}?`, opts.yes ?? false);
+
+    if (onlyHere.length && parsed) {
+      const yes = opts.yes ?? false;
+      const keepFlag = opts.replace ? false : opts['keep-local'] || opts['push-local'] ? true : undefined;
+      const keep = await decide(ctx, `¿Conservar en tu archivo las ${onlyHere.length} que solo tienes aquí (${onlyHere.join(', ')})? Si no, quedan solo en ${target}.bak.`, keepFlag, true, yes);
+      if (keep) {
+        const mine = new Map(onlyHere.map((n) => [n, current.get(n) ?? '']));
+        const invalid = [...mine].map(([n, v]) => checkEntry(n, v)).filter((m): m is string => m != null);
+        const push =
+          invalid.length === 0 &&
+          (await decide(ctx, `¿Subirlas también a ${label(t)}? Las verá todo el que tenga acceso.`, opts['push-local'] ? true : opts.replace || opts['keep-local'] ? false : undefined, false, yes));
+        if (invalid.length) ctx.log(`  no se pueden subir (${invalid.join('; ')}): se quedan en tu bloque local.`);
+        if (push) {
+          // Quedan como parte del entorno: en la sección de zeus, y se suben al terminar.
+          toPush = mine;
+          content = serializeDotenv([...values, ...mine], {
+            header: headerLines(t.projectKey, t.env, versions, LOCAL_START, LOCAL_END),
+            localBlock: parsed.localBlock,
+          });
+        } else {
+          // Solo tuyas: al bloque local, que zeus nunca sube; el siguiente pull ya no pregunta.
+          content = serializeDotenv(values, {
+            header: headerLines(t.projectKey, t.env, versions, LOCAL_START, LOCAL_END),
+            localBlock: addToLocalBlock(parsed.localBlock, mine),
+          });
+        }
+      }
+    } else if (diff.removed.length > 0 && format === 'dotenv') {
       ctx.log(`  para conservar variables solo tuyas, ponlas entre "${LOCAL_START}" y "${LOCAL_END}".`);
     }
-    await confirmOrAbort(ctx, `¿Sobrescribir ${target}?`, opts.yes ?? false);
     await ctx.fs.write(`${target}.bak`, existing, 0o600);
   }
 
   await ctx.fs.write(target, content, 0o600);
   ctx.out(`${values.size} variables de ${label(t)} escritas en ${target}${existing != null ? ` (anterior en ${target}.bak)` : ''}`);
+
+  if (toPush && toPush.size) {
+    const names = [...toPush.keys()].sort();
+    const set = encryptEntries(t, dek, remote.dekVersion, names, toPush);
+    const res = await ctx.api
+      .putSecrets(t.projectKey, t.env, { keyId: key.keyId, dekVersion: remote.dekVersion, set, delete: [] })
+      .catch((err: unknown) => staleToCliError(err, t));
+    ctx.out(`${label(t)}: ${res.written} subidas desde tu archivo (${names.join(', ')})`);
+    await refreshHeader(ctx, key, t, target).catch(() => undefined);
+  }
   return 0;
 }
 

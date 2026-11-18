@@ -370,13 +370,14 @@ describe('env pull', () => {
     await expect(envPull(ana.ctx, ['ROZ'])).rejects.toThrow(/cancelado/);
     expect(ana.fs.files.get(ana.file('.env'))).toBe(previous);
 
-    ana.prompt.answers = [true];
+    // Actualizar sí, conservar lo que solo está aquí no: el archivo queda igual que la bóveda.
+    ana.prompt.answers = [true, false];
     ana.log.length = 0;
     expect(await envPull(ana.ctx, ['ROZ'])).toBe(0);
     const log = ana.log.join('\n');
     expect(log).toMatch(/\+ STRIPE_KEY\s+\(nueva\)/);
     expect(log).toMatch(/~ DATABASE_URL\s+\(cambia de valor\)/);
-    expect(log).toMatch(/- SOBRA\s+\(no está en la bóveda/);
+    expect(log).toMatch(/= SOBRA\s+\(solo en tu archivo/);
     for (const v of ['viejo-valor-000', 'valor-que-sobra-111', 'localhost/mio', ...Object.values(SECRETS).filter(Boolean)]) {
       expect(ana.printed()).not.toContain(v);
     }
@@ -393,6 +394,54 @@ describe('env pull', () => {
     ana.out.length = 0;
     await envPull(ana.ctx, ['ROZ']);
     expect(ana.out.join()).toContain('ya está al día');
+  });
+
+  it('lo que solo está en tu archivo se conserva en el bloque local si no lo subes', async () => {
+    ana.fs.files.set(ana.file('.env'), 'DATABASE_URL=postgres://viejo-valor-000\nMIA=valor-solo-mio-222\n');
+    ana.prompt.answers = [true, true, false];
+    expect(await envPull(ana.ctx, ['ROZ'])).toBe(0);
+    const written = parseDotenv(ana.fs.files.get(ana.file('.env')) ?? '');
+    expect(Object.fromEntries(written.vars)).toEqual(SECRETS);
+    expect(written.localNames).toEqual(['MIA']);
+    expect(zeus.env('ROZ', 'development')?.secrets.has('MIA')).toBe(false);
+    expect(ana.printed()).not.toContain('valor-solo-mio-222');
+    // Ya en el bloque local, el siguiente pull no vuelve a preguntar.
+    ana.prompt.questions.length = 0;
+    ana.out.length = 0;
+    await envPull(ana.ctx, ['ROZ']);
+    expect(ana.out.join()).toContain('ya está al día');
+    expect(ana.prompt.questions).toHaveLength(0);
+  });
+
+  it('o se suben a la bóveda: cifradas, con su versión en la cabecera, y otro dev las baja', async () => {
+    ana.fs.files.set(ana.file('.env'), 'MIA=valor-solo-mio-333\n');
+    ana.prompt.answers = [true, true, true];
+    expect(await envPull(ana.ctx, ['ROZ'])).toBe(0);
+    expect(ana.out.join()).toMatch(/1 subidas desde tu archivo \(MIA\)/);
+    const text = ana.fs.files.get(ana.file('.env')) ?? '';
+    expect(parseDotenv(text).vars.get('MIA')).toBe('valor-solo-mio-333');
+    expect(text).toMatch(/# zeus:versions .*MIA=1/);
+    expect(ana.printed()).not.toContain('valor-solo-mio-333');
+    await expectNoPlaintext();
+    ana.fs.files.delete(ana.file('.env'));
+    expect((await pulled(ana)).get('MIA')).toBe('valor-solo-mio-333');
+  });
+
+  it('sin terminal: --yes conserva sin subir; --push-local sube; --replace las quita', async () => {
+    ana.prompt.interactive = false;
+    ana.fs.files.set(ana.file('.env'), 'MIA=valor-solo-mio-444\n');
+    await envPull(ana.ctx, ['ROZ', '--yes']);
+    expect(parseDotenv(ana.fs.files.get(ana.file('.env')) ?? '').localNames).toEqual(['MIA']);
+    expect(zeus.env('ROZ', 'development')?.secrets.has('MIA')).toBe(false);
+
+    ana.fs.files.set(ana.file('.env'), 'OTRA=valor-555\n');
+    await envPull(ana.ctx, ['ROZ', '--yes', '--replace']);
+    expect(parseDotenv(ana.fs.files.get(ana.file('.env')) ?? '').vars.has('OTRA')).toBe(false);
+
+    ana.fs.files.set(ana.file('.env'), 'OTRA=valor-666\n');
+    await envPull(ana.ctx, ['ROZ', '--yes', '--push-local']);
+    expect(zeus.env('ROZ', 'development')?.secrets.has('OTRA')).toBe(true);
+    await expect(envPull(ana.ctx, ['ROZ', '--replace', '--push-local'])).rejects.toThrow(UsageError);
   });
 
   it('sin terminal y sin --yes no sobreescribe', async () => {
