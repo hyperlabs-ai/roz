@@ -599,6 +599,122 @@ export function discordAssignedLine(i: { seed: string; identifier: string; title
   return clean([opener, t, i.project && !urgent ? clean(i.project) : null].filter(Boolean).join(' · '));
 }
 
+// ------------------------------------------------------------------ zeus: encargos, planes y variables
+
+export type ZeusWorkEvent = 'new' | 'revised' | 'changes_requested' | 'declined';
+
+export interface ZeusWorkInput {
+  seed: string;
+  /** Quien recibe el correo. */
+  recipient?: string | null;
+  /** Quien hizo la acción (mandó el encargo/plan, o respondió). */
+  actor?: string | null;
+  kind: 'task' | 'plan';
+  event: ZeusWorkEvent;
+  title: string;
+  project?: string | null;
+  /** Nota de quien respondió (ajustes pedidos, motivo del rechazo). */
+  note?: string | null;
+  /** Primeras líneas del encargo o plan. */
+  excerpt?: string | null;
+  url: string;
+}
+
+/** Correo inmediato de la bandeja de zeus: algo que pide acción de quien lo recibe. */
+export function zeusWorkNotice(i: ZeusWorkInput): Notice {
+  const me = firstName(i.recipient);
+  const actor = firstName(i.actor) || 'Alguien del equipo';
+  const what = i.kind === 'plan' ? 'plan' : 'encargo';
+  const name = clean(i.title) || (i.kind === 'plan' ? 'Plan sin título' : 'Encargo sin título');
+  let ttl: string;
+  let headline: string;
+  let lead: string;
+  let kicker: string;
+  let mood: BotMood = 'default';
+  if (i.event === 'changes_requested') {
+    kicker = 'Ajustes pedidos';
+    mood = 'thinking';
+    ttl = title(i.seed, [`${actor} pidió ajustes a tu plan`, `${hi(me)}${actor} quiere ajustes`, `Ajustes para tu plan${me ? `, ${me}` : ''}`]);
+    headline = `${actor} pidió ajustes a tu plan`;
+    lead = `Antes de implementarlo, ${actor} necesita que cambies algo. Ajusta el plan y mándalo de nuevo como versión nueva: tu Claude lo hace con zeus_share_plan.`;
+  } else if (i.event === 'declined') {
+    kicker = i.kind === 'plan' ? 'Plan rechazado' : 'Encargo rechazado';
+    mood = 'alert';
+    ttl = title(i.seed, [`${actor} rechazó tu ${what}`, `${hi(me)}${actor} no tomará tu ${what}`]);
+    headline = `${actor} rechazó tu ${what}`;
+    lead = `${actor} no lo va a hacer. Abajo va su motivo; si sigue haciendo falta, ajústalo o mándaselo a otra persona.`;
+  } else if (i.kind === 'plan') {
+    kicker = i.event === 'revised' ? 'Plan ajustado' : 'Plan compartido';
+    ttl = title(i.seed, i.event === 'revised'
+      ? [`${actor} ajustó su plan`, `${hi(me)}hay versión nueva del plan`]
+      : [`${actor} te compartió un plan`, `${hi(me)}${actor} te mandó un plan`, `Plan nuevo de ${actor}${me ? `, ${me}` : ''}`]);
+    headline = i.event === 'revised' ? `${actor} ajustó el plan que te mandó` : `${actor} te compartió un plan de implementación`;
+    lead = `Revísalo y decide: lo implementas tal cual, pides ajustes o lo rechazas. Si se lo pides a tu Claude ("revisa mi bandeja de zeus"), te lo resume y te pregunta.`;
+  } else {
+    kicker = 'Encargo nuevo';
+    ttl = title(i.seed, [`${actor} te encargó algo`, `${hi(me)}${actor} te dejó un encargo`, `Encargo de ${actor}${me ? `, ${me}` : ''}`]);
+    headline = `${actor} te dejó un encargo`;
+    lead = `Queda como pendiente en tu bandeja hasta que lo marques hecho o lo rechaces. ${actor} ve en qué va.`;
+  }
+  const excerpt = i.excerpt ? clip(clean(i.excerpt.replace(/^#+\s*/gm, '').replace(/\s+/g, ' ')), 280) : '';
+  return finish({
+    title: ttl,
+    body: body(name, i.project),
+    subject: `${kicker}: ${name}`,
+    mood,
+    kicker,
+    headline,
+    lead,
+    facts: [
+      [i.kind === 'plan' ? 'Plan' : 'Encargo', name],
+      [i.event === 'changes_requested' || i.event === 'declined' ? 'Respondió' : 'De', actor],
+      ...(i.project ? ([['Proyecto', i.project]] as [string, string][]) : []),
+      ...(i.note ? ([['Nota', clip(clean(i.note), 400)]] as [string, string][]) : []),
+      ...(excerpt && (i.event === 'new' || i.event === 'revised') ? ([['Resumen', excerpt]] as [string, string][]) : []),
+    ],
+    cta: { label: 'Abrir mi bandeja', url: i.url },
+  });
+}
+
+export interface ZeusEnvChangeItem {
+  /** `PROYECTO/entorno`. */
+  label: string;
+  actor: string;
+  added: string[];
+  changed: string[];
+  deleted: string[];
+  rotated: boolean;
+}
+
+/** Resumen diario de variables que cambiaron en entornos a los que tienes acceso. Solo NOMBRES. */
+export function zeusEnvDigestNotice(i: { seed: string; recipient?: string | null; changes: ZeusEnvChangeItem[]; url: string }): Notice {
+  const me = firstName(i.recipient);
+  const envs = [...new Set(i.changes.map((c) => c.label))];
+  const total = i.changes.reduce((n, c) => n + c.added.length + c.changed.length + c.deleted.length, 0);
+  const describe = (c: ZeusEnvChangeItem): string => {
+    const parts = [
+      c.added.length && `nuevas: ${c.added.join(', ')}`,
+      c.changed.length && `cambiaron: ${c.changed.join(', ')}`,
+      c.deleted.length && `se quitaron: ${c.deleted.join(', ')}`,
+      c.rotated && 'rotó la llave (los valores no cambiaron)',
+    ].filter(Boolean);
+    return `${firstName(c.actor) || c.actor}: ${parts.join(' · ')}`;
+  };
+  const nEnv = envs.length;
+  return finish({
+    title: title(i.seed, [`${hi(me)}cambiaron variables en ${nEnv === 1 ? envs[0] : `${nEnv} entornos`}`, `Variables nuevas en ${nEnv === 1 ? envs[0] : `${nEnv} entornos`}`]),
+    body: body(`${total} cambio${total === 1 ? '' : 's'} de variables`, nEnv === 1 ? envs[0] : `${nEnv} entornos`),
+    subject: `Cambiaron variables en ${nEnv === 1 ? envs[0] : `${nEnv} entornos`}`,
+    mood: 'default',
+    kicker: 'Variables de entorno',
+    headline: nEnv === 1 ? `Cambiaron variables en ${envs[0]}` : `Cambiaron variables en ${nEnv} entornos`,
+    lead: 'Solo van los nombres: los valores nunca salen de la bóveda. Para ponerte al día corre zeus env status dentro del repo (te dice qué te falta) y luego zeus env pull.',
+    facts: [],
+    items: i.changes.map((c) => ({ code: c.label, text: describe(c) })),
+    cta: { label: 'Ver en mi bandeja', url: i.url },
+  });
+}
+
 // ------------------------------------------------------------------ salida: push y correo
 
 /** Payload de push listo para enviar: texto del aviso + avatar de Roz-bot según el ánimo. */

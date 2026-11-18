@@ -156,6 +156,18 @@ de B lo ve en `zeus_inbox`, se lo resume y pregunta: implementar (`accepted` →
 (`changes_requested` con nota → A manda `revises`, la anterior queda `superseded`) o rechazar
 (`declined`). Cada cambio de estado le deja un aviso al otro lado.
 
+**Canales de la bandeja** (`src/zeus/inbox.ts`, `src/zeus/mail.ts`). Todo queda en la bandeja de roz
+(y la ve el Claude de cada quien con `zeus_inbox`) y sale por push si la persona lo activó. Por
+correo (Resend) solo lo que pide acción, respetando los interruptores global y por dev:
+
+| Evento | Correo a | Cuándo |
+|---|---|---|
+| Encargo nuevo (`kind: task`) | quien lo recibe | inmediato |
+| Plan nuevo o versión ajustada | quien lo recibe | inmediato |
+| Ajustes pedidos / rechazo | quien lo mandó | inmediato |
+| Cambios de variables (`env_change`) | cada persona con acceso | resumen diario 15:00 UTC (`/v1/internal/zeus-env-digest`), solo lo no leído de las últimas 24 h, un correo por persona y día |
+| Mensajes sueltos, aceptado, hecho, retirado | nadie | solo bandeja y push |
+
 Ruta de una solicitud (`zeus_request`): dueño del recurso → si no hay, líder del proyecto (el
 `pm`/`ceo` asignado) → jefe directo de quien pide → un admin de zeus. La respuesta dice a quién se le
 envió y por qué.

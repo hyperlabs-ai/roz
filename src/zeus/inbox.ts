@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { pushToDev } from '../notify/push.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { inBackground } from '../utils/background.js';
+import { mailWorkEvent } from './mail.js';
 import {
   ZEUS_OPEN_STATUSES,
   type ZeusActivityEvent,
@@ -193,6 +194,9 @@ export async function sendMessage(input: SendMessageInput, actor: ZeusActor): Pr
   logActivity(actorActivity(actor), kind === 'task' ? 'task' : 'message', `dev:${to.id}`, { to: to.name });
   if (to.id !== actor.devId) {
     notify(to.id, to.email, kind === 'task' ? `${actor.name} te encargó algo` : `${actor.name} te escribió`, subject || body, 'bandeja');
+    // Un encargo pide acción: también va por correo. Un mensaje suelto se queda en bandeja y push.
+    const id = (data as MessageRow).id;
+    if (kind === 'task') inBackground(() => mailWorkEvent(id, 'new'));
   }
   return toMessage(data as MessageRow, new Map([[actor.devId, actor.name], [to.id, to.name]]), new Map(project ? [[project.id, project.key]] : []));
 }
@@ -289,6 +293,8 @@ export async function sharePlan(input: SharePlanInput, actor: ZeusActor): Promis
   logActivity(actorActivity(actor), 'plan.share', `dev:${to.id}`, { to: to.name, title });
   if (to.id !== actor.devId) {
     notify(to.id, to.email, previous ? `${actor.name} ajustó un plan` : `${actor.name} te compartió un plan`, title, 'bandeja');
+    const id = (data as MessageRow).id;
+    inBackground(() => mailWorkEvent(id, previous ? 'revised' : 'new'));
   }
   return (await hydrate([data as MessageRow]))[0]!;
 }
@@ -342,6 +348,8 @@ export async function setMessageStatus(id: string, status: ZeusMessageStatus, no
     await systemMessage(otherId, subject, body, null, { parentId: row.id, fromDevId: actor.devId }).catch(() => undefined);
     const { data: other } = await db().from('dev').select('email').eq('id', otherId).maybeSingle();
     notify(otherId, (other as { email: string | null } | null)?.email ?? null, subject, row.subject ?? '', 'bandeja');
+    // Que te pidan ajustes o te rechacen algo pide acción tuya: va por correo a quien lo mandó.
+    if (isRecipient && (status === 'changes_requested' || status === 'declined')) inBackground(() => mailWorkEvent(row.id, status));
   }
   logActivity(actorActivity(actor), `${row.kind}.${status}`, null, { title: row.subject });
   return (await hydrate([data as MessageRow]))[0]!;
