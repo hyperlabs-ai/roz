@@ -73,7 +73,8 @@ export async function mailWorkEvent(messageId: string, event: ZeusWorkEvent): Pr
       .maybeSingle();
     if (error || !data) return false;
     const m = data as { id: string; kind: string; from_dev_id: string | null; to_dev_id: string; subject: string | null; body: string; status_note: string | null; project_id: string | null };
-    if (m.kind !== 'task' && m.kind !== 'plan') return false;
+    // Un mensaje directo solo manda correo al llegar; encargos y planes también en sus respuestas.
+    if (m.kind === 'message' ? event !== 'new' : m.kind !== 'task' && m.kind !== 'plan') return false;
     const toSender = event === 'changes_requested' || event === 'declined';
     const recipientId = toSender ? m.from_dev_id : m.to_dev_id;
     const actorId = toSender ? m.to_dev_id : m.from_dev_id;
@@ -93,7 +94,7 @@ export async function mailWorkEvent(messageId: string, event: ZeusWorkEvent): Pr
       recipient: recipient.name,
       actor: actorId ? (devs.get(actorId)?.name ?? null) : null,
       actorLogin: actorId ? (devs.get(actorId)?.github_login ?? null) : null,
-      kind: m.kind,
+      kind: m.kind as 'task' | 'plan' | 'message',
       event,
       title: m.subject ?? '',
       project,

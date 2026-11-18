@@ -1,5 +1,5 @@
 // Correo de la bandeja de zeus contra Postgres en memoria: qué manda correo (encargos, planes,
-// ajustes pedidos, rechazos), qué no (mensajes sueltos, aceptado/hecho), el resumen diario de
+// ajustes pedidos, rechazos), mensajes directos; qué no (aceptado/hecho), el resumen diario de
 // variables (uno por dev y día, solo lo no leído) y los interruptores de notificación.
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createZeusPg, type ZeusPg } from './zeus-pg.js';
@@ -64,14 +64,21 @@ beforeEach(async () => {
 });
 
 describe('correo inmediato de la bandeja', () => {
-  it('un encargo le llega por correo a quien lo recibe; un mensaje suelto no', async () => {
+  it('encargos y mensajes le llegan por correo a quien los recibe; un mensaje lleva su texto completo', async () => {
     await sendMessage({ to: 'Alan', kind: 'task', subject: 'Implementar webhook de pagos', body: 'Con la cola de outbox.', projectKey: 'HYPERHUB' }, fer);
-    await sendMessage({ to: 'Alan', body: '¿ya viste el deploy?' }, fer);
+    await sendMessage({ to: 'Alan', body: '¿ya viste el deploy? Revisa los logs de api antes de las 5.' }, fer);
     await settle();
-    expect(to('alan')).toHaveLength(1);
-    expect(to('alan')[0]!.subject).toBe('Encargo nuevo: Implementar webhook de pagos');
+    expect(to('alan').map((m) => m.subject)).toEqual(['Encargo nuevo: Implementar webhook de pagos', 'Fer te escribió']);
     expect(to('alan')[0]!.text).toMatch(/Fer te dejó un encargo/);
     expect(to('alan')[0]!.text).toMatch(/Proyecto: HyperHub/);
+    expect(to('alan')[1]!.text).toMatch(/¿ya viste el deploy\? Revisa los logs de api antes de las 5\./);
+    expect(to('alan')[1]!.html).toContain('Responder en mi bandeja');
+  });
+
+  it('un mensaje a uno mismo no manda correo', async () => {
+    await sendMessage({ to: 'Fer', body: 'nota para mí' }, fer);
+    await settle();
+    expect(to('fer')).toHaveLength(0);
   });
 
   it('plan nuevo, plan ajustado y ajustes pedidos: cada uno a quien le toca actuar', async () => {
@@ -107,6 +114,7 @@ describe('correo inmediato de la bandeja', () => {
   it('respeta el interruptor del dev: con sus correos apagados no se manda', async () => {
     mail.muted.add(alan.devId);
     await sendMessage({ to: 'Alan', kind: 'task', subject: 'Algo', body: 'x' }, fer);
+    await sendMessage({ to: 'Alan', body: 'y' }, fer);
     await settle();
     expect(to('alan')).toHaveLength(0);
   });
