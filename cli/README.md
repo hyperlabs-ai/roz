@@ -154,10 +154,10 @@ en el .env?", "sube la nueva STRIPE_KEY a prod" (tú la copias; él corre `zeus 
 | `env restore <proyecto> <entorno> NOMBRE --version N` | Regresa una variable al valor de una versión anterior (también una borrada). |
 | `env ui [proyecto] [entorno]` | Visor local en tu navegador (solo `127.0.0.1`, con token): ver, copiar, historial y cambiar valores. Se cierra solo tras 15 min sin uso. |
 | `run <proyecto> [entorno] -- <comando…>` | Corre el comando con los secretos en su entorno, sin escribirlos a disco. Devuelve el código de salida del comando. |
-| `env init <proyecto> [entorno]` | (admin) Crea el entorno con una DEK nueva. |
-| `env grant <proyecto> [entorno] --to <…>` | (admin) Da acceso a los equipos de un dev. `--to` acepta nombre del dev o id de llave; `--all-devices` si tiene varios. `--all-envs` (todos los entornos del proyecto) o `--all [--env <entorno>]` (todos los proyectos), con una sola verificación de huella. |
-| `env revoke <proyecto> [entorno] --key <id>` | (admin) Quita el acceso de una llave. Después hay que rotar. |
-| `env rotate <proyecto> [entorno]` | (admin) DEK nueva para los accesos vigentes y todos los secretos (y su historial) vueltos a cifrar. `--all` rota todos los entornos marcados; `--include-ok`, todos a los que tienes acceso. |
+| `env init <proyecto> [entorno]` | Crea el entorno con una DEK nueva; quien lo crea queda como el primero con acceso. Cualquier dev. |
+| `env grant <proyecto> [entorno] --to <…>` | Da acceso a los equipos de un dev (lo hace quien ya tiene acceso: solo se comparte lo que uno puede leer). `--to` acepta nombre del dev o id de llave; `--all-devices` si tiene varios. `--all-envs` (todos los entornos del proyecto) o `--all [--env <entorno>]` (todos los proyectos), con una sola verificación de huella. |
+| `env revoke <proyecto> [entorno] --key <id>` | Quita el acceso de una llave (quien tiene acceso al entorno, o un admin). Después hay que rotar. |
+| `env rotate <proyecto> [entorno]` | DEK nueva (quien tiene acceso) para los accesos vigentes y todos los secretos (y su historial) vueltos a cifrar. `--all` rota todos los entornos marcados; `--include-ok`, todos a los que tienes acceso. |
 
 El entorno por defecto es `development`; alias: `local`/`dev` → `development`, `prod` → `production`,
 `stg` → `staging`. Los comandos que cambian algo muestran antes una diferencia **solo de nombres**

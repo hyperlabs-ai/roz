@@ -4,7 +4,10 @@ import { CliError, UsageError, confirmOrAbort, type Ctx } from '../context.js';
 import { VaultCryptoError, decryptSecret, encryptSecret, fingerprint, generateDek, secretAad, unwrapDek, wrapAad, wrapDek, zeroize } from '../crypto.js';
 import { loadKnownKeys, rememberKeys } from '../store.js';
 import type { VaultKey, WrappedGrant } from '../types.js';
-import { ENV_ALIASES, decryptAll, label, openEnv, parse, requireKey, resolveTarget, staleToCliError, type RegisteredKey, type Target } from './vault.js';
+import { ENV_ALIASES, decryptAll, label, openEnv, parse, requireKey, resolveTarget, stageOf, staleToCliError, type RegisteredKey, type Target } from './vault.js';
+
+/** Un entorno que ya existe, tal como lo lista zeus (para las operaciones en bloque). */
+const existingTarget = (projectKey: string, env: string): Target => ({ projectKey, env, stage: stageOf(env) ?? env, repo: null, exists: true });
 
 /** Huella calculada AQUÍ con la pública; si zeus manda otra, algo anda mal y no se sigue. */
 function localFingerprint(key: VaultKey): string {
@@ -51,7 +54,9 @@ export async function envInit(ctx: Ctx, args: string[]): Promise<number> {
   }
   await rememberKeys(ctx.fs, ctx.home, [{ keyId: key.keyId, fingerprint: key.fingerprint }]);
   ctx.out(`${label(t)} creado; este equipo (${key.name}) es el primero con acceso.`);
-  ctx.out(`siguiente: \`zeus env push ${t.projectKey} ${t.env}\` para subir tu .env y \`zeus env grant ${t.projectKey} ${t.env} --to <dev>\` para dar acceso.`);
+  // Dentro del repo basta la etapa (el estándar arma el nombre); fuera, el nombre completo.
+  const ref = t.repo ? t.stage : t.env;
+  ctx.out(`siguiente: \`zeus env push ${t.projectKey} ${ref}\` para subir tu archivo y \`zeus env grant ${t.projectKey} ${ref} --to <dev>\` para dar acceso.`);
   return 0;
 }
 
@@ -120,7 +125,8 @@ export async function envGrant(ctx: Ctx, args: string[]): Promise<number> {
     const wantedEnv = opts.env ? (ENV_ALIASES[opts.env] ?? opts.env) : null;
     targetsEnv = projects
       .filter((p) => !wantedProject || p.key === wantedProject)
-      .flatMap((p) => p.envs.filter((e) => e.hasGrant && (!wantedEnv || e.name === wantedEnv)).map((e) => ({ projectKey: p.key, env: e.name, exists: true })));
+      // --env es una ETAPA: coincide con `production` y con `<repo>-production` de cada repo.
+      .flatMap((p) => p.envs.filter((e) => e.hasGrant && (!wantedEnv || stageOf(e.name) === wantedEnv)).map((e) => existingTarget(p.key, e.name)));
     if (targetsEnv.length === 0) throw new CliError('no tienes acceso a ningún entorno que coincida: no hay nada que compartir');
   } else {
     targetsEnv = [await resolveTarget(ctx, positionals[0], positionals[1])];
@@ -193,7 +199,7 @@ export async function envRotate(ctx: Ctx, args: string[]): Promise<number> {
 
   const { projects } = await ctx.api.listProjects();
   const targets: Target[] = projects.flatMap((p) =>
-    p.envs.filter((e) => e.hasGrant && (opts['include-ok'] || e.needsRotation)).map((e) => ({ projectKey: p.key, env: e.name, exists: true })),
+    p.envs.filter((e) => e.hasGrant && (opts['include-ok'] || e.needsRotation)).map((e) => existingTarget(p.key, e.name)),
   );
   const blind = projects.flatMap((p) => p.envs.filter((e) => !e.hasGrant && e.needsRotation).map((e) => `${p.key}/${e.name}`));
   if (blind.length) ctx.log(`por rotar pero sin acceso desde este equipo (que los rote alguien con acceso): ${blind.join(', ')}`);

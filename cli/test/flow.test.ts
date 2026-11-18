@@ -10,7 +10,7 @@ import { checkBash, checkPrompt, checkTool, guard, isSecretEnvPath } from '../sr
 import { keyInit, keyRotate } from '../src/commands/key.js';
 import { setup, withGuardHooks } from '../src/commands/setup.js';
 import { uiHandler } from '../src/commands/ui.js';
-import type { RegisteredKey } from '../src/commands/vault.js';
+import { detectRepo, type RegisteredKey } from '../src/commands/vault.js';
 import { parseDotenv } from '../src/dotenv.js';
 import { defaultEnvFile, readHeader } from '../src/envfile.js';
 import { loadDeviceKey } from '../src/store.js';
@@ -90,6 +90,47 @@ describe('un archivo por entorno, con cabecera', () => {
     expect(beto.fs.files.has(beto.file('.env'))).toBe(false);
     await envPull(ana.ctx, ['orwel', '--stdout', '--format', 'json']);
     expect(JSON.parse(ana.out.at(-1)!).DEBUG).toBe('false');
+  });
+});
+
+describe('estándar de nombres: cada repo tiene sus entornos', () => {
+  /** Convierte la carpeta de trabajo de una máquina en un repo de git con ese remote. */
+  const inRepo = (m: Machine, remote: string | null) =>
+    m.fs.files.set(path.join(m.ctx.cwd, '.git', 'config'), `[core]\n\tbare = false\n${remote ? `[remote "origin"]\n\turl = ${remote}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n` : ''}`);
+
+  it('dentro de un repo, la etapa se vuelve <repo>-<etapa>; nadie escribe el nombre a mano', async () => {
+    inRepo(ana, 'https://github.com/hyperlabs-ai/api-hyperhub.git');
+    ana.fs.files.set(ana.file('.env'), 'API_PORT=4000\n');
+    ana.fs.files.set(ana.file('.env.production'), 'API_PORT=8080\n');
+    await envInit(ana.ctx, ['orwel']);
+    await envInit(ana.ctx, ['orwel', 'prod']);
+    await envPush(ana.ctx, ['orwel', 'local', '--yes']);
+    await envPush(ana.ctx, ['orwel', 'prod', '--yes']);
+    expect(zeus.env('ORWEL', 'api-hyperhub-development')?.secrets.has('API_PORT')).toBe(true);
+    expect(zeus.env('ORWEL', 'api-hyperhub-production')?.secrets.has('API_PORT')).toBe(true);
+    // Las de proyecto (sin repo) no se tocaron.
+    expect(zeus.env('ORWEL', 'production')?.secrets.has('API_PORT')).toBe(false);
+  });
+
+  it('el mismo comando en otro repo usa SUS entornos; el nombre completo se respeta tal cual', async () => {
+    inRepo(ana, 'git@github.com:hyperlabs-ai/api-hyperhub.git');
+    await envInit(ana.ctx, ['orwel', 'prod']);
+    inRepo(beto, 'git@github.com:hyperlabs-ai/site-hyperhub.git');
+    await expect(envPull(beto.ctx, ['orwel', 'prod', '--yes'])).rejects.toThrow(/site-hyperhub-production/);
+    await envGrant(ana.ctx, ['orwel', 'api-hyperhub-production', '--to', 'Beto', '--yes']);
+    await envPull(beto.ctx, ['orwel', 'api-hyperhub-production', '--out', '.env.api', '--yes']);
+    expect(readHeader(file(beto, '.env.api'))).toMatchObject({ env: 'api-hyperhub-production' });
+  });
+
+  it('sin remote usa el nombre de la carpeta del repo; un worktree lee la config del repo común', async () => {
+    inRepo(ana, null);
+    expect(await detectRepo(ana.ctx)).toBe('ana');
+    const wt = path.join(ana.ctx.cwd, 'wt');
+    ana.fs.files.set(path.join(wt, '.git'), 'gitdir: /repos/main/.git/worktrees/wt\n');
+    ana.fs.files.set(path.resolve('/repos/main/.git/worktrees/wt/commondir'), '../..\n');
+    ana.fs.files.set(path.resolve('/repos/main/.git/config'), '[remote "origin"]\n\turl = https://github.com/hyperlabs-ai/App-HyperHub\n');
+    expect(await detectRepo({ ...ana.ctx, cwd: wt })).toBe('app-hyperhub');
+    expect(await detectRepo({ ...ana.ctx, cwd: '/fuera/de/todo' })).toBeNull();
   });
 });
 

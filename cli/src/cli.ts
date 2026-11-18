@@ -28,8 +28,9 @@ Conexión:
   zeus key rotate [--compromised]            cambia la llave de este equipo sin perder accesos
   zeus key show
 
-Variables (entorno por defecto: development; alias: local/dev → development, prod → production):
-  Cada entorno va a su archivo: development → .env, production → .env.production, <otro> → .env.<otro>.
+Variables (etapa por defecto: development; alias: local/dev → development, prod → production):
+  Estándar: dentro de un repo, el entorno es <repo>-<etapa> (api-hyperhub-production); solo escribes la etapa.
+  Cada etapa va a su archivo: development → .env, production → .env.production, <otra> → .env.<otra>.
   zeus env ls [--json]
   zeus env status [<proyecto> [entorno]] [--file <ruta>] [--json]   qué falta, qué está viejo, qué no subiste
   zeus env pull <proyecto> [entorno] [--out <ruta>] [--stdout] [--format dotenv|json] [--yes]
@@ -43,7 +44,7 @@ Variables (entorno por defecto: development; alias: local/dev → development, p
   zeus env ui [proyecto] [entorno]                                 visor local en tu navegador (ver, copiar, cambiar)
   zeus run <proyecto> [entorno] -- <comando…>                      corre el comando con los secretos en su entorno
 
-Admin de zeus:
+Accesos (lo hace quien tiene acceso al entorno; no hace falta ser admin):
   zeus env init   <proyecto> [entorno]
   zeus env grant  <proyecto> [entorno] --to <dev, correo o id de llave> [--all-devices] [--yes]
   zeus env grant  <proyecto> --all-envs --to <…>   ·   zeus env grant --all [--env <entorno>] --to <…>

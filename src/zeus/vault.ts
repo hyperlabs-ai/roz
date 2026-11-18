@@ -25,7 +25,8 @@ const PUBLIC_KEY_RE = /^[A-Za-z0-9_-]{43}$/;
 const WRAPPED_DEK_RE = /^zv1\.[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{64}$/;
 const SECRET_RE = /^zs1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22,}$/;
 const SECRET_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
-const ENV_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+// Hasta 64: el estándar del CLI nombra los entornos `<repo>-<etapa>` (api-hyperhub-production).
+const ENV_NAME_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 /** 64 KiB de valor + nonce + tag, en base64url. */
 const MAX_CIPHERTEXT_CHARS = 90_000;
 const MAX_SECRETS_PER_ENV = 500;
@@ -111,11 +112,13 @@ export async function registerKey(input: { name: string; publicKey: string }, ac
   return toKey(row, new Map([[actor.devId, actor.name]]));
 }
 
-/** Las llaves propias; con `all` (solo admin) las de todo el equipo, para poder darles acceso. */
+/**
+ * Las llaves propias; con `all`, las de todo el equipo, para poder darles acceso. Son llaves
+ * PÚBLICAS: verlas no abre nada.
+ */
 export async function listKeys(actor: ZeusActor, all = false): Promise<ZeusVaultKey[]> {
   let q = db().from('zeus_vault_key').select(KEY_COLS).is('revoked_at', null);
-  if (all) requireAdmin(actor);
-  else q = q.eq('dev_id', actor.devId);
+  if (!all) q = q.eq('dev_id', actor.devId);
   const { data, error } = await q.order('created_at');
   if (error) throw error;
   const rows = (data ?? []) as KeyRow[];
@@ -204,8 +207,11 @@ function touchKey(key: KeyRow): void {
   void db().from('zeus_vault_key').update({ last_used_at: new Date().toISOString() }).eq('id', key.id).then(() => undefined, () => undefined);
 }
 
+/**
+ * Cualquier dev crea un entorno (como cualquiera crea un proyecto): queda como el primero con acceso.
+ * Los roles de zeus sirven para enrutar solicitudes, no para limitar la herramienta.
+ */
 export async function createEnv(input: { projectKey: string; env: string; keyId: string; wrappedDek: string }, actor: ZeusActor): Promise<{ envId: string; dekVersion: number }> {
-  requireAdmin(actor);
   const name = checkEnvName(input.env);
   const key = await ownKey(input.keyId, actor);
   if (!isWrappedDek(input.wrappedDek)) throw new ValidationError('wrappedDek con formato inválido');
@@ -577,9 +583,9 @@ export async function grantAccess(
   input: { keyId: string; grants: Array<{ keyId: string; wrappedDek: string }> },
   actor: ZeusActor,
 ): Promise<{ ok: true; granted: number }> {
-  requireAdmin(actor);
   const { env, project } = await loadEnv(projectKey, envName);
-  // Quien da acceso tiene que tenerlo: es la única forma de haber envuelto la DEK de verdad.
+  // Quien da acceso tiene que tenerlo: es la única forma de haber envuelto la DEK de verdad. Esa es
+  // la regla (no un rol): solo compartes lo que tú mismo puedes leer.
   await currentGrant(env, await ownKey(input.keyId, actor));
   const grants = input.grants ?? [];
   if (!grants.length) throw new ValidationError('no hay a quién dar acceso');
@@ -603,14 +609,21 @@ export async function grantAccess(
   return { ok: true, granted: grants.length };
 }
 
+/** Quitar un acceso: lo puede hacer quien tiene acceso a ese entorno (o un admin). Queda auditado. */
 export async function revokeAccess(projectKey: string, envName: string, targetKeyId: string, actor: ZeusActor): Promise<{ ok: true }> {
-  requireAdmin(actor);
   if (!isUuid(targetKeyId)) throw new ValidationError('keyId inválido');
   const { env, project } = await loadEnv(projectKey, envName);
   const supabase = db();
   const { data: left, error: leftErr } = await supabase.from('zeus_vault_grant').select('key_id').eq('env_id', env.id).eq('dek_version', env.dek_version);
   if (leftErr) throw leftErr;
   const holders = ((left ?? []) as Array<{ key_id: string }>).map((g) => g.key_id);
+  if (!actor.admin) {
+    const { data: mine, error: mineErr } = await supabase.from('zeus_vault_key').select('id').eq('dev_id', actor.devId).is('revoked_at', null);
+    if (mineErr) throw mineErr;
+    if (!((mine ?? []) as Array<{ id: string }>).some((k) => holders.includes(k.id))) {
+      throw new AppError(VAULT_NO_ACCESS_CODE, 'solo quien tiene acceso a este entorno (o un admin de zeus) puede quitar accesos', 403);
+    }
+  }
   if (!holders.includes(targetKeyId)) throw new NotFoundError('esa llave no tiene acceso a este entorno');
   // Quitar el último acceso dejaría los secretos cifrados con una llave que ya nadie puede abrir.
   if (holders.length === 1) throw new AppError('ZEUS_VAULT_LAST_GRANT', 'es el único equipo con acceso: dale acceso a otro antes de quitarlo', 409);
@@ -632,8 +645,8 @@ export interface RotateInput {
   revisions?: Array<{ name: string; version: number; ciphertext: string }>;
 }
 
+/** Rotar: quien tiene acceso (la verificación de abajo); no hace falta un rol. */
 export async function rotateEnv(projectKey: string, envName: string, input: RotateInput, actor: ZeusActor): Promise<{ ok: true; dekVersion: number }> {
-  requireAdmin(actor);
   const { env, project } = await loadEnv(projectKey, envName);
   const key = await ownKey(input.keyId, actor);
   await currentGrant(env, key);

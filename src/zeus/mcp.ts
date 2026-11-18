@@ -533,7 +533,9 @@ export const ZEUS_MCP_INSTRUCTIONS = [
     'pegue un valor. Tú manejas NOMBRES; los valores van de la bóveda al archivo sin pasar por la conversación.',
   '- Ver qué hay: zeus_env_status (nombres, versión, quién y cuándo cambió cada una). Comparar el .env local con la bóveda: ' +
     '`zeus env status` (solo nombres; detecta el proyecto y entorno por la cabecera de cada .env).',
-  '- Bajar: `zeus env pull <proyecto> [entorno] --yes`. Cada entorno va a su archivo: development → .env, production → ' +
+  '- Nombres de entorno: NO los inventes ni los escribas completos. Corre el CLI dentro del repo y pasa solo la etapa ' +
+    '(local/dev/development o prod/production): el CLI arma `<repo>-<etapa>` (estándar del equipo).',
+  '- Bajar: `zeus env pull <proyecto> [etapa] --yes`. Cada etapa va a su archivo: development → .env, production → ' +
     '.env.production (local y prod nunca se mezclan). Alias: local/dev = development, prod = production.',
   '- Subir o reemplazar UNA variable: pide al usuario que copie el valor y corre `zeus env set <proyecto> <entorno> NOMBRE ' +
     '--from-clipboard` (o --from-file <ruta>). Nunca pongas el valor en el comando.',
