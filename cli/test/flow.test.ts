@@ -21,7 +21,7 @@ let ana: Machine; // admin
 let beto: Machine;
 
 const DEV = { DATABASE_URL: 'postgres://app:dev-clave-1234@localhost:5432/app', STRIPE_KEY: 'sk_test_51Dev0000000000000000AAAA', DEBUG: 'true' };
-const PROD = { DATABASE_URL: 'postgres://app:PROD-clave-9876@db.prod:5432/app', STRIPE_KEY: 'stripe-prod-valor-de-prueba-ZZZZ', SENTRY_DSN: 'https://abc@sentry.io/1' };
+const PROD = { DATABASE_URL: 'postgres://app:PROD-clave-9876@db.prod:5432/app', STRIPE_KEY: 'stripe-prod-valor-de-prueba-9876', SENTRY_DSN: 'https://abc@sentry.io/1' };
 
 const dotenv = (vars: Record<string, string>): string => Object.entries(vars).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
 const file = (m: Machine, name: string): string => m.fs.files.get(m.file(name)) ?? '';
