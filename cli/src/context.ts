@@ -49,6 +49,8 @@ export interface Ctx {
   openUrl(url: string): Promise<void>;
   /** Todo stdin como texto (lo que Claude Code le pasa a un hook). */
   stdin(): Promise<string>;
+  /** Última versión publicada de un paquete en npm. Sin esto no se busca actualización (tests). */
+  latestVersion?(pkg: string): Promise<string | null>;
 }
 
 /** Error para la persona: una línea, sin stack. */

@@ -539,6 +539,8 @@ export const ZEUS_MCP_INSTRUCTIONS = [
     '.env.production (local y prod nunca se mezclan). Alias: local/dev = development, prod = production. Si el archivo ' +
     'tiene variables que la bóveda no, `--yes` las conserva sin subirlas: pregúntale al usuario si quiere subirlas y, si sí, ' +
     'repite con `--push-local` (nunca lo decidas tú).',
+  '- Si un comando de zeus (o el resumen al abrir la sesión) dice que hay una versión nueva del CLI, díselo a la persona ' +
+    'con el comando para actualizar (`npm i -g @hyperlabs-ai/zeus`). No lo actualices tú sin su permiso.',
   '- Subir o reemplazar UNA variable: pide al usuario que copie el valor y corre `zeus env set <proyecto> <entorno> NOMBRE ' +
     '--from-clipboard` (o --from-file <ruta>). Nunca pongas el valor en el comando.',
   '- Subir un archivo completo: `zeus env push <proyecto> <entorno> --yes` (muestra solo nombres). Diferencias entre entornos: ' +
