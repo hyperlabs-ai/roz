@@ -197,8 +197,9 @@ describe('env init / ls', () => {
   it('usa la clave del proyecto como la conoce zeus aunque se escriba distinto', async () => {
     await keyInit(ana.ctx, []);
     await envInit(ana.ctx, ['roz', 'production']);
-    ana.fs.files.set(ana.file('.env'), 'A=valor-de-produccion\n');
-    await envPush(ana.ctx, ['Roz', 'production', '--yes']);
+    // Cada entorno tiene su archivo: production sube desde .env.production ("prod" es alias).
+    ana.fs.files.set(ana.file('.env.production'), 'A=valor-de-produccion\n');
+    await envPush(ana.ctx, ['Roz', 'prod', '--yes']);
     await envPull(ana.ctx, ['ROZ', 'production', '--stdout']);
     expect(ana.out.at(-1)).toBe('A=valor-de-produccion');
   });
@@ -346,7 +347,11 @@ describe('env pull', () => {
   });
 
   it('si el archivo ya está al día no lo toca', async () => {
+    // El primer pull solo le pone la cabecera (de dónde viene y qué versión tiene cada variable).
+    await envPull(ana.ctx, ['ROZ']);
+    expect(ana.prompt.questions).toHaveLength(0);
     const before = ana.fs.files.get(ana.file('.env'));
+    expect(before).toContain('# zeus:source ROZ/development');
     ana.out.length = 0;
     await envPull(ana.ctx, ['ROZ']);
     expect(ana.fs.files.get(ana.file('.env'))).toBe(before);
@@ -525,7 +530,7 @@ describe('env grant', () => {
     ana.out.length = 0;
     await envGrant(ana.ctx, ['ROZ', '--to', 'Beto', '--all-devices', '--yes']);
     expect(zeus.env('ROZ', 'development')?.grants.size).toBe(3);
-    expect(ana.out.at(-1)).toContain('1 equipo(s)');
+    expect(ana.out.join('\n')).toContain('1 equipo(s)');
     expect(Object.fromEntries(await pulled(beto))).toEqual(SECRETS);
     expect(Object.fromEntries(await pulled(beto2))).toEqual(SECRETS);
 
@@ -629,7 +634,7 @@ describe('env revoke / rotate', () => {
     const env = zeus.env('ROZ', 'development');
     expect([...(env?.grants.keys() ?? [])]).toEqual([(await key(ana)).keyId]);
     await expect(envPull(beto.ctx, ['ROZ'])).rejects.toThrow(/no tiene acceso/);
-    expect(ana.out.at(-1)).toMatch(/v2; 6 secreto\(s\) y 1 acceso\(s\)/);
+    expect(ana.out.at(-1)).toMatch(/v2; 6 secreto\(s\), \d+ versión\(es\) anteriores y 1 acceso\(s\)/);
   });
 
   it('push con la versión vieja después de rotar: el CLI usa la vigente', async () => {

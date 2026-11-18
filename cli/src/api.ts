@@ -3,11 +3,14 @@
 import type {
   CreateEnvBody,
   GrantBody,
+  InboxSummary,
+  KeyRotateBody,
   PutSecretsBody,
   RotateBody,
   VaultEnv,
   VaultKey,
   VaultProject,
+  VaultRevision,
   WhoAmI,
 } from './types.js';
 
@@ -35,6 +38,9 @@ export interface ZeusApi {
   grant(projectKey: string, env: string, body: GrantBody): Promise<{ ok: boolean; granted: number }>;
   revokeGrant(projectKey: string, env: string, keyId: string): Promise<{ ok: boolean }>;
   rotate(projectKey: string, env: string, body: RotateBody): Promise<{ ok: boolean; dekVersion: number }>;
+  history(projectKey: string, env: string, keyId: string, name?: string): Promise<{ dekVersion: number; revisions: VaultRevision[] }>;
+  rotateDeviceKey(body: KeyRotateBody): Promise<{ ok: boolean; moved: number }>;
+  inbox(): Promise<InboxSummary>;
 }
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
@@ -89,6 +95,16 @@ export class ZeusClient implements ZeusApi {
   }
   rotate(projectKey: string, env: string, body: RotateBody): Promise<{ ok: boolean; dekVersion: number }> {
     return this.request('POST', `${envPath(projectKey, env)}/rotate`, body);
+  }
+  history(projectKey: string, env: string, keyId: string, name?: string): Promise<{ dekVersion: number; revisions: VaultRevision[] }> {
+    const q = `?keyId=${encodeURIComponent(keyId)}${name ? `&name=${encodeURIComponent(name)}` : ''}`;
+    return this.request('GET', `${envPath(projectKey, env)}/history${q}`);
+  }
+  rotateDeviceKey(body: KeyRotateBody): Promise<{ ok: boolean; moved: number }> {
+    return this.request('POST', '/vault/keys/rotate', body);
+  }
+  inbox(): Promise<InboxSummary> {
+    return this.request('GET', '/inbox');
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {

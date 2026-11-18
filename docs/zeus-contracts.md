@@ -56,8 +56,11 @@ dashboard). Errores: `{ error: { code, message } }`.
 | `GET /tokens` | | `{ tokens: ZeusTokenSummary[] }` |
 | `POST /tokens` | `{ name }` | `{ token, summary }` (el token se muestra una vez) |
 | `DELETE /tokens/:id` | | `{ ok: true }` |
-| `GET /inbox` | | `ZeusInbox` |
-| `POST /messages` | `{ toDevId, subject?, body, ref? }` | `ZeusMessage` |
+| `GET /inbox` | | `ZeusInbox` (`open`: encargos y planes que me tocan; `waiting`: los que mandé y siguen abiertos) |
+| `POST /messages` | `{ toDevId, subject?, body, ref?, kind?: 'message' \| 'task', projectKey? }` | `ZeusMessage` (un `task` exige `subject` y nace `pending`) |
+| `POST /plans` | `{ toDevId, title, plan, projectKey?, revises? }` | `ZeusMessage` (kind `plan`; con `revises` la versión anterior queda `superseded`) |
+| `GET /messages/:id` | | `ZeusMessage & { history: ZeusMessage[] }` (versiones anteriores del plan). Solo remitente o destinatario |
+| `POST /messages/:id/status` | `{ status, note? }` | `ZeusMessage`. Destinatario: `accepted`, `changes_requested` (nota obligatoria), `declined` (nota obligatoria), `done`. Remitente: `cancelled`. 409 `ZEUS_MESSAGE_CLOSED` si ya se cerró. Al otro lado le llega un aviso |
 | `POST /messages/read` | `{ ids: string[] \| 'all' }` | `{ ok: true }` |
 | `POST /requests` | `{ kind, title, detail?, resourceRef? }` | `ZeusRequest` |
 | `POST /requests/:id/resolve` | `{ decision: 'approved' \| 'denied', note? }` | `ZeusRequest` |
@@ -78,18 +81,23 @@ Base `/v1/zeus`, `Authorization: Bearer zeus_<43 caracteres base64url>`. El domi
 | `GET /whoami` | | `{ dev: { id, name, email }, zeusAdmin }` |
 | `GET /vault/keys` | `?all=1` (admin: todas) | `{ keys: ZeusVaultKey[] }` |
 | `POST /vault/keys` | `{ name, publicKey }` | `{ key: ZeusVaultKey }` |
-| `GET /vault/projects` | | `{ projects: [{ key, name, envs: [{ name, dekVersion, hasGrant }] }] }` |
+| `GET /vault/projects` | | `{ projects: [{ key, name, envs: [{ name, dekVersion, hasGrant, needsRotation }] }] }` |
+| `POST /vault/keys/rotate` | `{ oldKeyId, newKeyId, grants: [{ projectKey, env, dekVersion, wrappedDek }], compromised }` | `{ ok, moved }`. Ambas llaves del dev del token; solo entornos donde la vieja tiene acceso vigente. Revoca la vieja; con `compromised` marca sus entornos `needsRotation` |
 | `POST /vault/envs` | `{ projectKey, env, keyId, wrappedDek }` | `{ envId, dekVersion: 1 }` (admin) |
-| `GET /vault/envs/:projectKey/:env` | `?keyId=` | `{ envId, dekVersion, wrappedDek, secrets: [{ name, ciphertext, dekVersion, version, updatedAt }], grants: [{ keyId, devName, keyName, fingerprint }] }` |
-| `PUT /vault/envs/:projectKey/:env/secrets` | `{ keyId, dekVersion, set: [{ name, ciphertext }], delete: string[] }` | `{ ok, written, deleted }` |
+| `GET /vault/envs/:projectKey/:env` | `?keyId=` | `{ envId, dekVersion, wrappedDek, secrets: [{ name, ciphertext, dekVersion, version, updatedAt, updatedByName }], grants: [{ keyId, devName, keyName, fingerprint }], needsRotation }` |
+| `GET /vault/envs/:projectKey/:env/history` | `?keyId=&name=` | `{ dekVersion, revisions: [{ name, version, ciphertext \| null, dekVersion, setAt, setByName, replacedAt, replacedByName, current }] }` (vigente + hasta 10 anteriores por nombre; `ciphertext: null` = borrada en esa versión) |
+| `PUT /vault/envs/:projectKey/:env/secrets` | `{ keyId, dekVersion, set: [{ name, ciphertext }], delete: string[] }` | `{ ok, written, deleted }`. Lo reemplazado pasa al historial y a quien tiene acceso le llega un aviso `env_change` (solo nombres) |
 | `POST /vault/envs/:projectKey/:env/grants` | `{ keyId, grants: [{ keyId, wrappedDek }] }` | `{ ok, granted }` (admin) |
 | `DELETE /vault/envs/:projectKey/:env/grants/:keyId` | | `{ ok }` (admin; deja `needsRotation`) |
-| `POST /vault/envs/:projectKey/:env/rotate` | `{ keyId, dekVersion, grants: [{ keyId, wrappedDek }], secrets: [{ name, ciphertext }] }` | `{ ok, dekVersion }` (admin) |
+| `POST /vault/envs/:projectKey/:env/rotate` | `{ keyId, dekVersion, grants: [{ keyId, wrappedDek }], secrets: [{ name, ciphertext }], revisions?: [{ name, version, ciphertext }] }` | `{ ok, dekVersion }` (admin) |
+| `GET /inbox` | | `{ unread, open, waiting, envChanges, toResolve }` resumido (para `zeus doctor` y el inicio de sesión de Claude) |
 
 Reglas: leer y escribir secretos exige un `grant` vigente de `keyId` (que debe ser del dev del
 token y no estar revocada). `dekVersion` del cuerpo debe ser la vigente del entorno (409
-`ZEUS_VAULT_STALE` si no). En `rotate`, `dekVersion` es la NUEVA (vigente + 1) y `secrets` debe traer
-todos los nombres existentes re-cifrados.
+`ZEUS_VAULT_STALE` si no). En `rotate`, `dekVersion` es la NUEVA (vigente + 1), `secrets` debe traer
+todos los nombres existentes re-cifrados y `revisions` todas las versiones anteriores legibles con la
+DEK vigente (409 `ZEUS_VAULT_INCOMPLETE` si falta alguna). Un CLI anterior al historial no manda
+`revisions`: la rotación procede y ese historial se descarta (no se puede re-cifrar sin la DEK).
 
 ## 5. Cifrado de la bóveda
 
@@ -130,9 +138,23 @@ Endpoint `POST /mcp` (JSON-RPC). Con un token `zeus_…` el agente actúa como e
 | `zeus_who_owns` | A quién pedirle un acceso o permiso sobre un recurso o proyecto, y por qué. |
 | `zeus_request` | Abre una solicitud (acceso, permiso, revisión, cambio) y la enruta sola. |
 | `zeus_requests` / `zeus_resolve_request` | Ver y resolver solicitudes. |
-| `zeus_send_message` / `zeus_inbox` / `zeus_mark_read` | Mensajes entre devs y agentes. |
-| `zeus_plans` / `zeus_plan_claim` / `zeus_plan_release` | Bandeja de planes: los míos, los reclamables; tomar o soltar uno. |
-| `zeus_env_status` | Qué variables tiene un proyecto (solo nombres), si tengo acceso y el comando para bajarlas. |
+| `zeus_send_message` / `zeus_inbox` / `zeus_mark_read` | Mensajes entre devs y agentes. `kind: "task"` = encargo con estado. `zeus_inbox` separa `open` (mis pendientes), `waiting` y `messages`. |
+| `zeus_share_plan` | Comparte un plan de implementación (markdown completo). `revises` = id del plan que esta versión reemplaza. |
+| `zeus_get_message` | Mensaje, encargo o plan completo (con versiones anteriores). |
+| `zeus_respond` | Estado de un encargo o plan: `accepted`, `changes_requested`, `declined`, `done` (o `cancelled` quien lo mandó). |
+| `zeus_plans` / `zeus_plan_claim` / `zeus_plan_release` | Bandeja de planes del planificador (issues): los míos, los reclamables; tomar o soltar uno. |
+| `zeus_env_status` | Qué variables tiene un proyecto (nombres, versión, quién y cuándo), si tengo acceso y los comandos `pull`/`status`. |
+
+**Instrucciones y prompts.** El `initialize` devuelve `instructions` (`ZEUS_MCP_INSTRUCTIONS` en
+`src/zeus/mcp.ts`): Claude Code las carga solo al conectarse, así que funcionan como una skill sin
+instalar nada (cómo usar el contexto, qué hacer con un plan que llega, cómo manejar variables sin ver
+valores). También expone `prompts/list` y `prompts/get` (`pendientes`, `compartir-plan`, `variables`),
+que en Claude Code aparecen como `/mcp__zeus__<nombre>`.
+
+**Flujo de un plan compartido.** A comparte (`zeus_share_plan`) → a B le llega `pending` → el Claude
+de B lo ve en `zeus_inbox`, se lo resume y pregunta: implementar (`accepted` → `done`), ajustar
+(`changes_requested` con nota → A manda `revises`, la anterior queda `superseded`) o rechazar
+(`declined`). Cada cambio de estado le deja un aviso al otro lado.
 
 Ruta de una solicitud (`zeus_request`): dueño del recurso → si no hay, líder del proyecto (el
 `pm`/`ceo` asignado) → jefe directo de quien pide → un admin de zeus. La respuesta dice a quién se le

@@ -5,7 +5,7 @@
 // agregarlo a Claude Code, iniciar sesión en el CLI) con tus tokens debajo; a la derecha los repos
 // como mosaico agrupado por proyecto (`SourceMosaic`).
 import { useState, type ReactNode } from 'react';
-import { ChevronLeft, ChevronRight, KeyRound, Loader2, Plus, Server, ShieldAlert, Terminal, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, KeyRound, Loader2, Plus, Server, ShieldAlert, ShieldCheck, Terminal, Trash2 } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
@@ -35,6 +35,45 @@ const SOURCES_KEY = '/zeus/sources';
 export const mcpCommand = (mcpUrl: string, token: string): string =>
   `claude mcp add --transport http zeus ${mcpUrl} --header "Authorization: Bearer ${token}"`;
 export const cliCommand = (apiUrl: string, token: string): string => `zeus login --url ${apiUrl} --token ${token}`;
+/** Conecta Claude Code de una vez: MCP + hooks de `zeus guard` (ver cli/README.md). */
+export const SETUP_COMMAND = 'zeus setup claude';
+
+/** Qué hace el protector que instala `zeus setup claude`, y qué le puedes pedir a Claude después. */
+function GuardSummary() {
+  const items: Array<[string, string]> = [
+    ['Bloquea', 'que Claude lea tus .env o imprima valores de la bóveda.'],
+    ['Frena', 'un mensaje con un secreto pegado: no se envía ni queda en la conversación (si es público, agrega [zeus-ok]).'],
+    ['Avisa', 'al abrir sesión: tus encargos y planes pendientes, y qué variables te faltan.'],
+  ];
+  return (
+    <div className="grid gap-2 rounded-md border bg-sidebar px-3 py-2.5">
+      <span className="flex items-center gap-1.5 text-[12px] font-semibold"><ShieldCheck className="size-3.5 text-green" /> El protector</span>
+      <ul className="grid gap-1 text-[11.5px] leading-snug text-muted-foreground">
+        {items.map(([verb, rest]) => (
+          <li key={verb}><span className="font-medium text-foreground">{verb}</span> {rest}</li>
+        ))}
+      </ul>
+      <span className="text-[11.5px] leading-snug text-muted-foreground">
+        Luego pídele a Claude: <span className="text-foreground">"¿qué me falta en el .env?"</span>, <span className="text-foreground">"sube la nueva STRIPE_KEY a prod"</span> (tú copias el valor) o{' '}
+        <span className="text-foreground">"compártele este plan a Alan"</span>. Atajo: <code className="rounded bg-panel px-1 font-mono text-[11px] text-foreground">/mcp__zeus__pendientes</code>.
+      </span>
+    </div>
+  );
+}
+
+/** Sin el CLI (o si `setup` no encontró el comando `claude`): conectar solo el MCP, a mano. */
+function ManualMcp({ mcpUrl }: { mcpUrl: string | null }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="grid gap-1.5">
+      <button type="button" className="flex w-fit items-center gap-1 text-[11.5px] text-muted-foreground hover:text-foreground" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />
+        Conectar solo el MCP, a mano (sin protector)
+      </button>
+      {open && (mcpUrl ? <CmdLine wrap command={mcpCommand(mcpUrl, '<token>')} /> : <StepNote>No se pudo leer la URL del MCP de zeus; recarga la página.</StepNote>)}
+    </div>
+  );
+}
 /**
  * Crear un token y mostrarlo UNA vez. El secreto vive solo en el estado de este diálogo: no se
  * cachea ni se guarda, y al cerrarlo ya no hay forma de volver a verlo (el back solo guarda su hash).
@@ -108,21 +147,20 @@ function CreateTokenDialog({ open, me, onClose }: { open: boolean; me: ZeusMe | 
             </div>
 
             <div className="grid gap-1.5">
-              <span className="text-[12.5px] font-medium text-foreground/80">Conectar Claude Code</span>
-              {me?.mcpUrl ? (
-                <CommandBlock label="Pégalo en tu terminal" command={mcpCommand(me.mcpUrl, created.token)} />
+              <span className="text-[12.5px] font-medium text-foreground/80">Iniciar sesión en el CLI</span>
+              <CommandBlock label="Instálalo (Node 20+)" command={CLI_INSTALL} />
+              {me?.apiUrl ? (
+                <CommandBlock label="Entra con tu token" command={cliCommand(me.apiUrl, created.token)} />
               ) : (
-                <p className="text-xs text-muted-foreground">No se pudo leer la URL del MCP de zeus; recarga la página y usa la plantilla de abajo con este token.</p>
+                <p className="text-xs text-muted-foreground">No se pudo leer la URL de zeus para el CLI.</p>
               )}
             </div>
 
             <div className="grid gap-1.5">
-              <span className="text-[12.5px] font-medium text-foreground/80">Iniciar sesión en el CLI</span>
-              <CommandBlock label="Instálalo (Node 20+)" command={CLI_INSTALL} />
-              {me?.apiUrl ? (
-                <CommandBlock label="Y entra con tu token" command={cliCommand(me.apiUrl, created.token)} />
-              ) : (
-                <p className="text-xs text-muted-foreground">No se pudo leer la URL de zeus para el CLI.</p>
+              <span className="text-[12.5px] font-medium text-foreground/80">Conectar Claude Code</span>
+              <CommandBlock label="MCP de zeus + protector de secretos, en un paso" command={SETUP_COMMAND} />
+              {me?.mcpUrl && (
+                <CommandBlock label="O solo el MCP, a mano (sin protector)" command={mcpCommand(me.mcpUrl, created.token)} />
               )}
             </div>
 
@@ -273,14 +311,7 @@ export function AccessTab({ me }: { me: ZeusMe | null }) {
                   <Button variant="brand" size="sm" onClick={() => setCreating(true)}><Plus /> Nuevo token</Button>
                 </div>
               </Step>
-              <Step n={2} state={next} title="Agrégalo a Claude Code" stateLabel={hasToken ? 'Con tu token' : undefined}>
-                {me?.mcpUrl ? (
-                  <CmdLine wrap command={mcpCommand(me.mcpUrl, '<token>')} />
-                ) : (
-                  <StepNote>{me ? 'No se pudo leer la URL del MCP de zeus; recarga la página.' : 'Leyendo la URL del MCP de zeus…'}</StepNote>
-                )}
-              </Step>
-              <Step n={3} state={next} title="Instala el CLI e inicia sesión" stateLabel={hasToken ? 'Con tu token' : undefined} last>
+              <Step n={2} state={next} title="Instala el CLI e inicia sesión" stateLabel={hasToken ? 'Con tu token' : undefined}>
                 <StepNote>Una vez por máquina. Requiere Node 20 o superior.</StepNote>
                 <CmdLine wrap command={CLI_INSTALL} />
                 {me?.apiUrl ? (
@@ -288,6 +319,13 @@ export function AccessTab({ me }: { me: ZeusMe | null }) {
                 ) : (
                   <StepNote>{me ? 'No se pudo leer la URL de zeus para el CLI.' : 'Leyendo la URL de zeus…'}</StepNote>
                 )}
+                <CmdLine wrap command="zeus key init" />
+              </Step>
+              <Step n={3} state={next} title="Conecta Claude Code" stateLabel={hasToken ? 'Un comando' : undefined} last>
+                <CmdLine wrap command={SETUP_COMMAND} />
+                <StepNote>Conecta el MCP de zeus y activa el protector. No hace falta instalar ninguna skill: las instrucciones de zeus le llegan solas a Claude en cada sesión.</StepNote>
+                <GuardSummary />
+                <ManualMcp mcpUrl={me?.mcpUrl ?? null} />
               </Step>
             </Steps>
           </div>

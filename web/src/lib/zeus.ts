@@ -184,6 +184,8 @@ export interface ZeusMe {
   needsAdmin: boolean;
   unreadMessages: number;
   pendingForMe: number;
+  /** Encargos y planes abiertos que me mandaron. */
+  openForMe: number;
   /** URL del MCP para configurar Claude Code (origen público de zeus + /mcp). */
   mcpUrl: string;
   /** Origen público de zeus (para el CLI). */
@@ -228,8 +230,14 @@ export interface ZeusRequest {
   canResolve: boolean;
 }
 
+/** message: aviso · task: encargo · plan: plan de implementación · env_change: cambiaron variables. */
+export type ZeusMessageKind = 'message' | 'task' | 'plan' | 'env_change';
+export type ZeusMessageStatus = 'pending' | 'accepted' | 'changes_requested' | 'declined' | 'done' | 'cancelled' | 'superseded';
+export const ZEUS_OPEN_STATUSES: readonly ZeusMessageStatus[] = ['pending', 'accepted', 'changes_requested'];
+
 export interface ZeusMessage {
   id: string;
+  kind: ZeusMessageKind;
   fromDevId: string | null;
   /** "zeus" cuando es un aviso del sistema. */
   fromName: string;
@@ -242,12 +250,23 @@ export interface ZeusMessage {
   via: 'mcp' | 'web' | 'cli' | 'system';
   readAt: string | null;
   createdAt: string;
+  /** Solo encargos y planes; null en mensajes y avisos. */
+  status: ZeusMessageStatus | null;
+  statusNote: string | null;
+  statusAt: string | null;
+  /** Versión anterior del plan, o el encargo/plan al que responde este aviso. */
+  parentId: string | null;
+  projectKey: string | null;
 }
 
 export interface ZeusInbox {
   messages: ZeusMessage[];
   /** Mensajes que yo envié (los más recientes). */
   sent: ZeusMessage[];
+  /** Encargos y planes que me mandaron y siguen abiertos: mis pendientes. */
+  open: ZeusMessage[];
+  /** Encargos y planes que yo mandé y siguen abiertos: lo que espero de otros. */
+  waiting: ZeusMessage[];
   /** Solicitudes que me toca resolver. */
   toResolve: ZeusRequest[];
   /** Solicitudes que yo abrí. */
@@ -342,6 +361,21 @@ export interface ZeusVaultAuditEntry {
   detail: Record<string, unknown>;
 }
 
+/** Una versión de una variable, sin valor ni texto cifrado (espejo de RevisionMeta en src/zeus/vault.ts). */
+export interface ZeusVaultRevisionMeta {
+  name: string;
+  version: number;
+  setAt: string;
+  setByName: string | null;
+  replacedAt: string | null;
+  replacedByName: string | null;
+  current: boolean;
+  /** En esa versión la variable se borró. */
+  deleted: boolean;
+  /** Se puede restaurar (está cifrada con la llave vigente del entorno). */
+  readable: boolean;
+}
+
 export interface ZeusVaultOverview {
   envs: ZeusVaultEnvSummary[];
   keys: ZeusVaultKey[];
@@ -396,8 +430,13 @@ export const zeusApi = {
   revokeToken: (id: string) => apiSend<{ ok: true }>('DELETE', `/zeus/tokens/${enc(id)}`),
 
   inbox: () => apiGet<ZeusInbox>('/zeus/inbox'),
-  sendMessage: (body: { toDevId: string; subject?: string; body: string; ref?: ZeusRef }) =>
+  sendMessage: (body: { toDevId: string; subject?: string; body: string; ref?: ZeusRef; kind?: 'message' | 'task'; projectKey?: string }) =>
     apiSend<ZeusMessage>('POST', '/zeus/messages', body),
+  sharePlan: (body: { toDevId: string; title: string; plan: string; projectKey?: string; revises?: string }) =>
+    apiSend<ZeusMessage>('POST', '/zeus/plans', body),
+  message: (id: string) => apiGet<ZeusMessage & { history: ZeusMessage[] }>(`/zeus/messages/${id}`),
+  setMessageStatus: (id: string, status: ZeusMessageStatus, note?: string) =>
+    apiSend<ZeusMessage>('POST', `/zeus/messages/${id}/status`, { status, note }),
   markRead: (ids: string[] | 'all') => apiSend<{ ok: true }>('POST', '/zeus/messages/read', { ids }),
   createRequest: (body: { kind: ZeusRequestKind; title: string; detail?: string; resourceRef?: ZeusRef }) =>
     apiSend<ZeusRequest>('POST', '/zeus/requests', body),
@@ -410,6 +449,8 @@ export const zeusApi = {
   activity: (since?: string | null) => apiGet<ZeusActivityResponse>(`/zeus/activity${query({ since })}`),
 
   vault: () => apiGet<ZeusVaultOverview>('/zeus/vault'),
+  vaultHistory: (projectKey: string, env: string, name?: string) =>
+    apiGet<{ revisions: ZeusVaultRevisionMeta[] }>(`/zeus/vault/envs/${enc(projectKey)}/${enc(env)}/history${name ? `?name=${enc(name)}` : ''}`),
   revokeVaultKey: (id: string) => apiSend<{ ok: true }>('POST', `/zeus/vault/keys/${enc(id)}/revoke`, {}),
 };
 

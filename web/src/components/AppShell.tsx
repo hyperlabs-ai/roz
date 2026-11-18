@@ -160,7 +160,8 @@ function useNavBadges(): Record<NavBadgeKind, BadgeState | null> {
   const { badge } = useChat();
   const me = useZeusMe();
   usePoll(me.reload, me.data ? 45_000 : null);
-  const inbox = (me.data?.unreadMessages ?? 0) + (me.data?.pendingForMe ?? 0);
+  // Encargos y planes abiertos cuentan aunque ya estén leídos: siguen siendo pendientes.
+  const inbox = (me.data?.unreadMessages ?? 0) + (me.data?.pendingForMe ?? 0) + (me.data?.openForMe ?? 0);
   return {
     chat: badge.count > 0
       ? { count: badge.count, dot: false, tone: 'red', label: `${badge.count} sin leer` }

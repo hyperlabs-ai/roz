@@ -1,10 +1,10 @@
 // env init / grant / revoke / rotate: lo que hace un admin de zeus. El servidor nunca ve la DEK:
 // dar acceso es que ESTE equipo, que ya la tiene, la envuelva para la pública de otro.
 import { CliError, UsageError, confirmOrAbort, type Ctx } from '../context.js';
-import { VaultCryptoError, encryptSecret, fingerprint, generateDek, secretAad, unwrapDek, wrapAad, wrapDek, zeroize } from '../crypto.js';
+import { VaultCryptoError, decryptSecret, encryptSecret, fingerprint, generateDek, secretAad, unwrapDek, wrapAad, wrapDek, zeroize } from '../crypto.js';
 import { loadKnownKeys, rememberKeys } from '../store.js';
 import type { VaultKey, WrappedGrant } from '../types.js';
-import { decryptAll, label, openEnv, parse, requireKey, resolveTarget, staleToCliError } from './vault.js';
+import { ENV_ALIASES, decryptAll, label, openEnv, parse, requireKey, resolveTarget, staleToCliError, type RegisteredKey, type Target } from './vault.js';
 
 /** Huella calculada AQUÍ con la pública; si zeus manda otra, algo anda mal y no se sigue. */
 function localFingerprint(key: VaultKey): string {
@@ -86,50 +86,79 @@ export async function envGrant(ctx: Ctx, args: string[]): Promise<number> {
   const { values: opts, positionals } = parse(args, {
     to: { type: 'string' },
     'all-devices': { type: 'boolean' },
+    'all-envs': { type: 'boolean' },
+    all: { type: 'boolean' },
+    env: { type: 'string' },
     yes: { type: 'boolean', short: 'y' },
   });
-  if (positionals.length > 2 || !opts.to) throw new UsageError('uso: zeus env grant <proyecto> [entorno] --to <dev, correo o id de llave> [--all-devices]');
+  const usage =
+    'uso: zeus env grant <proyecto> [entorno] --to <dev, correo o id de llave> [--all-devices]\n' +
+    '     zeus env grant <proyecto> --all-envs --to <…>          todos los entornos del proyecto a los que tienes acceso\n' +
+    '     zeus env grant --all [--env <entorno>] --to <…>        todos los proyectos (o solo ese entorno de cada uno)';
+  if (!opts.to) throw new UsageError(usage);
+  if (opts.all && (positionals.length > 0 || opts['all-envs'])) throw new UsageError(usage);
+  if (opts['all-envs'] && positionals.length !== 1) throw new UsageError(usage);
+  if (!opts.all && !opts['all-envs'] && (positionals.length < 1 || positionals.length > 2)) throw new UsageError(usage);
 
   const key = await requireKey(ctx);
-  const t = await resolveTarget(ctx, positionals[0], positionals[1]);
-  const { remote, dek } = await openEnv(ctx, key, t);
-  try {
-    const selected = selectKeys((await ctx.api.listKeys(true)).keys, opts.to);
-    const active = selected.keys.filter((k) => !k.revokedAt);
-    if (active.length === 0) throw new CliError(`las llaves de "${opts.to}" están revocadas: la persona debe correr \`zeus key init --force\``);
-    const fps = new Map(active.map((k) => [k.id, localFingerprint(k)]));
-    const fpOf = (k: VaultKey): string => fps.get(k.id) ?? '';
-    if (!selected.byKeyId && active.length > 1 && !opts['all-devices']) {
-      for (const k of active) ctx.log(`  ${describeKey(k, fpOf(k))}`);
-      throw new CliError(`${active[0]?.devName} tiene ${active.length} equipos: elige uno con --to <id de llave> o todos con --all-devices`);
-    }
-
-    const granted = new Set(remote.grants.map((g) => g.keyId));
-    const targets = active.filter((k) => !granted.has(k.id));
-    for (const k of active.filter((x) => granted.has(x.id))) ctx.log(`ya tiene acceso: ${describeKey(k, fpOf(k))}`);
-    if (targets.length === 0) {
-      ctx.out(`nada que hacer: ${label(t)} ya está compartido con esos equipos`);
-      return 0;
-    }
-
-    ctx.log(`Vas a dar acceso a ${label(t)} (todos sus secretos) a:`);
-    for (const k of targets) ctx.log(`  ${describeKey(k, fpOf(k))}`);
-    const who = targets[0]?.devName ?? 'la persona';
-    await confirmOrAbort(
-      ctx,
-      `¿${who} te leyó ${targets.length === 1 ? 'esta huella' : 'estas huellas'} por un canal distinto a zeus (en persona o por llamada) y coincide${targets.length === 1 ? '' : 'n'}?`,
-      opts.yes ?? false,
-    );
-
-    const aad = wrapAad(t.projectKey, t.env, remote.dekVersion);
-    const grants: WrappedGrant[] = targets.map((k) => ({ keyId: k.id, wrappedDek: wrapDek(dek, k.publicKey, aad) }));
-    const res = await ctx.api.grant(t.projectKey, t.env, { keyId: key.keyId, grants });
-    await rememberKeys(ctx.fs, ctx.home, targets.map((k) => ({ keyId: k.id, fingerprint: fpOf(k) })));
-    ctx.out(`${label(t)}: acceso dado a ${res.granted} equipo(s) de ${who}. Ya puede correr \`zeus env pull ${t.projectKey} ${t.env}\`.`);
-    return 0;
-  } finally {
-    zeroize(dek);
+  const selected = selectKeys((await ctx.api.listKeys(true)).keys, opts.to);
+  const active = selected.keys.filter((k) => !k.revokedAt);
+  if (active.length === 0) throw new CliError(`las llaves de "${opts.to}" están revocadas: la persona debe correr \`zeus key init --force\``);
+  const fps = new Map(active.map((k) => [k.id, localFingerprint(k)]));
+  const fpOf = (k: VaultKey): string => fps.get(k.id) ?? '';
+  if (!selected.byKeyId && active.length > 1 && !opts['all-devices']) {
+    for (const k of active) ctx.log(`  ${describeKey(k, fpOf(k))}`);
+    throw new CliError(`${active[0]?.devName} tiene ${active.length} equipos: elige uno con --to <id de llave> o todos con --all-devices`);
   }
+
+  // Los entornos: uno, todos los de un proyecto, o todos (en los que ESTE equipo tiene acceso: solo
+  // así puede envolver la llave para alguien más).
+  let targetsEnv: Target[];
+  if (opts.all || opts['all-envs']) {
+    const { projects } = await ctx.api.listProjects();
+    const wantedProject = opts['all-envs'] ? (await resolveTarget(ctx, positionals[0], undefined)).projectKey : null;
+    const wantedEnv = opts.env ? (ENV_ALIASES[opts.env] ?? opts.env) : null;
+    targetsEnv = projects
+      .filter((p) => !wantedProject || p.key === wantedProject)
+      .flatMap((p) => p.envs.filter((e) => e.hasGrant && (!wantedEnv || e.name === wantedEnv)).map((e) => ({ projectKey: p.key, env: e.name, exists: true })));
+    if (targetsEnv.length === 0) throw new CliError('no tienes acceso a ningún entorno que coincida: no hay nada que compartir');
+  } else {
+    targetsEnv = [await resolveTarget(ctx, positionals[0], positionals[1])];
+  }
+
+  // Una sola confirmación de huella para todo el lote.
+  const who = active[0]?.devName ?? 'la persona';
+  ctx.log(`Vas a dar acceso a ${targetsEnv.length === 1 ? label(targetsEnv[0]!) : `${targetsEnv.length} entornos (${targetsEnv.map(label).join(', ')})`} a:`);
+  for (const k of active) ctx.log(`  ${describeKey(k, fpOf(k))}`);
+  await confirmOrAbort(
+    ctx,
+    `¿${who} te leyó ${active.length === 1 ? 'esta huella' : 'estas huellas'} por un canal distinto a zeus (en persona o por llamada) y coincide${active.length === 1 ? '' : 'n'}?`,
+    opts.yes ?? false,
+  );
+
+  let total = 0;
+  for (const t of targetsEnv) {
+    const { remote, dek } = await openEnv(ctx, key, t);
+    try {
+      const granted = new Set(remote.grants.map((g) => g.keyId));
+      const pending = active.filter((k) => !granted.has(k.id));
+      if (pending.length === 0) {
+        ctx.log(`${label(t)}: ya tenía acceso`);
+        continue;
+      }
+      const aad = wrapAad(t.projectKey, t.env, remote.dekVersion);
+      const grants: WrappedGrant[] = pending.map((k) => ({ keyId: k.id, wrappedDek: wrapDek(dek, k.publicKey, aad) }));
+      const res = await ctx.api.grant(t.projectKey, t.env, { keyId: key.keyId, grants });
+      total += res.granted;
+      ctx.out(`${label(t)}: acceso dado a ${res.granted} equipo(s) de ${who}`);
+    } finally {
+      zeroize(dek);
+    }
+  }
+  await rememberKeys(ctx.fs, ctx.home, active.map((k) => ({ keyId: k.id, fingerprint: fpOf(k) })));
+  if (total === 0) ctx.out(`nada que hacer: ${who} ya tenía acceso a ${targetsEnv.length === 1 ? label(targetsEnv[0]!) : 'todos esos entornos'}`);
+  else ctx.out(`listo. ${who} ya puede correr \`zeus env pull <proyecto> <entorno>\`.`);
+  return 0;
 }
 
 // ---------------------------------------------------------------- revoke
@@ -149,13 +178,49 @@ export async function envRevoke(ctx: Ctx, args: string[]): Promise<number> {
 // ---------------------------------------------------------------- rotate
 
 export async function envRotate(ctx: Ctx, args: string[]): Promise<number> {
-  const { values: opts, positionals } = parse(args, { yes: { type: 'boolean', short: 'y' } });
-  if (positionals.length > 2) throw new UsageError('uso: zeus env rotate <proyecto> [entorno]');
-
+  const { values: opts, positionals } = parse(args, {
+    yes: { type: 'boolean', short: 'y' },
+    all: { type: 'boolean' },
+    'include-ok': { type: 'boolean' },
+  });
+  const usage =
+    'uso: zeus env rotate <proyecto> [entorno]\n' +
+    '     zeus env rotate --all [--include-ok]     todos los entornos POR ROTAR a los que tienes acceso (con --include-ok, todos)';
+  if (opts.all ? positionals.length > 0 : positionals.length < 1 || positionals.length > 2) throw new UsageError(usage);
   const key = await requireKey(ctx);
-  const t = await resolveTarget(ctx, positionals[0], positionals[1]);
+
+  if (!opts.all) return rotateOne(ctx, key, await resolveTarget(ctx, positionals[0], positionals[1]), opts.yes ?? false);
+
+  const { projects } = await ctx.api.listProjects();
+  const targets: Target[] = projects.flatMap((p) =>
+    p.envs.filter((e) => e.hasGrant && (opts['include-ok'] || e.needsRotation)).map((e) => ({ projectKey: p.key, env: e.name, exists: true })),
+  );
+  const blind = projects.flatMap((p) => p.envs.filter((e) => !e.hasGrant && e.needsRotation).map((e) => `${p.key}/${e.name}`));
+  if (blind.length) ctx.log(`por rotar pero sin acceso desde este equipo (que los rote alguien con acceso): ${blind.join(', ')}`);
+  if (targets.length === 0) {
+    ctx.out(opts['include-ok'] ? 'no tienes acceso a ningún entorno' : 'ningún entorno está por rotar');
+    return 0;
+  }
+  ctx.log(`Se van a rotar ${targets.length} entorno(s): ${targets.map(label).join(', ')}`);
+  await confirmOrAbort(ctx, '¿Rotar la llave de todos esos entornos?', opts.yes ?? false);
+  let failed = 0;
+  for (const t of targets) {
+    try {
+      await rotateOne(ctx, key, t, true);
+    } catch (err) {
+      failed++;
+      ctx.log(`${label(t)}: NO se rotó — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (failed) throw new CliError(`${failed} de ${targets.length} entorno(s) no se rotaron (detalle arriba)`);
+  return 0;
+}
+
+async function rotateOne(ctx: Ctx, key: RegisteredKey, t: Target, yes: boolean): Promise<number> {
   const { remote, dek: oldDek } = await openEnv(ctx, key, t);
   let values: Map<string, string>;
+  // El historial legible con la llave vigente también se re-cifra (si no, se perdería).
+  let history: Array<{ name: string; version: number; value: string }> = [];
   try {
     const res = decryptAll(t, remote, oldDek);
     if (res.stale.length > 0) {
@@ -164,6 +229,13 @@ export async function envRotate(ctx: Ctx, args: string[]): Promise<number> {
       );
     }
     values = res.values;
+    const { revisions } = await ctx.api.history(t.projectKey, t.env, key.keyId);
+    history = revisions
+      .filter((r) => !r.current && r.ciphertext != null && r.dekVersion === remote.dekVersion)
+      .map((r) => ({ name: r.name, version: r.version, value: decryptSecret(oldDek, r.ciphertext!, secretAad(t.projectKey, t.env, r.name, r.dekVersion)) }));
+  } catch (err) {
+    if (err instanceof VaultCryptoError) throw new CliError(`${label(t)}: el historial no se pudo leer (${err.message}); no se rotó nada`);
+    throw err;
   } finally {
     zeroize(oldDek);
   }
@@ -198,7 +270,7 @@ export async function envRotate(ctx: Ctx, args: string[]): Promise<number> {
   const newVersion = remote.dekVersion + 1;
   ctx.log(`Rotar ${label(t)}: llave v${remote.dekVersion} → v${newVersion}, ${values.size} secreto(s) se vuelven a cifrar. Conservan acceso:`);
   for (const r of recipients) ctx.log(`  ${r.text}`);
-  await confirmOrAbort(ctx, '¿Rotar la llave del entorno para estos equipos?', opts.yes ?? false);
+  await confirmOrAbort(ctx, '¿Rotar la llave del entorno para estos equipos?', yes);
 
   const newDek = generateDek();
   try {
@@ -208,6 +280,12 @@ export async function envRotate(ctx: Ctx, args: string[]): Promise<number> {
       name,
       ciphertext: encryptSecret(newDek, value, secretAad(t.projectKey, t.env, name, newVersion)),
     }));
+    const revisions = history.map((h) => ({
+      name: h.name,
+      version: h.version,
+      ciphertext: encryptSecret(newDek, h.value, secretAad(t.projectKey, t.env, h.name, newVersion)),
+    }));
+    history = [];
     // Antes de mandar nada: este equipo debe poder abrir la llave nueva, o el entorno quedaría huérfano.
     const own = grants.find((g) => g.keyId === key.keyId);
     const check = own ? unwrapDek(own.wrappedDek, key.privateKey, key.publicKey, aad) : null;
@@ -216,9 +294,11 @@ export async function envRotate(ctx: Ctx, args: string[]): Promise<number> {
     if (!ok) throw new CliError('la verificación local de la llave nueva falló; no se rotó nada');
 
     const res = await ctx.api
-      .rotate(t.projectKey, t.env, { keyId: key.keyId, dekVersion: newVersion, grants, secrets })
+      .rotate(t.projectKey, t.env, { keyId: key.keyId, dekVersion: newVersion, grants, secrets, revisions })
       .catch((err: unknown) => staleToCliError(err, t));
-    ctx.out(`${label(t)}: llave rotada a v${res.dekVersion}; ${secrets.length} secreto(s) y ${grants.length} acceso(s) re-cifrados.`);
+    ctx.out(
+      `${label(t)}: llave rotada a v${res.dekVersion}; ${secrets.length} secreto(s), ${revisions.length} versión(es) anteriores y ${grants.length} acceso(s) re-cifrados.`,
+    );
     ctx.log('Rotar la bóveda NO cambia los secretos en su proveedor: quien los vio los sigue conociendo.');
     ctx.log(`Cambia en el proveedor los que importen y súbelos con \`zeus env set ${t.projectKey} ${t.env} NOMBRE\`. Los demás devs: \`zeus env pull\`.`);
     return 0;

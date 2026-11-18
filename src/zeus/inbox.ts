@@ -5,14 +5,17 @@ import { config } from '../config.js';
 import { pushToDev } from '../notify/push.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { inBackground } from '../utils/background.js';
-import type {
-  ZeusActivityEvent,
-  ZeusInbox,
-  ZeusMe,
-  ZeusMessage,
-  ZeusRequest,
-  ZeusRequestKind,
-  ZeusTokenSummary,
+import {
+  ZEUS_OPEN_STATUSES,
+  type ZeusActivityEvent,
+  type ZeusInbox,
+  type ZeusMe,
+  type ZeusMessage,
+  type ZeusMessageKind,
+  type ZeusMessageStatus,
+  type ZeusRequest,
+  type ZeusRequestKind,
+  type ZeusTokenSummary,
 } from '../types/zeus.js';
 import {
   actorActivity,
@@ -24,11 +27,14 @@ import {
   logActivity,
   needsAdmin,
   parseRef,
+  resolveProject,
   zeusTokenPrefix,
   type ZeusActor,
 } from './core.js';
 
 const MAX_MESSAGE_CHARS = 8000;
+/** Un plan de implementación es un documento, no un mensaje: cabe bastante más. */
+export const MAX_PLAN_CHARS = 60_000;
 
 interface DevLite {
   id: string;
@@ -80,6 +86,7 @@ function notify(devId: string, email: string | null, title: string, body: string
 
 interface MessageRow {
   id: string;
+  kind: ZeusMessageKind;
   from_dev_id: string | null;
   to_dev_id: string;
   subject: string | null;
@@ -89,13 +96,20 @@ interface MessageRow {
   via: ZeusMessage['via'];
   read_at: string | null;
   created_at: string;
+  status: ZeusMessageStatus | null;
+  status_note: string | null;
+  status_at: string | null;
+  parent_id: string | null;
+  project_id: string | null;
 }
 
-const MESSAGE_COLS = 'id, from_dev_id, to_dev_id, subject, body, ref, request_id, via, read_at, created_at';
+const MESSAGE_COLS =
+  'id, kind, from_dev_id, to_dev_id, subject, body, ref, request_id, via, read_at, created_at, status, status_note, status_at, parent_id, project_id';
 
-function toMessage(m: MessageRow, names: Map<string, string>): ZeusMessage {
+function toMessage(m: MessageRow, names: Map<string, string>, projects: Map<string, string> = new Map()): ZeusMessage {
   return {
     id: m.id,
+    kind: m.kind ?? 'message',
     fromDevId: m.from_dev_id,
     fromName: m.from_dev_id ? (names.get(m.from_dev_id) ?? 'alguien') : 'zeus',
     toDevId: m.to_dev_id,
@@ -107,7 +121,26 @@ function toMessage(m: MessageRow, names: Map<string, string>): ZeusMessage {
     via: m.via,
     readAt: m.read_at,
     createdAt: m.created_at,
+    status: m.status ?? null,
+    statusNote: m.status_note ?? null,
+    statusAt: m.status_at ?? null,
+    parentId: m.parent_id ?? null,
+    projectKey: m.project_id ? (projects.get(m.project_id) ?? null) : null,
   };
+}
+
+async function projectKeys(ids: Array<string | null>): Promise<Map<string, string>> {
+  const uniq = [...new Set(ids.filter((x): x is string => !!x))];
+  if (!uniq.length) return new Map();
+  const { data, error } = await db().from('project').select('id, key').in('id', uniq);
+  if (error) throw error;
+  return new Map(((data ?? []) as Array<{ id: string; key: string }>).map((p) => [p.id, p.key]));
+}
+
+/** Mensajes listos para devolver: nombres de personas y claves de proyecto resueltos. */
+async function hydrate(rows: MessageRow[]): Promise<ZeusMessage[]> {
+  const [names, projects] = await Promise.all([devNames(rows.flatMap((m) => [m.from_dev_id, m.to_dev_id])), projectKeys(rows.map((m) => m.project_id))]);
+  return rows.map((m) => toMessage(m, names, projects));
 }
 
 async function devNames(ids: Array<string | null>): Promise<Map<string, string>> {
@@ -123,29 +156,229 @@ export interface SendMessageInput {
   subject?: string | null;
   body: string;
   ref?: string | null;
+  /** 'task' = encargo: queda pendiente en la bandeja de quien lo recibe hasta que lo cierre. */
+  kind?: 'message' | 'task';
+  projectKey?: string | null;
 }
+
+const viaOf = (actor: ZeusActor): ZeusMessage['via'] => (actor.via === 'runner' ? 'mcp' : actor.via);
 
 export async function sendMessage(input: SendMessageInput, actor: ZeusActor): Promise<ZeusMessage> {
   const body = input.body?.trim();
   if (!body) throw new ValidationError('el mensaje está vacío');
   if (body.length > MAX_MESSAGE_CHARS) throw new ValidationError(`el mensaje pasa de ${MAX_MESSAGE_CHARS} caracteres`);
   if (input.ref && !parseRef(input.ref)) throw new ValidationError('ref inválida');
+  const kind = input.kind ?? 'message';
+  if (kind !== 'message' && kind !== 'task') throw new ValidationError('kind debe ser message o task');
   const to = await findDev(input.to);
+  const project = input.projectKey ? await resolveProject(input.projectKey) : null;
+  const subject = input.subject?.trim().slice(0, 160) || null;
+  if (kind === 'task' && !subject) throw new ValidationError('un encargo necesita título (subject): es lo que se ve en la lista de pendientes');
   const { data, error } = await db()
     .from('zeus_message')
-    .insert({ from_dev_id: actor.devId, to_dev_id: to.id, subject: input.subject?.trim().slice(0, 160) || null, body, ref: input.ref ?? null, via: actor.via === 'runner' ? 'mcp' : actor.via })
+    .insert({
+      kind,
+      status: kind === 'task' ? 'pending' : null,
+      from_dev_id: actor.devId,
+      to_dev_id: to.id,
+      subject,
+      body,
+      ref: input.ref ?? null,
+      project_id: project?.id ?? null,
+      via: viaOf(actor),
+    })
     .select(MESSAGE_COLS)
     .single();
   if (error) throw error;
-  logActivity(actorActivity(actor), 'message', `dev:${to.id}`, { to: to.name });
-  if (to.id !== actor.devId) notify(to.id, to.email, `${actor.name} te escribió`, input.subject?.trim() || body, 'bandeja');
-  return toMessage(data as MessageRow, new Map([[actor.devId, actor.name], [to.id, to.name]]));
+  logActivity(actorActivity(actor), kind === 'task' ? 'task' : 'message', `dev:${to.id}`, { to: to.name });
+  if (to.id !== actor.devId) {
+    notify(to.id, to.email, kind === 'task' ? `${actor.name} te encargó algo` : `${actor.name} te escribió`, subject || body, 'bandeja');
+  }
+  return toMessage(data as MessageRow, new Map([[actor.devId, actor.name], [to.id, to.name]]), new Map(project ? [[project.id, project.key]] : []));
 }
 
 /** Aviso del sistema (resolución de una solicitud, etc.). No falla la operación que lo dispara. */
-async function systemMessage(toDevId: string, subject: string, body: string, requestId: string | null): Promise<void> {
-  const { error } = await db().from('zeus_message').insert({ from_dev_id: null, to_dev_id: toDevId, subject, body, request_id: requestId, via: 'system' });
+async function systemMessage(toDevId: string, subject: string, body: string, requestId: string | null, extra: { parentId?: string; fromDevId?: string } = {}): Promise<void> {
+  const { error } = await db()
+    .from('zeus_message')
+    .insert({ from_dev_id: extra.fromDevId ?? null, to_dev_id: toDevId, subject, body, request_id: requestId, parent_id: extra.parentId ?? null, via: 'system' });
   if (error) throw error;
+}
+
+async function loadMessage(id: string): Promise<MessageRow> {
+  if (!isUuid(id)) throw new ValidationError('id de mensaje inválido');
+  const { data, error } = await db().from('zeus_message').select(MESSAGE_COLS).eq('id', id).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new NotFoundError('ese mensaje no existe');
+  return data as MessageRow;
+}
+
+/** Un mensaje completo (p. ej. el texto entero de un plan). Solo quien lo mandó o lo recibió. */
+export async function getMessage(id: string, actor: ZeusActor): Promise<ZeusMessage & { history: ZeusMessage[] }> {
+  const row = await loadMessage(id);
+  if (row.to_dev_id !== actor.devId && row.from_dev_id !== actor.devId) throw new AppError('FORBIDDEN', 'ese mensaje no es tuyo', 403);
+  // Las versiones anteriores de un plan (para ver qué cambió entre una y otra).
+  const chain: MessageRow[] = [];
+  let parent = row.kind === 'plan' ? row.parent_id : null;
+  while (parent && chain.length < 10) {
+    const p = await loadMessage(parent).catch(() => null);
+    if (!p || p.kind !== 'plan') break;
+    chain.push(p);
+    parent = p.parent_id;
+  }
+  const [main, ...history] = await hydrate([row, ...chain]);
+  return { ...main!, history };
+}
+
+// ---------------------------------------------------------------- planes compartidos
+
+export interface SharePlanInput {
+  to: string;
+  title: string;
+  plan: string;
+  projectKey?: string | null;
+  ref?: string | null;
+  /** id del plan que este reemplaza (la versión ajustada). La anterior queda "superseded". */
+  revises?: string | null;
+}
+
+export async function sharePlan(input: SharePlanInput, actor: ZeusActor): Promise<ZeusMessage> {
+  const title = input.title?.trim();
+  const plan = input.plan?.trim();
+  if (!title) throw new ValidationError('el plan necesita título');
+  if (!plan) throw new ValidationError('el plan está vacío');
+  if (plan.length > MAX_PLAN_CHARS) throw new ValidationError(`el plan pasa de ${MAX_PLAN_CHARS} caracteres: resúmelo o guárdalo como documento en zeus (zeus_write) y manda la ref`);
+  if (input.ref && !parseRef(input.ref)) throw new ValidationError('ref inválida');
+  const to = await findDev(input.to);
+  const project = input.projectKey ? await resolveProject(input.projectKey) : null;
+
+  let previous: MessageRow | null = null;
+  if (input.revises) {
+    previous = await loadMessage(input.revises);
+    if (previous.kind !== 'plan') throw new ValidationError('revises debe ser el id de un plan');
+    if (previous.from_dev_id !== actor.devId && previous.to_dev_id !== actor.devId) throw new AppError('FORBIDDEN', 'ese plan no es tuyo', 403);
+  }
+  // La versión ajustada hereda el proyecto de la anterior si no se dice otro.
+  const projectId = project?.id ?? previous?.project_id ?? null;
+
+  const { data, error } = await db()
+    .from('zeus_message')
+    .insert({
+      kind: 'plan',
+      status: 'pending',
+      from_dev_id: actor.devId,
+      to_dev_id: to.id,
+      subject: title.slice(0, 160),
+      body: plan,
+      ref: input.ref ?? null,
+      parent_id: previous?.id ?? null,
+      project_id: projectId,
+      via: viaOf(actor),
+    })
+    .select(MESSAGE_COLS)
+    .single();
+  if (error) throw error;
+  if (previous && previous.status && (ZEUS_OPEN_STATUSES as readonly string[]).includes(previous.status)) {
+    const now = new Date().toISOString();
+    const { error: supErr } = await db()
+      .from('zeus_message')
+      .update({ status: 'superseded', status_at: now, status_by: actor.devId, status_note: 'hay una versión nueva del plan' })
+      .eq('id', previous.id);
+    if (supErr) throw supErr;
+  }
+  logActivity(actorActivity(actor), 'plan.share', `dev:${to.id}`, { to: to.name, title });
+  if (to.id !== actor.devId) {
+    notify(to.id, to.email, previous ? `${actor.name} ajustó un plan` : `${actor.name} te compartió un plan`, title, 'bandeja');
+  }
+  return (await hydrate([data as MessageRow]))[0]!;
+}
+
+// ---------------------------------------------------------------- estado de encargos y planes
+
+/** Qué puede hacer cada lado. Quien recibe decide; quien manda solo puede retirarlo. */
+const RECIPIENT_STATUSES: readonly ZeusMessageStatus[] = ['accepted', 'changes_requested', 'declined', 'done'];
+const SENDER_STATUSES: readonly ZeusMessageStatus[] = ['cancelled'];
+const CLOSED_STATUSES: readonly ZeusMessageStatus[] = ['declined', 'done', 'cancelled', 'superseded'];
+
+const STATUS_VERB: Record<ZeusMessageStatus, string> = {
+  pending: 'dejó pendiente',
+  accepted: 'aceptó',
+  changes_requested: 'pidió ajustes a',
+  declined: 'rechazó',
+  done: 'terminó',
+  cancelled: 'retiró',
+  superseded: 'reemplazó',
+};
+
+export async function setMessageStatus(id: string, status: ZeusMessageStatus, note: string | null, actor: ZeusActor): Promise<ZeusMessage> {
+  const row = await loadMessage(id);
+  if (row.kind !== 'task' && row.kind !== 'plan') throw new ValidationError('solo los encargos y planes tienen estado');
+  const isRecipient = row.to_dev_id === actor.devId;
+  const isSender = row.from_dev_id === actor.devId;
+  const allowed = [...(isRecipient ? RECIPIENT_STATUSES : []), ...(isSender ? SENDER_STATUSES : [])];
+  if (!allowed.includes(status)) {
+    if (!isRecipient && !isSender) throw new AppError('FORBIDDEN', 'ese encargo no es tuyo', 403);
+    throw new ValidationError(`no puedes marcarlo como "${status}" (puedes: ${allowed.join(', ') || 'nada'})`);
+  }
+  if (row.status && CLOSED_STATUSES.includes(row.status)) throw new AppError('ZEUS_MESSAGE_CLOSED', `ya está cerrado (${row.status})`, 409);
+  if (status === 'changes_requested' && !note?.trim()) throw new ValidationError('di qué ajustes necesita (note)');
+  const now = new Date().toISOString();
+  const { data, error } = await db()
+    .from('zeus_message')
+    .update({ status, status_note: note?.trim().slice(0, MAX_MESSAGE_CHARS) || null, status_at: now, status_by: actor.devId, read_at: row.read_at ?? (isRecipient ? now : null) })
+    .eq('id', id)
+    .select(MESSAGE_COLS)
+    .single();
+  if (error) throw error;
+
+  // El otro lado se entera en su bandeja (y su Claude lo ve en zeus_inbox).
+  const otherId = isRecipient ? row.from_dev_id : row.to_dev_id;
+  if (otherId && otherId !== actor.devId) {
+    const what = row.kind === 'plan' ? 'tu plan' : 'tu encargo';
+    const subject = `${actor.name} ${STATUS_VERB[status]} ${isRecipient ? what : 'un encargo'}`;
+    const body = `"${row.subject ?? '(sin título)'}"${note?.trim() ? `\n\n${note.trim()}` : ''}${
+      status === 'changes_requested' ? `\n\nPara mandar la versión ajustada: zeus_share_plan con revises="${row.id}".` : ''
+    }`;
+    await systemMessage(otherId, subject, body, null, { parentId: row.id, fromDevId: actor.devId }).catch(() => undefined);
+    const { data: other } = await db().from('dev').select('email').eq('id', otherId).maybeSingle();
+    notify(otherId, (other as { email: string | null } | null)?.email ?? null, subject, row.subject ?? '', 'bandeja');
+  }
+  logActivity(actorActivity(actor), `${row.kind}.${status}`, null, { title: row.subject });
+  return (await hydrate([data as MessageRow]))[0]!;
+}
+
+// ---------------------------------------------------------------- avisos de la bóveda
+
+export interface EnvChangeNotice {
+  actor: ZeusActor;
+  devIds: string[];
+  projectId: string;
+  projectKey: string;
+  env: string;
+  added: string[];
+  changed: string[];
+  deleted: string[];
+  rotated?: boolean;
+}
+
+/** Un aviso por persona con acceso: qué NOMBRES cambiaron y cómo ponerse al día. Nunca valores. */
+export async function notifyEnvChange(n: EnvChangeNotice): Promise<void> {
+  const label = `${n.projectKey}/${n.env}`;
+  const lines: string[] = [];
+  if (n.rotated) lines.push(`Se rotó la llave del entorno. Los valores no cambiaron; vuelve a bajar para seguir pudiendo subir cambios.`);
+  if (n.added.length) lines.push(`Nuevas: ${n.added.join(', ')}`);
+  if (n.changed.length) lines.push(`Cambiaron: ${n.changed.join(', ')}`);
+  if (n.deleted.length) lines.push(`Se quitaron: ${n.deleted.join(', ')}`);
+  if (!lines.length) return;
+  lines.push('', `Ponte al día: zeus env pull ${n.projectKey} ${n.env}   (o \`zeus env status\` para ver qué te falta)`);
+  const total = n.added.length + n.changed.length + n.deleted.length;
+  const subject = n.rotated ? `${n.actor.name} rotó la llave de ${label}` : `${n.actor.name} cambió ${total} variable${total === 1 ? '' : 's'} de ${label}`;
+  const { error } = await db()
+    .from('zeus_message')
+    .insert(n.devIds.map((id) => ({ kind: 'env_change', from_dev_id: n.actor.devId, to_dev_id: id, subject, body: lines.join('\n'), project_id: n.projectId, via: 'system' })));
+  if (error) throw error;
+  const { data } = await db().from('dev').select('id, email').in('id', n.devIds);
+  for (const d of (data ?? []) as Array<{ id: string; email: string | null }>) notify(d.id, d.email, subject, lines[0] ?? '', 'bandeja');
 }
 
 export async function markRead(ids: string[] | 'all', actor: ZeusActor): Promise<number> {
@@ -377,21 +610,26 @@ export async function getInbox(actor: ZeusActor, opts: { unreadOnly?: boolean; l
   const limit = Math.min(opts.limit ?? 50, 200);
   let received = supabase.from('zeus_message').select(MESSAGE_COLS).eq('to_dev_id', actor.devId);
   if (opts.unreadOnly) received = received.is('read_at', null);
-  const [inbox, sent, unread, toResolve, mine] = await Promise.all([
+  const open = [...ZEUS_OPEN_STATUSES];
+  const [inbox, sent, openForMe, waiting, unread, toResolve, mine] = await Promise.all([
     received.order('created_at', { ascending: false }).limit(limit),
     supabase.from('zeus_message').select(MESSAGE_COLS).eq('from_dev_id', actor.devId).order('created_at', { ascending: false }).limit(20),
+    supabase.from('zeus_message').select(MESSAGE_COLS).eq('to_dev_id', actor.devId).in('status', open).order('created_at', { ascending: false }).limit(100),
+    supabase.from('zeus_message').select(MESSAGE_COLS).eq('from_dev_id', actor.devId).in('status', open).order('created_at', { ascending: false }).limit(100),
     supabase.from('zeus_message').select('id', { count: 'exact', head: true }).eq('to_dev_id', actor.devId).is('read_at', null),
     listRequests('to_me', actor),
     listRequests('mine', actor, 30),
   ]);
-  if (inbox.error) throw inbox.error;
-  if (sent.error) throw sent.error;
-  if (unread.error) throw unread.error;
-  const rows = [...((inbox.data ?? []) as MessageRow[]), ...((sent.data ?? []) as MessageRow[])];
-  const names = await devNames(rows.flatMap((m) => [m.from_dev_id, m.to_dev_id]));
+  for (const r of [inbox, sent, openForMe, waiting, unread]) if (r.error) throw r.error;
+  const lists = [inbox, sent, openForMe, waiting].map((r) => (r.data ?? []) as MessageRow[]);
+  const all = await hydrate(lists.flat());
+  const byId = new Map(all.map((m) => [m.id, m]));
+  const [messages, sentMsgs, openMsgs, waitingMsgs] = lists.map((rows) => rows.map((r) => byId.get(r.id)!));
   return {
-    messages: ((inbox.data ?? []) as MessageRow[]).map((m) => toMessage(m, names)),
-    sent: ((sent.data ?? []) as MessageRow[]).map((m) => toMessage(m, names)),
+    messages: messages!,
+    sent: sentMsgs!,
+    open: openMsgs!,
+    waiting: waitingMsgs!,
     toResolve,
     mine,
     unread: unread.count ?? 0,
@@ -409,12 +647,14 @@ export function publicOrigin(req: { url: string; header: (k: string) => string |
 
 export async function getMe(actor: ZeusActor, origin: string): Promise<ZeusMe> {
   const supabase = db();
-  const [unread, pending, noAdmin] = await Promise.all([
+  const [unread, openForMe, pending, noAdmin] = await Promise.all([
     supabase.from('zeus_message').select('id', { count: 'exact', head: true }).eq('to_dev_id', actor.devId).is('read_at', null),
+    supabase.from('zeus_message').select('id', { count: 'exact', head: true }).eq('to_dev_id', actor.devId).in('status', [...ZEUS_OPEN_STATUSES]),
     listRequests('to_me', actor),
     needsAdmin(),
   ]);
   if (unread.error) throw unread.error;
+  if (openForMe.error) throw openForMe.error;
   return {
     devId: actor.devId,
     name: actor.name,
@@ -422,6 +662,7 @@ export async function getMe(actor: ZeusActor, origin: string): Promise<ZeusMe> {
     needsAdmin: noAdmin,
     unreadMessages: unread.count ?? 0,
     pendingForMe: pending.length,
+    openForMe: openForMe.count ?? 0,
     mcpUrl: `${origin}/mcp`,
     apiUrl: origin,
   };

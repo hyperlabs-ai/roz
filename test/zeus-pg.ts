@@ -1,5 +1,5 @@
 // Postgres REAL en memoria (PGlite) detrás de un doble del cliente de Supabase, para las pruebas de
-// integración de zeus. A diferencia de un doble en memoria, aquí corre la migración 0040 de verdad:
+// integración de zeus. A diferencia de un doble en memoria, aquí corren las migraciones 0040 y 0041 de verdad:
 // los índices únicos, los checks, la búsqueda de texto y la rotación atómica son los del producto.
 //
 // El doble traduce a SQL el subconjunto del query builder que usa src/zeus/* (select con embebidos,
@@ -44,7 +44,9 @@ const PRIOR_SCHEMA = `
   create table roz.agent_plan (id uuid primary key default gen_random_uuid());
 `;
 
-const MIGRATION = readFileSync(fileURLToPath(new URL('../migrations/0040_zeus.sql', import.meta.url)), 'utf8');
+const MIGRATION = ['0040_zeus.sql', '0041_zeus_flow.sql']
+  .map((f) => readFileSync(fileURLToPath(new URL(`../migrations/${f}`, import.meta.url)), 'utf8'))
+  .join('\n');
 
 /** Deja las filas como las entrega PostgREST: fechas en ISO y bigint como número. */
 function normalize(v: unknown): unknown {

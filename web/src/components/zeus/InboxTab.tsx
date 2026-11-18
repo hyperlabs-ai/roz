@@ -4,7 +4,7 @@
 // lo que tú pediste o enviaste. `routedBecause` dice por qué cayó con quien cayó: se muestra siempre.
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, CheckCheck, CornerDownRight, Loader2, Mail, Plus, Reply, Search, X } from 'lucide-react';
+import { Check, CheckCheck, CornerDownRight, FileText, KeySquare, Loader2, Mail, PencilLine, Plus, Reply, Search, X } from 'lucide-react';
 import { ErrorCard, RefreshButton } from '@/components/bits';
 import { PersonAvatar, RozBotAvatar } from '@/components/avatars';
 import { fold } from '@/components/projects/project-ui';
@@ -21,9 +21,10 @@ import { usePoll } from '@/lib/usePoll';
 import { cn } from '@/lib/utils';
 import { zeusApi, type ZeusInbox, type ZeusMe, type ZeusMessage, type ZeusOrgMember, type ZeusRequest } from '@/lib/zeus';
 import { INBOX_KEY, useZeusOrg } from './hooks';
-import { ComposeDialog, NewRequestDialog, ResolveDialog, refreshInbox } from './InboxDialogs';
+import { CmdLine } from './zeus-steps';
+import { ComposeDialog, NewRequestDialog, PlanDialog, ResolveDialog, StatusDialog, refreshInbox, type StatusAction } from './InboxDialogs';
 import { RouteDiagram, routeStep, type RouteStep } from './RouteDiagram';
-import { Figure, REQUEST_KIND_LABEL, REQUEST_STATUS, RailTitle, TONES, ago, dateTime, viaLabel, type Tone } from './zeus-ui';
+import { Figure, MESSAGE_KIND_LABEL, MESSAGE_STATUS, REQUEST_KIND_LABEL, REQUEST_STATUS, RailTitle, TONES, ago, dateTime, viaLabel, type Tone } from './zeus-ui';
 import './inbox.css';
 
 type People = Map<string, ZeusOrgMember>;
@@ -247,6 +248,7 @@ function MessageCard({
   onReply?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  if (message.kind === 'env_change') return <EnvChangeCard message={message} unread={unread} people={people} onOpen={onOpen} onRead={onRead} />;
   const system = message.via === 'system' || !message.fromDevId;
   const long = message.body.length > 150 || message.body.includes('\n');
   return (
@@ -294,6 +296,138 @@ function MessageCard({
   );
 }
 
+/**
+ * Aviso de la bóveda: alguien cambió variables de un entorno al que tienes acceso. El cuerpo trae
+ * solo NOMBRES por grupo ("Nuevas: …", "Cambiaron: …", "Se quitaron: …") y el comando para ponerse al día.
+ */
+export function parseEnvChange(body: string): { groups: Array<{ label: string; names: string[] }>; rotated: boolean; pull: string | null } {
+  const groups: Array<{ label: string; names: string[] }> = [];
+  for (const [label, prefix] of [['Nuevas', 'Nuevas:'], ['Cambiaron', 'Cambiaron:'], ['Se quitaron', 'Se quitaron:']] as const) {
+    const line = body.split('\n').find((l) => l.startsWith(prefix));
+    if (line) groups.push({ label, names: line.slice(prefix.length).split(',').map((n) => n.trim()).filter(Boolean) });
+  }
+  const pull = /zeus env pull \S+ \S+/.exec(body)?.[0] ?? null;
+  return { groups, rotated: /rotó la llave/i.test(body), pull };
+}
+
+function EnvChangeCard({
+  message,
+  unread,
+  people,
+  onOpen,
+  onRead,
+}: {
+  message: ZeusMessage;
+  unread: boolean;
+  people: People;
+  onOpen: () => void;
+  onRead?: () => void;
+}) {
+  const { groups, rotated, pull } = parseEnvChange(message.body);
+  return (
+    <li
+      className={cn('zeus-lane-card grid min-w-0 gap-2 rounded-md border p-3 transition-colors hover:border-foreground/25', unread ? 'border-orange/40 bg-orange-soft/40' : 'bg-card')}
+      onPointerEnter={() => unread && onOpen()}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <Face devId={message.fromDevId} name={message.fromName} people={people} />
+        <Badge variant="info"><KeySquare className="size-3" /> {MESSAGE_KIND_LABEL.env_change}</Badge>
+        {message.projectKey && <span className="truncate text-[11px] text-faint">{message.projectKey}</span>}
+        {unread && <span className="size-2 shrink-0 rounded-full bg-orange" aria-label="Sin leer" />}
+        <span className="ml-auto shrink-0 text-[11px] tabular-nums text-faint" title={dateTime(message.createdAt)}>{ago(message.createdAt)}</span>
+      </div>
+      <p className={cn('break-words text-[13.5px] leading-snug', unread ? 'font-semibold' : 'font-medium')}>{message.subject}</p>
+      {rotated && <p className="text-[12px] leading-relaxed text-muted-foreground">Los valores no cambiaron. Vuelve a bajar para poder seguir subiendo cambios.</p>}
+      {groups.length > 0 && (
+        <dl className="grid gap-1 text-[12px]">
+          {groups.map((g) => (
+            <div key={g.label} className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-1">
+              <dt className="shrink-0 text-muted-foreground">{g.label}</dt>
+              {g.names.map((n) => (
+                <dd key={n} className="rounded bg-panel px-1.5 py-0.5 font-mono text-[11px] text-foreground">{n}</dd>
+              ))}
+            </div>
+          ))}
+        </dl>
+      )}
+      {pull && <CmdLine command={pull} />}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-faint">Solo nombres: los valores nunca pasan por la bandeja.</span>
+        {unread && onRead && (
+          <Button variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-xs text-muted-foreground" onClick={onRead}><Check /> Leído</Button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/** Un encargo o plan: lo que te mandaron (con qué hacer) o lo que mandaste (en qué va). */
+function WorkCard({
+  message,
+  sent,
+  people,
+  busy,
+  onAct,
+  onOpenPlan,
+}: {
+  message: ZeusMessage;
+  sent?: boolean;
+  people: People;
+  busy: boolean;
+  onAct: (status: StatusAction) => void;
+  onOpenPlan: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const st = message.status ? MESSAGE_STATUS[message.status] : null;
+  const plan = message.kind === 'plan';
+  return (
+    <li className={cn('zeus-lane-card grid min-w-0 gap-2 rounded-md border p-3 transition-colors hover:border-foreground/25', message.status === 'pending' && !sent ? 'bg-card' : 'bg-sidebar')}>
+      <div className="flex items-center gap-1.5">
+        <Badge variant="neutral">{MESSAGE_KIND_LABEL[message.kind]}</Badge>
+        {st && <Badge variant={st.variant} dot={message.status === 'pending'}>{st.label}</Badge>}
+        {message.projectKey && <span className="truncate text-[11px] text-faint">{message.projectKey}</span>}
+        <span className="ml-auto shrink-0 text-[11px] tabular-nums text-faint" title={dateTime(message.createdAt)}>{ago(message.createdAt)}</span>
+      </div>
+      <p className="break-words text-[13.5px] font-semibold leading-snug">{message.subject ?? '(sin título)'}</p>
+      <button
+        type="button"
+        className={cn('whitespace-pre-wrap break-words rounded-sm text-left text-[12.5px] leading-relaxed text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', !open && 'line-clamp-3')}
+        onClick={() => (plan ? onOpenPlan() : setOpen((v) => !v))}
+      >
+        {message.body}
+      </button>
+      <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+        {sent ? <Face devId={message.toDevId} name={message.toName} people={people} /> : <Face devId={message.fromDevId} name={message.fromName} people={people} />}
+        <span className="truncate">
+          {sent ? 'Para ' : 'De '}
+          <span className="font-medium text-foreground">{sent ? message.toName : message.fromName}</span>
+          {message.via !== 'web' && message.via !== 'system' && <> · por {viaLabel(message.via)}</>}
+        </span>
+      </div>
+      {message.statusNote && (
+        <p className="flex items-start gap-2 rounded-md bg-panel px-2.5 py-1.5 text-xs leading-relaxed text-muted-foreground">
+          <CornerDownRight className="mt-0.5 size-3 shrink-0 text-faint" />
+          <span className="min-w-0 whitespace-pre-wrap break-words">{message.statusNote}</span>
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+        {plan && <Button size="sm" variant="secondary" onClick={onOpenPlan}><FileText /> Ver plan</Button>}
+        {!sent && message.status === 'pending' && (
+          <>
+            <Button size="sm" disabled={busy} onClick={() => onAct('accepted')}><Check /> Aceptar</Button>
+            {plan && <Button size="sm" variant="secondary" disabled={busy} onClick={() => onAct('changes_requested')}><PencilLine /> Ajustes</Button>}
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => onAct('declined')}><X /> Rechazar</Button>
+          </>
+        )}
+        {!sent && message.status === 'accepted' && <Button size="sm" disabled={busy} onClick={() => onAct('done')}><CheckCheck /> Hecho</Button>}
+        {sent && message.status && ['pending', 'accepted', 'changes_requested'].includes(message.status) && (
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => onAct('cancelled')}>Retirar</Button>
+        )}
+      </div>
+    </li>
+  );
+}
+
 // ---------------------------------------------------------------- pestaña
 
 const requestText = (r: ZeusRequest) => fold(`${r.title} ${r.detail} ${r.requesterName} ${r.approverName ?? ''} ${r.resourceTitle ?? ''} ${REQUEST_KIND_LABEL[r.kind] ?? ''}`);
@@ -311,6 +445,8 @@ export function InboxTab({ me }: { me: ZeusMe | null }) {
   const [compose, setCompose] = useState<{ replyTo: ZeusMessage | null } | null>(null);
   const [requesting, setRequesting] = useState(false);
   const [resolving, setResolving] = useState<{ request: ZeusRequest; decision: 'approved' | 'denied' } | null>(null);
+  const [statusTarget, setStatusTarget] = useState<{ message: ZeusMessage; status: StatusAction } | null>(null);
+  const [planId, setPlanId] = useState<string | null>(null);
   // Leídos en esta sesión: el punto se apaga al instante, sin esperar a que la bandeja revalide.
   const [readLocal, setReadLocal] = useState<Set<string>>(() => new Set());
 
@@ -318,13 +454,18 @@ export function InboxTab({ me }: { me: ZeusMe | null }) {
   const people = useMemo<People>(() => new Map((org.data?.members ?? []).map((m) => [m.devId, m])), [org.data]);
   const isUnread = (m: ZeusMessage) => !m.readAt && !readLocal.has(m.id);
 
-  const messages = data?.messages ?? [];
-  const sent = data?.sent ?? [];
+  // Los encargos y planes abiertos viven en su carril; no se repiten como mensajes.
+  const openWork = data?.open ?? [];
+  const waitingWork = data?.waiting ?? [];
+  const workIds = useMemo(() => new Set([...openWork, ...waitingWork].map((m) => m.id)), [openWork, waitingWork]);
+  const messages = (data?.messages ?? []).filter((m) => !workIds.has(m.id));
+  const sent = (data?.sent ?? []).filter((m) => !workIds.has(m.id));
   const toResolve = data?.toResolve ?? [];
   const mine = data?.mine ?? [];
   const unread = messages.filter(isUnread).length;
-  const pendingToResolve = toResolve.filter((r) => r.status === 'pending').length;
-  const pendingMine = mine.filter((r) => r.status === 'pending').length;
+  const pendingToResolve = toResolve.filter((r) => r.status === 'pending').length + openWork.length;
+  // Lo que espero de otros: mis solicitudes abiertas y los encargos/planes que mandé y nadie ha cerrado.
+  const pendingMine = mine.filter((r) => r.status === 'pending').length + waitingWork.length;
 
   const markRead = (ids: string[] | 'all') => {
     const targets = ids === 'all' ? messages.filter(isUnread).map((m) => m.id) : ids;
@@ -359,16 +500,19 @@ export function InboxTab({ me }: { me: ZeusMe | null }) {
 
   const needle = fold(q.trim());
   const lanes = useMemo(() => {
-    const d = data ?? { messages: [], sent: [], toResolve: [], mine: [] };
+    const d = data ?? { messages: [], sent: [], toResolve: [], mine: [], open: [], waiting: [] };
     const req = (r: ZeusRequest) => !needle || requestText(r).includes(needle);
     const msg = (m: ZeusMessage) => !needle || messageText(m).includes(needle);
+    const notWork = (m: ZeusMessage) => !workIds.has(m.id);
     return {
       toResolve: d.toResolve.filter(req).sort(pendingFirst),
-      messages: d.messages.filter(msg).sort(newest),
+      messages: d.messages.filter(notWork).filter(msg).sort(newest),
       mine: d.mine.filter(req).sort(pendingFirst),
-      sent: d.sent.filter(msg).sort(newest),
+      sent: d.sent.filter(notWork).filter(msg).sort(newest),
+      open: (d.open ?? []).filter(msg).sort(newest),
+      waiting: (d.waiting ?? []).filter(msg).sort(newest),
     };
-  }, [data, needle]);
+  }, [data, needle, workIds]);
   // Sin leer primero. Va fuera del memo: "leído" cambia al instante con `readLocal`.
   const inboxList = [...lanes.messages].sort((a, b) => Number(isUnread(b)) - Number(isUnread(a)));
   const decide = lanes.toResolve.filter((r) => r.status === 'pending');
@@ -423,16 +567,36 @@ export function InboxTab({ me }: { me: ZeusMe | null }) {
       {inbox.error && <ErrorCard className="shrink-0" message={failed ? 'No se pudo cargar la bandeja.' : inbox.error} />}
 
       <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-3 lg:grid-rows-[minmax(0,1fr)]">
-        <Lane tone={TONES.orange} title="Esperan tu decisión" hint="Solicitudes que te toca aprobar o denegar" count={loading ? null : pendingToResolve} unit="pendientes">
+        <Lane tone={TONES.orange} title="Esperan tu decisión" hint="Encargos, planes y solicitudes que te tocan" count={loading ? null : pendingToResolve} unit="pendientes">
           {loading ? (
             <LaneSkeleton />
-          ) : toResolve.length === 0 ? (
-            <Ghosts shape="request">Aquí caen las solicitudes de acceso, permiso, revisión o cambio que te toca decidir, con el motivo por el que te llegaron.</Ghosts>
-          ) : lanes.toResolve.length === 0 ? (
+          ) : toResolve.length === 0 && openWork.length === 0 ? (
+            <Ghosts shape="request">
+              Aquí caen los encargos y planes que te manda el equipo (o su Claude) y las solicitudes de acceso que te toca decidir, con el motivo por el que te llegaron.
+            </Ghosts>
+          ) : lanes.toResolve.length === 0 && lanes.open.length === 0 ? (
             <NoMatch />
           ) : (
             <>
-              {decide.length === 0 && <p className="px-1.5 pb-1 pt-1.5 text-[12.5px] text-muted-foreground">Nada pendiente: ya resolviste todo lo que te tocaba.</p>}
+              {lanes.open.length > 0 && (
+                <>
+                  <GroupLabel count={lanes.open.length}>Encargos y planes</GroupLabel>
+                  <ul className="grid gap-2">
+                    {lanes.open.map((m) => (
+                      <WorkCard
+                        key={m.id}
+                        message={m}
+                        people={people}
+                        busy={act.busy(`status:${m.id}`)}
+                        onAct={(status) => setStatusTarget({ message: m, status })}
+                        onOpenPlan={() => setPlanId(m.id)}
+                      />
+                    ))}
+                  </ul>
+                  {lanes.toResolve.length > 0 && <GroupLabel count={decide.length}>Solicitudes</GroupLabel>}
+                </>
+              )}
+              {decide.length === 0 && lanes.open.length === 0 && <p className="px-1.5 pb-1 pt-1.5 text-[12.5px] text-muted-foreground">Nada pendiente: ya resolviste todo lo que te tocaba.</p>}
               <ul className="grid gap-2">
                 {decide.map((r) => (
                   <RequestCard key={r.id} request={r} people={people} busy={act.busy(`resolve:${r.id}`)} onFocus={setFocus} onResolve={(decision) => setResolving({ request: r, decision })} />
@@ -453,7 +617,7 @@ export function InboxTab({ me }: { me: ZeusMe | null }) {
         <Lane
           tone={TONES.blue}
           title="Mensajes"
-          hint="Lo que te escribe el equipo y sus agentes"
+          hint="Lo que te escribe el equipo, sus agentes y los avisos de variables"
           count={loading ? null : unread}
           unit="sin leer"
           action={
@@ -485,15 +649,33 @@ export function InboxTab({ me }: { me: ZeusMe | null }) {
           )}
         </Lane>
 
-        <Lane tone={TONES.purple} title="Lo que pediste y enviaste" hint="Tus solicitudes, a quién le tocaron, y tus mensajes" count={loading ? null : pendingMine} unit="abiertas">
+        <Lane tone={TONES.purple} title="Lo que pediste y enviaste" hint="Tus encargos, planes, solicitudes y mensajes" count={loading ? null : pendingMine} unit="abiertas">
           {loading ? (
             <LaneSkeleton />
-          ) : mine.length === 0 && sent.length === 0 ? (
-            <Ghosts shape="request">Aquí sigues lo que pediste: a quién se lo mandó zeus, por qué y en qué quedó. También los mensajes que enviaste.</Ghosts>
-          ) : lanes.mine.length === 0 && lanes.sent.length === 0 ? (
+          ) : mine.length === 0 && sent.length === 0 && waitingWork.length === 0 ? (
+            <Ghosts shape="request">Aquí sigues lo que pediste y encargaste: a quién le llegó, por qué y en qué quedó. También los mensajes que enviaste.</Ghosts>
+          ) : lanes.mine.length === 0 && lanes.sent.length === 0 && lanes.waiting.length === 0 ? (
             <NoMatch />
           ) : (
             <>
+              {lanes.waiting.length > 0 && (
+                <>
+                  <GroupLabel count={lanes.waiting.length}>Encargos y planes que mandaste</GroupLabel>
+                  <ul className="grid gap-2">
+                    {lanes.waiting.map((m) => (
+                      <WorkCard
+                        key={m.id}
+                        message={m}
+                        sent
+                        people={people}
+                        busy={act.busy(`status:${m.id}`)}
+                        onAct={(status) => setStatusTarget({ message: m, status })}
+                        onOpenPlan={() => setPlanId(m.id)}
+                      />
+                    ))}
+                  </ul>
+                </>
+              )}
               {lanes.mine.length > 0 && (
                 <>
                   <GroupLabel count={lanes.mine.length}>Tus solicitudes</GroupLabel>
@@ -532,6 +714,8 @@ export function InboxTab({ me }: { me: ZeusMe | null }) {
         onCreated={(r) => toast.success(r.approverName ? `Solicitud enviada a ${r.approverName}` : 'Solicitud enviada', { description: r.routedBecause ?? undefined })}
       />
       <ResolveDialog target={resolving} onClose={() => setResolving(null)} />
+      <StatusDialog target={statusTarget} onClose={() => setStatusTarget(null)} />
+      <PlanDialog messageId={planId} onClose={() => setPlanId(null)} />
     </div>
   );
 }

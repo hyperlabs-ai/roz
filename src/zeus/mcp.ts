@@ -11,7 +11,22 @@ import { db } from '../db/supabase.js';
 import { AppError } from '../utils/errors.js';
 import { actorActivity, logActivity, mustParseRef, resolveProject, type ZeusActor } from './core.js';
 import { getOrg } from './graph.js';
-import { cancelRequest, createRequest, findDev, getInbox, listRequests, markRead, resolveRequest, routeFor, sendMessage } from './inbox.js';
+import {
+  MAX_PLAN_CHARS,
+  cancelRequest,
+  createRequest,
+  findDev,
+  getInbox,
+  getMessage,
+  listRequests,
+  markRead,
+  resolveRequest,
+  routeFor,
+  sendMessage,
+  setMessageStatus,
+  sharePlan,
+} from './inbox.js';
+import type { ZeusMessage } from '../types/zeus.js';
 import { contextIndex, createEdge, createNode, deleteEdge, edgesOf, getNodeDetail, searchNodes, updateNode } from './nodes.js';
 import { reimportNode } from './ingest.js';
 import { envStatus } from './vault.js';
@@ -313,30 +328,88 @@ export const zeusTools: ZeusMcpTool[] = [
   {
     name: 'zeus_send_message',
     description:
-      'Manda un mensaje a alguien del equipo (le llega a su bandeja de zeus y como notificación). Sirve para avisar, preguntar ' +
-      'o dejarle contexto a quien toma tu plan. Nunca pongas secretos ni valores de variables de entorno.',
+      'Manda algo a la bandeja de alguien del equipo (le llega también como notificación). kind "message" (default) es un aviso ' +
+      'o pregunta. kind "task" es un ENCARGO ("avísale a Alan que implemente X de tal manera", "necesito que hagas Y"): queda ' +
+      'como pendiente en su bandeja de roz hasta que lo marque hecho o lo rechace, y tú ves su estado. Para un encargo pon un ' +
+      'subject corto (es lo que se ve en la lista) y en body el detalle con criterios claros. Redacta en segunda persona, como ' +
+      'lo diría el usuario. Nunca pongas secretos ni valores de variables de entorno.',
     schema: z.object({
       to: z.string().describe('Nombre, correo, login de GitHub o id de la persona.'),
       body: z.string().max(8000),
-      subject: z.string().max(160).optional(),
+      subject: z.string().max(160).optional().describe('Obligatorio si kind = "task".'),
+      kind: z.enum(['message', 'task']).optional(),
+      projectKey: z.string().optional().describe('Proyecto al que se refiere, si aplica.'),
       ref: z.string().optional().describe('ref de lo que trata el mensaje (documento, proyecto).'),
     }),
     readOnly: false,
     handler: async (args, actor) => {
       const m = await sendMessage(args, actor);
-      return { ok: true, id: m.id, to: m.toName };
+      return { ok: true, id: m.id, to: m.toName, kind: m.kind, status: m.status };
+    },
+  },
+  {
+    name: 'zeus_share_plan',
+    description:
+      'Comparte un PLAN de implementación con alguien del equipo (el plan completo en markdown: objetivo, pasos, archivos, ' +
+      'riesgos, cómo se prueba). Le llega a su bandeja como pendiente; su Claude lo jala y le pregunta si lo implementa, lo ajusta ' +
+      'o lo rechaza. Para mandar una versión AJUSTADA de un plan (porque te pidieron cambios), pasa revises con el id del plan ' +
+      'anterior: queda como la versión nueva y la anterior se marca reemplazada. Úsalo cuando el usuario diga "compártele este ' +
+      'plan a X", "mándale el plan a X".',
+    schema: z.object({
+      to: z.string().describe('Nombre, correo, login de GitHub o id de la persona.'),
+      title: z.string().max(160).describe('Título corto del plan.'),
+      plan: z.string().max(MAX_PLAN_CHARS).describe('El plan completo en markdown, autocontenido: quien lo recibe no vio tu conversación.'),
+      projectKey: z.string().optional(),
+      revises: z.string().optional().describe('id del plan que esta versión reemplaza.'),
+      ref: z.string().optional(),
+    }),
+    readOnly: false,
+    handler: async (args, actor) => {
+      const m = await sharePlan(args, actor);
+      return { ok: true, id: m.id, to: m.toName, status: m.status, revises: m.parentId };
+    },
+  },
+  {
+    name: 'zeus_get_message',
+    description:
+      'Trae un mensaje, encargo o plan COMPLETO por id (zeus_inbox recorta los planes largos), con las versiones anteriores si ' +
+      'es un plan ajustado.',
+    schema: z.object({ id: z.string() }),
+    readOnly: true,
+    handler: (args, actor) => getMessage(args.id, actor),
+  },
+  {
+    name: 'zeus_respond',
+    description:
+      'Cambia el estado de un encargo o plan que te mandaron: "accepted" (lo vas a implementar), "changes_requested" (pides ' +
+      'ajustes; note obligatorio con QUÉ cambiar), "declined" (no se hará; di por qué en note) o "done" (ya quedó). Quien lo ' +
+      'mandó puede "cancelled". A quien lo mandó le llega aviso. Es decisión de la PERSONA: confírmala con el usuario antes.',
+    schema: z.object({
+      id: z.string(),
+      status: z.enum(['accepted', 'changes_requested', 'declined', 'done', 'cancelled']),
+      note: z.string().max(8000).optional(),
+    }),
+    readOnly: false,
+    handler: async (args, actor) => {
+      const m = await setMessageStatus(args.id, args.status, args.note ?? null, actor);
+      return { ok: true, id: m.id, status: m.status };
     },
   },
   {
     name: 'zeus_inbox',
-    description: 'Tu bandeja: mensajes recibidos, solicitudes que te toca resolver y el estado de las que abriste.',
+    description:
+      'Tu bandeja: "open" son tus PENDIENTES (encargos y planes que te mandaron y siguen abiertos), "waiting" lo que tú mandaste y ' +
+      'otros no han cerrado, "messages" los mensajes y avisos recientes (incluye cambios de variables de entorno), "toResolve" ' +
+      'solicitudes que te toca resolver y "mine" las que abriste.',
     schema: z.object({ unreadOnly: z.boolean().optional(), limit: z.number().int().min(1).max(100).optional() }),
     readOnly: true,
     handler: async (args, actor) => {
       const inbox = await getInbox(actor, { unreadOnly: args.unreadOnly ?? false, limit: args.limit ?? 20 });
       return {
         unread: inbox.unread,
-        messages: inbox.messages.map((m) => ({ id: m.id, from: m.fromName, subject: m.subject, body: m.body, ref: m.ref, read: !!m.readAt, at: m.createdAt })),
+        open: inbox.open.map((m) => agentMessage(m, 2500)),
+        waiting: inbox.waiting.map((m) => ({ id: m.id, kind: m.kind, to: m.toName, subject: m.subject, status: m.status, statusNote: m.statusNote, at: m.createdAt })),
+        messages: inbox.messages.filter((m) => m.kind === 'message' || m.kind === 'env_change').map((m) => agentMessage(m, 1500)),
         toResolve: inbox.toResolve.map((r) => ({ id: r.id, from: r.requesterName, title: r.title, detail: r.detail, kind: r.kind, because: r.routedBecause, at: r.createdAt })),
         mine: inbox.mine.map((r) => ({ id: r.id, title: r.title, status: r.status, sentTo: r.approverName, note: r.resolutionNote })),
       };
@@ -416,3 +489,96 @@ async function planActor(actor: ZeusActor): Promise<{ userId: string; devId: str
 }
 
 export const zeusToolsByName = new Map(zeusTools.map((t) => [t.name, t]));
+
+/** Un mensaje como lo ve el agente: recortado (los planes se piden completos con zeus_get_message). */
+function agentMessage(m: ZeusMessage, maxBody: number) {
+  const cut = m.body.length > maxBody;
+  return {
+    id: m.id,
+    kind: m.kind,
+    from: m.fromName,
+    subject: m.subject,
+    body: cut ? `${m.body.slice(0, maxBody)}… [recortado: zeus_get_message id="${m.id}" para el texto completo]` : m.body,
+    status: m.status,
+    statusNote: m.statusNote,
+    project: m.projectKey,
+    revises: m.parentId,
+    read: !!m.readAt,
+    at: m.createdAt,
+  };
+}
+
+// ---------------------------------------------------------------- instrucciones del servidor
+
+/**
+ * Lo que Claude Code carga SOLO al conectarse (campo `instructions` del initialize de MCP). Hace de
+ * "skill" sin instalar nada: quien tiene zeus conectado ya trae estas reglas en cada sesión.
+ */
+export const ZEUS_MCP_INSTRUCTIONS = [
+  'zeus es el contexto compartido del equipo y su bóveda de variables de entorno.',
+  '',
+  'CONTEXTO. Antes de planear o tocar código de un proyecto llama zeus_context_index y trae con zeus_get solo lo que aplique. ' +
+    'Las reglas y decisiones vigentes se respetan. El registro de zeus es la fuente de verdad de ADR, specs, reglas y documentos: ' +
+    'para cambiar uno edítalo AQUÍ con zeus_write (también los importados de un repo), no en su archivo del repo.',
+  '',
+  'BANDEJA. Al empezar una sesión de trabajo revisa zeus_inbox. Si hay planes en "open" con status pending, preséntalos (quién, ' +
+    'título, resumen en 3-5 líneas; trae el texto completo con zeus_get_message) y PREGUNTA al usuario: ¿lo implemento tal cual, ' +
+    'lo ajusto o lo rechazo? Si lo implementa: zeus_respond status="accepted" y al terminar "done". Si quiere ajustes: anota QUÉ ' +
+    'cambiar y zeus_respond status="changes_requested" con esa nota. Encargos (kind "task") igual: confirma antes de cambiarles el ' +
+    'estado. "Avísale a X…" / "pídele a X que…" = zeus_send_message (kind "task" si es trabajo que X debe hacer). "Compártele el ' +
+    'plan a X" = zeus_share_plan con el plan completo y autocontenido.',
+  '',
+  'VARIABLES DE ENTORNO (CLI `zeus`, corre en la PC del usuario):',
+  '- Nunca leas, imprimas ni pegues valores de secretos: ni `cat .env`, ni `zeus env pull --stdout`, ni pedirle al usuario que te ' +
+    'pegue un valor. Tú manejas NOMBRES; los valores van de la bóveda al archivo sin pasar por la conversación.',
+  '- Ver qué hay: zeus_env_status (nombres, versión, quién y cuándo cambió cada una). Comparar el .env local con la bóveda: ' +
+    '`zeus env status` (solo nombres; detecta el proyecto y entorno por la cabecera de cada .env).',
+  '- Bajar: `zeus env pull <proyecto> [entorno] --yes`. Cada entorno va a su archivo: development → .env, production → ' +
+    '.env.production (local y prod nunca se mezclan). Alias: local/dev = development, prod = production.',
+  '- Subir o reemplazar UNA variable: pide al usuario que copie el valor y corre `zeus env set <proyecto> <entorno> NOMBRE ' +
+    '--from-clipboard` (o --from-file <ruta>). Nunca pongas el valor en el comando.',
+  '- Subir un archivo completo: `zeus env push <proyecto> <entorno> --yes` (muestra solo nombres). Diferencias entre entornos: ' +
+    '`zeus env diff <proyecto> development production`. Historial: `zeus env history <proyecto> <entorno> [NOMBRE]`; volver a una ' +
+    'versión: `zeus env restore <proyecto> <entorno> NOMBRE --version N`.',
+  '- Para que el usuario VEA valores, que corra él `zeus env ui` (visor local en su navegador). Tú no abras esa URL.',
+  '- Si un comando dice que falta acceso, abre una solicitud con zeus_request; no intentes rodearlo.',
+  '',
+  'Nunca escribas secretos ni valores de variables de entorno en mensajes, planes o documentos.',
+].join('\n');
+
+/** Prompts del servidor: en Claude Code aparecen como /mcp__zeus__<nombre>. */
+export const ZEUS_MCP_PROMPTS: Array<{
+  name: string;
+  description: string;
+  arguments: Array<{ name: string; description: string; required: boolean }>;
+  render: (args: Record<string, string>) => string;
+}> = [
+  {
+    name: 'pendientes',
+    description: 'Revisa tu bandeja de zeus: encargos, planes compartidos y avisos de variables.',
+    arguments: [],
+    render: () =>
+      'Revisa mi bandeja de zeus (zeus_inbox). Primero mis pendientes ("open"): para cada plan dame quién lo manda, título y un ' +
+      'resumen corto, y pregúntame si lo implementamos tal cual, lo ajustamos o lo rechazamos. Para cada encargo dime qué piden y ' +
+      'pregúntame qué hacemos. Luego, en una línea cada uno, los avisos de variables de entorno que cambiaron y si me conviene ' +
+      'correr `zeus env status`. No cambies ningún estado sin que yo lo confirme.',
+  },
+  {
+    name: 'compartir-plan',
+    description: 'Comparte el plan de implementación de esta conversación con alguien del equipo.',
+    arguments: [{ name: 'para', description: 'A quién (nombre, correo o login de GitHub).', required: true }],
+    render: (a) =>
+      `Comparte con ${a.para ?? 'la persona que te diga'} el plan de implementación que acabamos de definir, usando zeus_share_plan. ` +
+      'Escríbelo autocontenido (quien lo recibe no vio esta conversación): objetivo, contexto, pasos, archivos a tocar, riesgos y ' +
+      'cómo se prueba. Antes de mandarlo muéstrame el título y un resumen y espera mi OK.',
+  },
+  {
+    name: 'variables',
+    description: 'Pon al día las variables de entorno de este repo (local y prod) sin ver valores.',
+    arguments: [{ name: 'proyecto', description: 'Clave del proyecto en zeus (si no, la deduces del repo).', required: false }],
+    render: (a) =>
+      `Revisa las variables de entorno${a.proyecto ? ` del proyecto ${a.proyecto}` : ' de este repo'}: corre \`zeus env status\` y ` +
+      'dime, por archivo (.env, .env.production…), qué falta, qué está desactualizado y qué cambié yo localmente sin subir. ' +
+      'Propón los comandos (pull o push) y córrelos solo cuando te diga. Nunca muestres valores.',
+  },
+];

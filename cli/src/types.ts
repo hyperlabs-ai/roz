@@ -23,7 +23,8 @@ export interface VaultKey {
 export interface VaultProject {
   key: string;
   name: string;
-  envs: Array<{ name: string; dekVersion: number; hasGrant: boolean }>;
+  /** needsRotation: alguien perdió el acceso y la llave del entorno debe cambiar (lo manda zeus ≥ 0.3). */
+  envs: Array<{ name: string; dekVersion: number; hasGrant: boolean; needsRotation?: boolean }>;
 }
 
 export interface VaultSecret {
@@ -32,6 +33,8 @@ export interface VaultSecret {
   dekVersion: number;
   version: number;
   updatedAt: string;
+  /** Quién la cambió por última vez (zeus ≥ 0.3). */
+  updatedByName?: string | null;
 }
 
 export interface VaultGrant {
@@ -47,6 +50,8 @@ export interface VaultEnv {
   wrappedDek: string;
   secrets: VaultSecret[];
   grants: VaultGrant[];
+  /** zeus ≥ 0.3. */
+  needsRotation?: boolean;
 }
 
 export interface WrappedGrant {
@@ -84,4 +89,44 @@ export interface RotateBody {
   dekVersion: number;
   grants: WrappedGrant[];
   secrets: CipherEntry[];
+  /** Versiones anteriores re-cifradas con la DEK nueva; todas las legibles con la vigente. */
+  revisions: Array<{ name: string; version: number; ciphertext: string }>;
+}
+
+export interface VaultRevision {
+  name: string;
+  version: number;
+  /** null = en esa versión la variable se borró. */
+  ciphertext: string | null;
+  dekVersion: number;
+  setAt: string;
+  setByName: string | null;
+  replacedAt: string | null;
+  replacedByName: string | null;
+  current: boolean;
+}
+
+export interface KeyRotateBody {
+  oldKeyId: string;
+  newKeyId: string;
+  grants: Array<{ projectKey: string; env: string; dekVersion: number; wrappedDek: string }>;
+  compromised: boolean;
+}
+
+export interface InboxBrief {
+  id: string;
+  kind: 'message' | 'task' | 'plan' | 'env_change';
+  from: string;
+  to: string;
+  subject: string | null;
+  status: string | null;
+  at: string;
+}
+
+export interface InboxSummary {
+  unread: number;
+  open: InboxBrief[];
+  waiting: InboxBrief[];
+  envChanges: InboxBrief[];
+  toResolve: number;
 }

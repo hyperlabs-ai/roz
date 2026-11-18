@@ -28,6 +28,7 @@ interface StoredSecret {
   dekVersion: number;
   version: number;
   updatedAt: string;
+  updatedByName?: string;
 }
 
 interface StoredEnv {
@@ -38,6 +39,9 @@ interface StoredEnv {
   /** keyId → { versión de la DEK, DEK envuelta }. */
   grants: Map<string, { dekVersion: number; wrappedDek: string }>;
   secrets: Map<string, StoredSecret>;
+  /** Versiones anteriores (ciphertext null = borrada en esa versión). */
+  revisions: Array<{ name: string; version: number; ciphertext: string | null; dekVersion: number; setAt: string; setBy: string }>;
+  needsRotation: boolean;
 }
 
 class HttpError extends Error {
@@ -65,6 +69,8 @@ export class FakeZeus {
   readonly calls: string[] = [];
   /** Si se pone, la siguiente escritura responde 409 ZEUS_VAULT_STALE. */
   failNextWriteAsStale = false;
+  /** Lo que devuelve GET /inbox en `open`. */
+  inboxOpen: Array<Record<string, unknown>> = [];
 
   addDev(name: string, opts: { admin?: boolean } = {}): Dev {
     const dev: Dev = {
@@ -161,9 +167,35 @@ export class FakeZeus {
               name: e.name,
               dekVersion: e.dekVersion,
               hasGrant: [...e.grants].some(([keyId, g]) => mine.has(keyId) && g.dekVersion === e.dekVersion),
+              needsRotation: e.needsRotation,
             })),
         })),
       };
+    }
+    if (method === 'GET' && route === '/inbox') {
+      return { unread: 0, open: this.inboxOpen, waiting: [], envChanges: [], toResolve: 0 };
+    }
+    if (method === 'POST' && route === '/vault/keys/rotate') {
+      const { oldKeyId, newKeyId, grants, compromised } = body as {
+        oldKeyId: string;
+        newKeyId: string;
+        grants: Array<{ projectKey: string; env: string; dekVersion: number; wrappedDek: string }>;
+        compromised: boolean;
+      };
+      const oldKey = this.ownKey(dev, oldKeyId);
+      this.ownKey(dev, newKeyId);
+      for (const g of grants) {
+        const env = this.env(this.project(g.projectKey).key, g.env);
+        if (!env) throw new HttpError(404, 'NOT_FOUND', 'no existe el entorno');
+        this.granted(dev, env, oldKeyId);
+        if (!WRAPPED_DEK_RE.test(g.wrappedDek)) throw new HttpError(400, 'VALIDATION', 'wrappedDek inválida');
+        env.grants.set(newKeyId, { dekVersion: env.dekVersion, wrappedDek: g.wrappedDek });
+      }
+      for (const env of this.envs) {
+        if (env.grants.delete(oldKeyId) && compromised) env.needsRotation = true;
+      }
+      oldKey.revokedAt = new Date().toISOString();
+      return { ok: true, moved: grants.length };
     }
     if (method === 'POST' && route === '/vault/envs') {
       admin();
@@ -172,7 +204,16 @@ export class FakeZeus {
       this.ownKey(dev, keyId);
       if (!WRAPPED_DEK_RE.test(wrappedDek)) throw new HttpError(400, 'VALIDATION', 'wrappedDek inválida');
       if (this.env(project.key, env)) throw new HttpError(409, 'ZEUS_VAULT_ENV_EXISTS', 'ese entorno ya existe');
-      const created: StoredEnv = { id: randomUUID(), projectKey: project.key, name: env, dekVersion: 1, grants: new Map([[keyId, { dekVersion: 1, wrappedDek }]]), secrets: new Map() };
+      const created: StoredEnv = {
+        id: randomUUID(),
+        projectKey: project.key,
+        name: env,
+        dekVersion: 1,
+        grants: new Map([[keyId, { dekVersion: 1, wrappedDek }]]),
+        secrets: new Map(),
+        revisions: [],
+        needsRotation: false,
+      };
       this.envs.push(created);
       return { envId: created.id, dekVersion: 1 };
     }
@@ -196,6 +237,7 @@ export class FakeZeus {
               const k = this.keys.find((x) => x.id === keyId);
               return k ? [{ keyId, devName: k.devName, keyName: k.name, fingerprint: k.fingerprint }] : [];
             }),
+          needsRotation: env.needsRotation,
         };
       }
       if (method === 'PUT' && rest[0] === 'secrets') {
@@ -206,13 +248,36 @@ export class FakeZeus {
           if (!SECRET_NAME_RE.test(s.name)) throw new HttpError(400, 'VALIDATION', `nombre inválido: ${s.name}`);
           if (!SECRET_RE.test(s.ciphertext)) throw new HttpError(400, 'VALIDATION', `el valor de ${s.name} no viene cifrado`);
         }
+        const now = new Date().toISOString();
+        const lastVersion = (name: string): number =>
+          Math.max(env.secrets.get(name)?.version ?? 0, ...env.revisions.filter((r) => r.name === name).map((r) => r.version));
         for (const s of set) {
           const prev = env.secrets.get(s.name);
-          env.secrets.set(s.name, { ciphertext: s.ciphertext, dekVersion, version: (prev?.version ?? 0) + 1, updatedAt: new Date().toISOString() });
+          if (prev) env.revisions.push({ name: s.name, version: prev.version, ciphertext: prev.ciphertext, dekVersion: prev.dekVersion, setAt: prev.updatedAt, setBy: dev.name });
+          env.secrets.set(s.name, { ciphertext: s.ciphertext, dekVersion, version: lastVersion(s.name) + 1, updatedAt: now, updatedByName: dev.name });
         }
         let deleted = 0;
-        for (const name of del) if (env.secrets.delete(name)) deleted++;
+        for (const name of del) {
+          const prev = env.secrets.get(name);
+          if (!prev) continue;
+          env.revisions.push({ name, version: prev.version, ciphertext: prev.ciphertext, dekVersion: prev.dekVersion, setAt: prev.updatedAt, setBy: dev.name });
+          env.revisions.push({ name, version: prev.version + 1, ciphertext: null, dekVersion: env.dekVersion, setAt: now, setBy: dev.name });
+          env.secrets.delete(name);
+          deleted++;
+        }
         return { ok: true, written: set.length, deleted };
+      }
+      if (method === 'GET' && rest[0] === 'history') {
+        this.granted(dev, env, query.get('keyId') ?? '');
+        const name = query.get('name');
+        const current = [...env.secrets]
+          .filter(([n]) => !name || n === name)
+          .map(([n, s]) => ({ name: n, version: s.version, ciphertext: s.ciphertext, dekVersion: s.dekVersion, setAt: s.updatedAt, setByName: s.updatedByName ?? null, replacedAt: null, replacedByName: null, current: true }));
+        const old = env.revisions
+          .filter((r) => !name || r.name === name)
+          .map((r) => ({ name: r.name, version: r.version, ciphertext: r.ciphertext, dekVersion: r.dekVersion, setAt: r.setAt, setByName: r.setBy, replacedAt: r.setAt, replacedByName: r.setBy, current: false }));
+        const revisions = [...current, ...old].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : b.version - a.version));
+        return { dekVersion: env.dekVersion, revisions };
       }
       if (method === 'POST' && rest[0] === 'grants') {
         admin();
@@ -228,16 +293,22 @@ export class FakeZeus {
       if (method === 'DELETE' && rest[0] === 'grants' && rest[1]) {
         admin();
         if (!env.grants.delete(rest[1])) throw new HttpError(404, 'NOT_FOUND', 'esa llave no tenía acceso');
+        env.needsRotation = true;
         return { ok: true };
       }
       if (method === 'POST' && rest[0] === 'rotate') {
         admin();
-        const { keyId, dekVersion, grants, secrets } = body as {
+        const { keyId, dekVersion, grants, secrets, revisions } = body as {
           keyId: string;
           dekVersion: number;
           grants: Array<{ keyId: string; wrappedDek: string }>;
           secrets: Array<{ name: string; ciphertext: string }>;
+          revisions?: Array<{ name: string; version: number; ciphertext: string }>;
         };
+        const readable = env.revisions.filter((r) => r.ciphertext != null && r.dekVersion === env.dekVersion);
+        if (revisions && (revisions.length !== readable.length || readable.some((r) => !revisions.some((x) => x.name === r.name && x.version === r.version)))) {
+          throw new HttpError(409, 'ZEUS_VAULT_INCOMPLETE', 'rotate debe traer todo el historial legible');
+        }
         this.granted(dev, env, keyId);
         this.checkVersion(env.dekVersion + 1, dekVersion);
         const names = new Set(secrets.map((s) => s.name));
@@ -251,8 +322,14 @@ export class FakeZeus {
         env.grants = new Map(grants.map((g) => [g.keyId, { dekVersion, wrappedDek: g.wrappedDek }]));
         for (const s of secrets) {
           const prev = env.secrets.get(s.name);
-          env.secrets.set(s.name, { ciphertext: s.ciphertext, dekVersion, version: (prev?.version ?? 0) + 1, updatedAt: new Date().toISOString() });
+          env.secrets.set(s.name, { ciphertext: s.ciphertext, dekVersion, version: (prev?.version ?? 0) + 1, updatedAt: new Date().toISOString(), updatedByName: dev.name });
         }
+        env.revisions = env.revisions.flatMap((r) => {
+          if (r.ciphertext == null) return [{ ...r, dekVersion }];
+          const re = revisions?.find((x) => x.name === r.name && x.version === r.version);
+          return re ? [{ ...r, ciphertext: re.ciphertext, dekVersion }] : [];
+        });
+        env.needsRotation = false;
         return { ok: true, dekVersion };
       }
     }
@@ -309,6 +386,9 @@ export class MemFs implements FileOps {
   async remove(file: string): Promise<boolean> {
     return this.files.delete(file);
   }
+  async list(dir: string): Promise<string[]> {
+    return [...this.files.keys()].filter((f) => path.dirname(f) === dir).map((f) => path.basename(f));
+  }
 }
 
 export class FakePrompt implements Prompter {
@@ -341,6 +421,8 @@ export interface Machine {
   out: string[];
   log: string[];
   spawned: Array<{ command: string; args: string[]; env: NodeJS.ProcessEnv }>;
+  /** Lo que hay en el portapapeles, en stdin y las URLs que se abrieron. */
+  io: { clipboard: string; stdin: string; opened: string[] };
   /** Ruta absoluta de un archivo en la carpeta de trabajo. */
   file(name: string): string;
   /** Todo lo que se imprimió (stdout + stderr). */
@@ -353,6 +435,7 @@ export function machine(zeus: FakeZeus, token: string, name: string, platform: N
   const out: string[] = [];
   const log: string[] = [];
   const spawned: Machine['spawned'] = [];
+  const io: Machine['io'] = { clipboard: '', stdin: '', opened: [] };
   const cwd = path.resolve('/work', name);
   const ctx: Ctx = {
     api: new ZeusClient({ url: ZEUS_URL, token, fetch: zeus.fetch }),
@@ -370,8 +453,13 @@ export function machine(zeus: FakeZeus, token: string, name: string, platform: N
       spawned.push({ command, args, env });
       return 7;
     },
+    clipboard: async () => io.clipboard,
+    openUrl: async (url) => {
+      io.opened.push(url);
+    },
+    stdin: async () => io.stdin,
   };
-  return { ctx, fs, prompt, out, log, spawned, file: (n) => path.resolve(cwd, n), printed: () => [...out, ...log].join('\n') };
+  return { ctx, fs, prompt, out, log, spawned, io, file: (n) => path.resolve(cwd, n), printed: () => [...out, ...log].join('\n') };
 }
 
 /** Las formas en que un valor podría aparecer en un cuerpo JSON: tal cual o escapado. */
