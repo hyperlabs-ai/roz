@@ -212,3 +212,22 @@ describe('reconciliación', () => {
     expect(r).toEqual({ upserted: 1, truncated: false });
   });
 });
+
+describe('aviso de asignación desde Linear (sin espejo)', () => {
+  it('reconoce ticket nuevo con asignado y cambio de asignado; ignora lo demás', async () => {
+    const { isAssignmentEvent } = await import('../src/zeus/linear-notify.js');
+    const ev = (over: Record<string, unknown>) => ({ type: 'Issue', action: 'update', data: { id: 'i', assigneeId: 'u1' }, updatedFrom: null, ...over }) as never;
+    expect(isAssignmentEvent(ev({ action: 'create' }))).toBe(true);
+    expect(isAssignmentEvent(ev({ updatedFrom: { assigneeId: 'u0' } }))).toBe(true);
+    expect(isAssignmentEvent(ev({ updatedFrom: { title: 'otro' } }))).toBe(false);
+    expect(isAssignmentEvent(ev({ action: 'create', data: { id: 'i', assigneeId: null } }))).toBe(false);
+    expect(isAssignmentEvent(ev({ type: 'Comment', action: 'create' }))).toBe(false);
+  });
+
+  it('lee quién lo creó por zeus de la firma de la descripción', async () => {
+    const { zeusAuthor } = await import('../src/zeus/linear-notify.js');
+    expect(zeusAuthor('Hacer X\n\n— vía zeus · Sebas')).toBe('Sebas');
+    expect(zeusAuthor('Sin firma')).toBeNull();
+    expect(zeusAuthor(null)).toBeNull();
+  });
+});

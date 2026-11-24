@@ -507,7 +507,7 @@ function EnvGroupRow({ group, unread, people, onRead }: { group: EnvGroup; unrea
           )}
         </div>
       )}
-      {open && group.pull && <CmdLine command={group.pull} />}
+      {open && group.pull && <CmdLine command={group.pull} wrap />}
     </li>
   );
 }
