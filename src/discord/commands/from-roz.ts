@@ -148,7 +148,7 @@ function assertCanPublish(channel: DiscordChannelRow, canSend: boolean): void {
 
 /** ¿Este uso puede publicar en el canal? (si sí, se exige `send` ANTES de crear nada). */
 export function mayPublish(subcommand: RozSubcommand, options: Record<string, string>): boolean {
-  if (subcommand === 'tarea' || subcommand === 'ticket' || subcommand === 'status') return true;
+  if (subcommand === 'tarea' || subcommand === 'ticket' || subcommand === 'status' || subcommand === 'crear') return true;
   if (subcommand === 'plan') return !!options.issue;
   return false;
 }
@@ -271,7 +271,7 @@ export async function runCommandFromRoz(
             descripcion: textField(input.fields, 'descripcion', FIELD_LIMITS.descripcion, false, 'la descripción'),
           }
         : {
-            titulo: textField(input.fields, 'titulo', FIELD_LIMITS.titulo, true, 'el título'),
+            titulo: textField(input.fields, 'titulo', FIELD_LIMITS.titulo, false, 'el título'),
             notas: textField(input.fields, 'notas', FIELD_LIMITS.notas, true, 'las notas'),
           };
     // Con el proyecto como argumento del modal (lo que en Discord sale de la opción); sin él, el
@@ -283,6 +283,20 @@ export async function runCommandFromRoz(
       interaction: { ...base.interaction, type: INTERACTION_TYPE.MODAL_SUBMIT, data: { custom_id: buildCustomId(action, project), components: [] } },
       customId: id,
       fields,
+      message: null,
+    });
+  } else if (subcommand === 'crear') {
+    const handler = d.registry.modals['linear.crear.modal'];
+    if (!handler) throw unsupported();
+    const para = options.para && UUID_RE.test(options.para) ? options.para : null;
+    reply = await handler.run({
+      ...base,
+      interaction: { ...base.interaction, type: INTERACTION_TYPE.MODAL_SUBMIT, data: { custom_id: buildCustomId('linear.crear.modal', para), components: [] } },
+      customId: customId('linear.crear.modal', [para]),
+      fields: {
+        titulo: textField(input.fields, 'titulo', FIELD_LIMITS.titulo, true, 'el título'),
+        descripcion: textField(input.fields, 'descripcion', FIELD_LIMITS.descripcion, false, 'la descripción'),
+      },
       message: null,
     });
   } else if (subcommand === 'status') {

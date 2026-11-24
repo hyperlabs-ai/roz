@@ -163,6 +163,12 @@ export interface ZeusOrgMember {
   githubLogin: string | null;
   active: boolean;
   reportsTo: string | null;
+  /** Puesto visible ("Líder técnico y desarrollador de AI"); `role` es la categoría de capacidad. */
+  title: string | null;
+  /** Líneas punteadas: a quién más se reporta. */
+  alsoReportsTo: string[];
+  /** Temas que atiende (code_review, deploys…), de ZeusOrg.duties. */
+  duties: string[];
   zeusAdmin: boolean;
   /** Claves de los proyectos donde está asignado. */
   projects: string[];
@@ -171,8 +177,18 @@ export interface ZeusOrgMember {
   online: boolean;
 }
 
+/** Un tema del equipo y quién lo atiende, en orden. */
+export interface ZeusOrgDuty {
+  duty: string;
+  label: string;
+  hint: string;
+  devIds: string[];
+}
+
 export interface ZeusOrg {
   members: ZeusOrgMember[];
+  /** Quién se encarga de qué (revisión de código, deploys, clientes…). */
+  duties: ZeusOrgDuty[];
   /** True si todavía nadie administra zeus: cualquiera puede tomar el rol una vez. */
   needsAdmin: boolean;
 }
@@ -200,6 +216,24 @@ export interface ZeusTokenSummary {
   prefix: string;
   lastUsedAt: string | null;
   createdAt: string;
+}
+
+export type ZeusDeviceStatus = 'pending' | 'approved' | 'denied' | 'delivered' | 'expired';
+
+/** Solicitud de `zeus setup` vista desde /conectar: qué equipo pide entrar y con qué código. */
+export interface ZeusDeviceRequest {
+  userCode: string;
+  /** Nombre del equipo que dio el CLI (hostname). */
+  clientName: string;
+  clientPlatform: string | null;
+  clientVersion: string | null;
+  /** IP desde la que el CLI abrió la solicitud. */
+  clientIp: string | null;
+  status: ZeusDeviceStatus;
+  createdAt: string;
+  expiresAt: string;
+  /** Quién la aprobó o rechazó. */
+  decidedBy: string | null;
 }
 
 // ---------------------------------------------------------------- bandeja
@@ -261,6 +295,8 @@ export interface ZeusMessage {
 
 export interface ZeusInbox {
   messages: ZeusMessage[];
+  /** Avisos de cambios de variables (aparte: son muchos y no deben tapar los mensajes). */
+  envChanges: ZeusMessage[];
   /** Mensajes que yo envié (los más recientes). */
   sent: ZeusMessage[];
   /** Encargos y planes que me mandaron y siguen abiertos: mis pendientes. */
@@ -272,6 +308,39 @@ export interface ZeusInbox {
   /** Solicitudes que yo abrí. */
   mine: ZeusRequest[];
   unread: number;
+}
+
+// ---------------------------------------------------------------- Linear (en vivo, sin espejo)
+
+/** Un ticket de Linear como lo ve la bandeja. */
+export interface ZeusLinearIssue {
+  id: string;
+  identifier: string;
+  title: string;
+  url: string;
+  state: string;
+  stateType: 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled' | 'triage';
+  /** 0 sin prioridad, 1 urgente … 4 baja. */
+  priority: number;
+  priorityLabel: string;
+  team: string;
+  project: string | null;
+  assignee: string | null;
+  labels: string[];
+  dueDate: string | null;
+  cycle: string | null;
+  branchName: string | null;
+  updatedAt: string;
+}
+
+/** Lo de Linear para la bandeja: tus tickets en curso y por hacer. */
+export interface ZeusLinearBoard {
+  /** ok · not_configured (zeus sin llave) · no_user (tu correo no está en Linear) · error. */
+  status: 'ok' | 'not_configured' | 'no_user' | 'error';
+  user: string | null;
+  issues: ZeusLinearIssue[];
+  fetchedAt: string;
+  error?: string;
 }
 
 // ---------------------------------------------------------------- fuentes y actividad
@@ -476,9 +545,25 @@ export interface ZeusVaultRevisionMeta {
   readable: boolean;
 }
 
+/**
+ * Acceso aprobado en la web y aún sin cifrar: falta que alguien con acceso corra
+ * `zeus env grant --pending` en su PC (el servidor no puede envolver la DEK).
+ */
+export interface ZeusVaultGrantIntent {
+  id: string;
+  envId: string;
+  toDevId: string;
+  toDevName: string;
+  approvedByName: string | null;
+  createdAt: string;
+  /** Equipos vigentes del destinatario que aún no tienen la llave del entorno (0 = sin llave registrada). */
+  pendingKeys: number;
+}
+
 export interface ZeusVaultOverview {
   envs: ZeusVaultEnvSummary[];
   keys: ZeusVaultKey[];
+  intents: ZeusVaultGrantIntent[];
   audit: ZeusVaultAuditEntry[];
 }
 
@@ -522,14 +607,27 @@ export const zeusApi = {
     apiGet<{ hits: ZeusSearchHit[] }>(`/zeus/search${query({ q, projectId: opts.projectId, kinds: opts.kinds?.join(',') })}`),
 
   org: () => apiGet<ZeusOrg>('/zeus/org'),
-  updateMember: (devId: string, body: { reportsTo?: string | null; zeusAdmin?: boolean }) =>
+  updateMember: (devId: string, body: { reportsTo?: string | null; zeusAdmin?: boolean; title?: string | null; alsoReportsTo?: string[] }) =>
     apiSend<ZeusOrgMember>('PATCH', `/zeus/org/${enc(devId)}`, body),
+  /** Quién atiende un tema, en orden (solo admin de zeus). */
+  setDuty: (duty: string, devIds: string[]) => apiSend<ZeusOrg>('PUT', `/zeus/org/duties/${enc(duty)}`, { devIds }),
 
   tokens: () => apiGet<{ tokens: ZeusTokenSummary[] }>('/zeus/tokens'),
   createToken: (name: string) => apiSend<{ token: string; summary: ZeusTokenSummary }>('POST', '/zeus/tokens', { name }),
   revokeToken: (id: string) => apiSend<{ ok: true }>('DELETE', `/zeus/tokens/${enc(id)}`),
+  /** Conectar una PC (`zeus setup`): la solicitud por su código, y aprobarla o rechazarla. */
+  deviceRequest: (userCode: string) => apiGet<ZeusDeviceRequest>(`/zeus/device/${enc(userCode)}`),
+  approveDevice: (userCode: string) => apiSend<ZeusDeviceRequest>('POST', `/zeus/device/${enc(userCode)}/approve`, {}),
+  denyDevice: (userCode: string) => apiSend<ZeusDeviceRequest>('POST', `/zeus/device/${enc(userCode)}/deny`, {}),
 
   inbox: () => apiGet<ZeusInbox>('/zeus/inbox'),
+  linearBoard: () => apiGet<ZeusLinearBoard>('/zeus/linear/board'),
+  /** Historial completo de la bandeja (leído y no leído) con filtros. */
+  messageHistory: (q: { box?: 'received' | 'sent'; kind?: ZeusMessageKind; with?: string; project?: string; q?: string; before?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)]));
+    const tail = qs.toString();
+    return apiGet<{ messages: ZeusMessage[]; nextBefore: string | null }>(`/zeus/messages${tail ? `?${tail}` : ''}`);
+  },
   sendMessage: (body: { toDevId: string; subject?: string; body: string; ref?: ZeusRef; kind?: 'message' | 'task'; projectKey?: string }) =>
     apiSend<ZeusMessage>('POST', '/zeus/messages', body),
   sharePlan: (body: { toDevId: string; title: string; plan: string; projectKey?: string; revises?: string }) =>
@@ -538,7 +636,7 @@ export const zeusApi = {
   setMessageStatus: (id: string, status: ZeusMessageStatus, note?: string) =>
     apiSend<ZeusMessage>('POST', `/zeus/messages/${id}/status`, { status, note }),
   markRead: (ids: string[] | 'all') => apiSend<{ ok: true }>('POST', '/zeus/messages/read', { ids }),
-  createRequest: (body: { kind: ZeusRequestKind; title: string; detail?: string; resourceRef?: ZeusRef }) =>
+  createRequest: (body: { kind: ZeusRequestKind; title: string; detail?: string; resourceRef?: ZeusRef; topic?: string }) =>
     apiSend<ZeusRequest>('POST', '/zeus/requests', body),
   resolveRequest: (id: string, decision: 'approved' | 'denied', note?: string) =>
     apiSend<ZeusRequest>('POST', `/zeus/requests/${enc(id)}/resolve`, { decision, ...(note ? { note } : {}) }),
@@ -553,6 +651,9 @@ export const zeusApi = {
   vaultHistory: (projectKey: string, env: string, name?: string) =>
     apiGet<{ revisions: ZeusVaultRevisionMeta[] }>(`/zeus/vault/envs/${enc(projectKey)}/${enc(env)}/history${name ? `?name=${enc(name)}` : ''}`),
   revokeVaultKey: (id: string) => apiSend<{ ok: true }>('POST', `/zeus/vault/keys/${enc(id)}/revoke`, {}),
+  /** Aprueba que alguien entre a un entorno; lo cifra después un CLI con acceso (`zeus env grant --pending`). */
+  approveVaultGrant: (body: { envId: string; toDevId: string }) => apiSend<ZeusVaultGrantIntent>('POST', '/zeus/vault/grant-intents', body),
+  cancelVaultGrant: (id: string) => apiSend<{ ok: true }>('POST', `/zeus/vault/grant-intents/${enc(id)}/cancel`, {}),
 };
 
 /** `node:<uuid>` → uuid; null si la referencia es de una entidad derivada (dev, project, repo, runner). */

@@ -6,6 +6,7 @@ import { ChevronRight, EyeOff, KeyRound, Laptop, Lock, LockOpen, Server, ShieldA
 import { RefreshButton } from '@/components/bits';
 import { cn } from '@/lib/utils';
 import type { ZeusMe, ZeusVaultOverview } from '@/lib/zeus';
+import { groupVaultEnvs } from './vault-groups';
 
 const SAMPLE = ['API_KEY', 'DATABASE_URL', 'WEBHOOK_SECRET'];
 const DOTS = 44;
@@ -129,6 +130,9 @@ export function VaultDiagram({
   const rotation = envs.filter((e) => e.needsRotation).length;
   const grants = envs.reduce((s, e) => s + e.grants.length, 0);
   const people = new Set(envs.flatMap((e) => e.grants.map((g) => g.devId))).size;
+  // Un repo con Local y Prod cuenta una vez (como en la matriz).
+  const repos = groupVaultEnvs(envs).reduce((s, p) => s + p.repos.length, 0);
+  const toEncrypt = data?.intents.length ?? 0;
 
   return (
     <section className={cn('zeus-stage relative overflow-hidden rounded-lg border bg-background text-foreground', className)} aria-label="Cómo viaja un secreto">
@@ -176,7 +180,7 @@ export function VaultDiagram({
             note={<><EyeOff className="text-orange" /> No puede leerlo: ni el servidor ni esta página</>}
             stats={
               <>
-                <Stat value={n(envs.length)} label="Entornos" />
+                <Stat value={n(repos)} label="Repos" />
                 <Stat value={n(variables)} label="Variables" />
                 <Stat value={n(rotation)} label="Por rotar" warn={rotation > 0} />
               </>
@@ -197,6 +201,7 @@ export function VaultDiagram({
               <>
                 <Stat value={n(grants)} label="Accesos dados" />
                 <Stat value={n(people)} label="Personas" />
+                <Stat value={n(toEncrypt)} label="Por cifrar" warn={toEncrypt > 0} />
               </>
             }
           >

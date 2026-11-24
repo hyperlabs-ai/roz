@@ -2,20 +2,20 @@
 //
 //   pollGranola        ← cron /v1/internal/granola-poll (cada 5 min). Lista las notas recientes y
 //                        emite `granola.import` por nota (idempotency key `granola:<noteId>`).
-//   importGranolaNote  ← outbox `granola.import`. Baja la nota completa, crea la junta
-//                        (source 'granola', transcript_format 'granola_api') y emite `meeting.extract`.
+//   importGranolaNote  ← outbox `granola.import`. Baja la nota completa y guarda la junta
+//                        (source 'granola', transcript_format 'granola_api') como registro: ya no se
+//                        extraen tareas.
 //
-// Idempotente por id externo, en tres capas: la llave del evento, el índice único parcial
-// uq_roz_meeting_external (source, external_id) y la llave de `meeting.extract` por junta.
+// Idempotente por id externo, en dos capas: la llave del evento y el índice único parcial
+// uq_roz_meeting_external (source, external_id).
 //
 // Sin cursor guardado: cada tick pide las notas creadas desde la junta de Granola más reciente que
 // ya tenemos menos POLL_OVERLAP_MS (o los últimos POLL_FIRST_DAYS días la primera vez). Volver a ver
 // una nota es gratis (las llaves la descartan) y así no hay estado que se pueda desincronizar.
 import { getNote, granolaEnabled, listNotes } from '../adapters/granola.js';
 import { db } from '../db/supabase.js';
-import { linearSourceOfTruth } from '../linear/enabled.js';
 import type { GranolaImportPayload } from '../types/roz-v2.js';
-import { emitGranolaImport, emitMeetingExtract } from './events.js';
+import { emitGranolaImport } from './events.js';
 import { resolveProjectForEmails } from './service.js';
 import { MEETING_COLUMNS, type MeetingRow } from './store.js';
 import { granolaNoteText } from './transcript.js';
@@ -86,11 +86,7 @@ export async function importGranolaNote(p: GranolaImportPayload, opts: { log?: L
   if (!noteId || !granolaEnabled()) return { meetingId: null, created: false };
 
   const existing = await findByNote(noteId);
-  if (existing) {
-    // Ya importada: asegurar que su extracción esté encolada (la llave la hace no-op si ya lo estaba).
-    await emitMeetingExtract({ meetingId: existing.id }, `meeting-extract:${existing.id}:0`);
-    return { meetingId: existing.id, created: false };
-  }
+  if (existing) return { meetingId: existing.id, created: false };
 
   const note = await getNote(noteId);
   if (!note) {
@@ -122,7 +118,7 @@ export async function importGranolaNote(p: GranolaImportPayload, opts: { log?: L
       project_source: resolved.projectId ? 'dominio' : null,
       transcript_format: 'granola_api',
       transcript,
-      status: 'pendiente',
+      status: 'lista',
     })
     .select(MEETING_COLUMNS)
     .single();
@@ -134,7 +130,6 @@ export async function importGranolaNote(p: GranolaImportPayload, opts: { log?: L
     throw error;
   }
   const row = data as unknown as MeetingRow;
-  await emitMeetingExtract({ meetingId: row.id }, `meeting-extract:${row.id}:0`);
   log('granola: junta importada', { noteId, meetingId: row.id, projectId: resolved.projectId });
   return { meetingId: row.id, created: true };
 }

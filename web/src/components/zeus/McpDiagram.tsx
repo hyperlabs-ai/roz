@@ -240,7 +240,7 @@ export function McpDiagram({
             <TopTools actions={act?.topActions ?? []} />
           </Node>
 
-          <Wire label="Tu token" icon={<KeyRound />} command="zeus setup claude" />
+          <Wire label="Tu token" icon={<KeyRound />} command="zeus setup" />
 
           <Node
             core

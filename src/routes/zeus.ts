@@ -10,8 +10,10 @@ import { AppError, ValidationError } from '../utils/errors.js';
 import { bearerToken } from '../utils/secure-compare.js';
 import { errMessage } from './http.js';
 import { ZEUS_NODE_KINDS, ZEUS_NODE_STATUSES, type ZeusNodeKind, type ZeusNodeStatus } from '../types/zeus.js';
+import { config } from '../config.js';
 import { actorForDev, authenticateZeusToken, isUuid, type ZeusActor } from '../zeus/core.js';
-import { bootstrapAdmin, getGraph, getOrg, updateOrgMember } from '../zeus/graph.js';
+import { decideDeviceRequest, getDeviceRequest, pollDeviceAuth, startDeviceAuth } from '../zeus/device-auth.js';
+import { bootstrapAdmin, getGraph, getOrg, setOrgDuty, updateOrgMember, type OrgMemberPatch } from '../zeus/graph.js';
 import {
   cancelRequest,
   createRequest,
@@ -22,6 +24,7 @@ import {
   listActivity,
   listTokens,
   markRead,
+  messageHistory,
   publicOrigin,
   resolveRequest,
   revokeToken,
@@ -31,13 +34,17 @@ import {
 } from '../zeus/inbox.js';
 import { ZEUS_MESSAGE_STATUSES, type ZeusMessageStatus } from '../types/zeus.js';
 import { listSources, markSourceDirty, reimportNode } from '../zeus/ingest.js';
+import { linearBoard } from '../zeus/linear.js';
 import { mcpStatus } from '../zeus/mcp-status.js';
 import { archiveNode, createEdge, createNode, deleteEdge, getNodeDetail, listNodes, searchNodes, updateNode } from '../zeus/nodes.js';
 import {
+  cancelGrantIntent,
   createEnv,
+  createGrantIntent,
   envHistory,
   envHistoryMeta,
   grantAccess,
+  listGrantIntentsForCli,
   listKeys,
   listProjectsForCli,
   pullEnv,
@@ -83,6 +90,12 @@ const run =
       return fail(c, err);
     }
   };
+
+/**
+ * IP de quien llama, detrás del proxy de Railway. Solo para los límites y para mostrarla al aprobar.
+ * Se toma la ÚLTIMA de x-forwarded-for (la que agregó el proxy): las de antes las escribe el cliente.
+ */
+const clientIp = (c: C): string | null => c.req.header('x-forwarded-for')?.split(',').pop()?.trim() || c.req.header('x-real-ip')?.trim() || null;
 
 // ================================================================ dashboard
 
@@ -160,10 +173,20 @@ zeusDashboardRoutes.patch(
   '/org/:devId',
   web(async (c, actor) => {
     const b = await body(c);
-    const patch: { reportsTo?: string | null; zeusAdmin?: boolean } = {};
+    const patch: OrgMemberPatch = {};
     if (b.reportsTo !== undefined) patch.reportsTo = b.reportsTo === null ? null : String(b.reportsTo);
     if (b.zeusAdmin !== undefined) patch.zeusAdmin = !!b.zeusAdmin;
+    if (b.title !== undefined) patch.title = b.title === null ? null : String(b.title);
+    if (b.alsoReportsTo !== undefined) patch.alsoReportsTo = Array.isArray(b.alsoReportsTo) ? b.alsoReportsTo.map(String) : [];
     return updateOrgMember(param(c, 'devId'), patch, actor);
+  }),
+);
+// Quién se encarga de un tema (lista en orden). Solo admin de zeus.
+zeusDashboardRoutes.put(
+  '/org/duties/:duty',
+  web(async (c, actor) => {
+    const b = await body(c);
+    return setOrgDuty(param(c, 'duty'), Array.isArray(b.devIds) ? b.devIds.map(String) : [], actor);
   }),
 );
 
@@ -177,7 +200,34 @@ zeusDashboardRoutes.delete(
   }),
 );
 
+// Conectar una PC (`zeus setup`): la página /conectar lee la solicitud por su código y la aprueba o
+// rechaza con la sesión de quien mira. Ver src/zeus/device-auth.ts.
+zeusDashboardRoutes.get('/device/:userCode', web((c, actor) => getDeviceRequest(param(c, 'userCode'), actor)));
+zeusDashboardRoutes.post('/device/:userCode/approve', web((c, actor) => decideDeviceRequest(param(c, 'userCode'), 'approve', actor)));
+zeusDashboardRoutes.post('/device/:userCode/deny', web((c, actor) => decideDeviceRequest(param(c, 'userCode'), 'deny', actor)));
+
 zeusDashboardRoutes.get('/inbox', web((_c, actor) => getInbox(actor)));
+// Tickets de Linear de quien mira, aparte de la bandeja: Linear puede tardar y no debe frenarla.
+zeusDashboardRoutes.get('/linear/board', web((_c, actor) => linearBoard(actor)));
+// Historial completo (leído y no leído) con filtros: para volver a abrir un mensaje viejo.
+zeusDashboardRoutes.get(
+  '/messages',
+  web((c, actor) => {
+    const kind = c.req.query('kind');
+    return messageHistory(
+      {
+        box: c.req.query('box') === 'sent' ? 'sent' : 'received',
+        kind: kind === 'message' || kind === 'task' || kind === 'plan' || kind === 'env_change' ? kind : null,
+        with: c.req.query('with') ?? null,
+        projectKey: c.req.query('project') ?? null,
+        q: c.req.query('q') ?? null,
+        before: c.req.query('before') ?? null,
+        limit: Number(c.req.query('limit')) || undefined,
+      },
+      actor,
+    );
+  }),
+);
 zeusDashboardRoutes.post(
   '/messages',
   web(async (c, actor) => {
@@ -235,7 +285,7 @@ zeusDashboardRoutes.post(
   '/requests',
   web(async (c, actor) => {
     const b = await body(c);
-    return createRequest({ kind: b.kind, title: String(b.title ?? ''), detail: b.detail ?? '', resourceRef: b.resourceRef ?? null }, actor);
+    return createRequest({ kind: b.kind, title: String(b.title ?? ''), detail: b.detail ?? '', resourceRef: b.resourceRef ?? null, topic: b.topic ? String(b.topic) : null }, actor);
   }),
 );
 zeusDashboardRoutes.post(
@@ -263,6 +313,19 @@ zeusDashboardRoutes.get('/mcp', web(() => mcpStatus()));
 
 zeusDashboardRoutes.get('/vault', web(() => vaultOverview()));
 zeusDashboardRoutes.get('/vault/envs/:projectKey/:env/history', web((c) => envHistoryMeta(param(c, 'projectKey'), param(c, 'env'), c.req.query('name') || null)));
+// Dar acceso desde la web = APROBAR: el navegador no tiene la DEK. Lo cifra después el CLI de
+// alguien con acceso (`zeus env grant --pending`). Ver el modelo de amenaza en src/zeus/vault.ts.
+zeusDashboardRoutes.post(
+  '/vault/grant-intents',
+  web(async (c, actor) => {
+    const b = await body(c);
+    return createGrantIntent(
+      { envId: b.envId ? String(b.envId) : null, projectKey: b.projectKey ? String(b.projectKey) : null, env: b.env ? String(b.env) : null, toDevId: String(b.toDevId ?? '') },
+      actor,
+    );
+  }),
+);
+zeusDashboardRoutes.post('/vault/grant-intents/:id/cancel', web((c, actor) => cancelGrantIntent(param(c, 'id'), actor)));
 zeusDashboardRoutes.post(
   '/vault/keys/:id/revoke',
   web(async (c, actor) => {
@@ -277,10 +340,32 @@ export const zeusCliRoutes = new Hono<RozContext>();
 
 async function cliActor(c: C): Promise<ZeusActor> {
   const actor = await authenticateZeusToken(bearerToken(c.req.header('authorization')), 'cli');
-  if (!actor) throw new AppError('UNAUTHORIZED', 'token de zeus inválido o revocado (crea uno en roz → Zeus → MCP)', 401);
+  if (!actor) throw new AppError('UNAUTHORIZED', 'token de zeus inválido o revocado (conecta este equipo otra vez con `zeus setup`)', 401);
   return actor;
 }
 const cli = <R>(fn: (c: C, actor: ZeusActor) => Promise<R>) => run(cliActor, fn);
+
+// Conectar este equipo sin copiar tokens (`zeus setup`): rutas PÚBLICAS, sin token. Abrir da un
+// device_code secreto y un código corto que la persona aprueba en roz (/conectar); consultar devuelve
+// el token una sola vez cuando ya se aprobó. Límites y modelo de amenaza en src/zeus/device-auth.ts.
+const open =
+  <R>(fn: (c: C) => Promise<R>) =>
+  async (c: C) => {
+    try {
+      return c.json((await fn(c)) as any);
+    } catch (err) {
+      return fail(c, err);
+    }
+  };
+zeusCliRoutes.post(
+  '/device/start',
+  open(async (c) => {
+    const b = await c.req.json().catch(() => ({}));
+    // La aprobación vive en el front (roz); si no hay DASHBOARD_URL, se asume front y back en el mismo origen.
+    return startDeviceAuth(b && typeof b === 'object' ? b : {}, { ip: clientIp(c), approveBase: config.dashboard.url || publicOrigin(c.req) });
+  }),
+);
+zeusCliRoutes.post('/device/poll', open(async (c) => pollDeviceAuth(String((await body(c)).deviceCode ?? ''), { ip: clientIp(c) })));
 
 zeusCliRoutes.get('/whoami', cli(async (_c, actor) => ({ dev: { id: actor.devId, name: actor.name, email: actor.email }, zeusAdmin: actor.admin })));
 
@@ -325,6 +410,9 @@ zeusCliRoutes.post(
     return grantAccess(param(c, 'projectKey'), param(c, 'env'), { keyId: String(b.keyId ?? ''), grants: Array.isArray(b.grants) ? b.grants : [] }, actor);
   }),
 );
+
+// Accesos aprobados en la web que este dev puede cifrar (tiene acceso al entorno).
+zeusCliRoutes.get('/vault/grant-intents', cli(async (_c, actor) => ({ intents: await listGrantIntentsForCli(actor) })));
 
 zeusCliRoutes.delete('/vault/envs/:projectKey/:env/grants/:keyId', cli((c, actor) => revokeAccess(param(c, 'projectKey'), param(c, 'env'), param(c, 'keyId'), actor)));
 

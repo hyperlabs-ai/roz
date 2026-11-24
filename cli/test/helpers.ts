@@ -107,6 +107,12 @@ export class FakeZeus {
     const raw = typeof init.body === 'string' ? init.body : null;
     if (raw != null) this.bodies.push(raw);
     try {
+      // device/*: públicas (login por navegador de `zeus setup`), antes de exigir token.
+      if (u.pathname.startsWith('/v1/zeus/device/')) {
+        const body = raw != null ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const result = this.deviceRoute(u.pathname.slice('/v1/zeus/device/'.length), body);
+        return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
       const headers = new Headers(init.headers);
       const token = (headers.get('authorization') ?? '').replace(/^Bearer /, '');
       const dev = this.devs.find((d) => d.token === token);
@@ -122,6 +128,35 @@ export class FakeZeus {
       throw err;
     }
   };
+
+  /** Solicitudes de `zeus setup`. */
+  readonly devices: Array<{ deviceCode: string; userCode: string; clientName: string; status: 'pending' | 'approved' | 'denied' | 'delivered'; polls: number }> = [];
+  /** Lo que hace "la persona en el navegador": decide al llegar a N consultas, a nombre de `devName`. */
+  browser: { devName: string; afterPolls: number; decision: 'approve' | 'deny' | 'never' } | null = null;
+
+  private deviceRoute(route: string, body: Record<string, unknown>): unknown {
+    if (route === 'start') {
+      const n = this.devices.length + 1;
+      const d = { deviceCode: `zdc_${'d'.repeat(42)}${n}`, userCode: `BCDF-${String(2000 + n)}`, clientName: String(body.clientName ?? ''), status: 'pending' as const, polls: 0 };
+      this.devices.push(d);
+      const uri = 'https://roz.test/conectar';
+      return { deviceCode: d.deviceCode, userCode: d.userCode, verificationUri: uri, verificationUriComplete: `${uri}?code=${d.userCode}`, expiresIn: 600, interval: 5 };
+    }
+    if (route === 'poll') {
+      const d = this.devices.find((x) => x.deviceCode === body.deviceCode);
+      if (!d) return { status: 'expired' };
+      d.polls++;
+      const b = this.browser;
+      if (d.status === 'pending' && b && b.decision !== 'never' && d.polls >= b.afterPolls) d.status = b.decision === 'approve' ? 'approved' : 'denied';
+      if (d.status === 'pending') return { status: 'pending', interval: 5 };
+      if (d.status === 'denied' || d.status === 'delivered') return { status: d.status };
+      d.status = 'delivered';
+      const dev = this.devs.find((x) => x.name === b?.devName);
+      if (!dev) throw new HttpError(500, 'INTERNAL', 'sin dev para el navegador');
+      return { status: 'approved', token: dev.token, dev: { id: dev.id, name: dev.name, email: dev.email } };
+    }
+    throw new HttpError(404, 'NOT_FOUND', 'ruta desconocida');
+  }
 
   private route(dev: Dev, method: string, route: string, query: URLSearchParams, body: Record<string, unknown>): unknown {
     const parts = route.split('/').filter(Boolean).map(decodeURIComponent);
@@ -419,7 +454,7 @@ export interface Machine {
   prompt: FakePrompt;
   out: string[];
   log: string[];
-  spawned: Array<{ command: string; args: string[]; env: NodeJS.ProcessEnv }>;
+  spawned: Array<{ command: string; args: string[]; env: NodeJS.ProcessEnv; quiet: boolean }>;
   /** Lo que hay en el portapapeles, en stdin y las URLs que se abrieron. */
   io: { clipboard: string; stdin: string; opened: string[] };
   /** Ruta absoluta de un archivo en la carpeta de trabajo. */
@@ -448,8 +483,8 @@ export function machine(zeus: FakeZeus, token: string, name: string, platform: N
     platform,
     env: { PATH: '/usr/bin' },
     hostname: name,
-    spawn: async (command, args, env) => {
-      spawned.push({ command, args, env });
+    spawn: async (command, args, env, opts) => {
+      spawned.push({ command, args, env, quiet: opts?.quiet ?? false });
       return 7;
     },
     clipboard: async () => io.clipboard,

@@ -17,7 +17,7 @@ import { COMMAND_TYPE, OPTION_TYPE } from './types.js';
 
 export const ROZ_COMMAND_NAME = 'roz';
 
-export const ROZ_SUBCOMMANDS = ['tarea', 'ticket', 'status', 'plan', 'pulso', 'infra', 'junta'] as const;
+export const ROZ_SUBCOMMANDS = ['tarea', 'ticket', 'status', 'plan', 'pulso', 'infra', 'junta', 'bandeja', 'linear', 'crear'] as const;
 export type RozSubcommand = (typeof ROZ_SUBCOMMANDS)[number];
 
 export const MESSAGE_COMMAND_KEYS = ['crear-tarea', 'decision', 'citar-tareas'] as const;
@@ -81,6 +81,13 @@ const sub = (name: RozSubcommand, description: string, options: CommandOptionDef
  * resuelve el valor sin adivinar.
  */
 export const ROZ_SUBCOMMAND_DEFS: Record<RozSubcommand, CommandOptionDef> = {
+  bandeja: sub('bandeja', 'Tu bandeja de zeus: Linear, encargos, mensajes y variables (solo tú)'),
+  linear: sub('linear', 'Tickets activos de Linear (solo los ves tú)', [
+    str('persona', 'De quién (si no, los tuyos)', { autocomplete: true, max_length: 100 }),
+  ]),
+  crear: sub('crear', 'Crea un ticket en Linear (asignado a ti si no eliges a alguien)', [
+    str('para', 'Asignarlo a esta persona', { autocomplete: true, max_length: 100 }),
+  ]),
   tarea: sub('tarea', 'Busca una tarea y publica su ficha en el canal', [
     str('buscar', 'Texto, ID (WAT-44) o persona', { required: true, autocomplete: true, max_length: 100 }),
     str('persona', 'Solo tareas de esta persona', { autocomplete: true, max_length: 100 }),
@@ -106,7 +113,7 @@ export const ROZ_SUBCOMMAND_DEFS: Record<RozSubcommand, CommandOptionDef> = {
 export const ROZ_COMMAND: CommandDef = {
   type: COMMAND_TYPE.CHAT_INPUT,
   name: ROZ_COMMAND_NAME,
-  description: 'roz: tareas, tickets, daily, planes del agente, pulso, infra y juntas',
+  description: 'roz: bandeja, Linear, tareas, tickets, daily, planes, pulso, infra y juntas',
   options: ROZ_SUBCOMMANDS.map((s) => ROZ_SUBCOMMAND_DEFS[s]),
 };
 

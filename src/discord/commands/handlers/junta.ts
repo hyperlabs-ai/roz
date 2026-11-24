@@ -1,12 +1,11 @@
-// /roz junta [proyecto] → modal (título + notas/transcript) → sesión manual en la bandeja de Juntas.
+// /roz junta [proyecto] → modal (título + notas/transcript) → junta guardada en el registro de Juntas.
 // Dueño: agente "visibilidad". Contrato: docs/discord-commands-contract.md §5.7.
 //
 //   · autocomplete: `proyecto` → proyectos activos (value = project.id).
 //   · run: SIEMPRE abre el modal `junta.modal:<projectId|_>` (campos `titulo` y `notas`, ≤ 4000: el tope
 //     de un campo de modal). defer 'never'. Sin opción, el proyecto es el mapeado al canal (si hay).
-//   · junta.modal: createMeeting (src/meetings/service.ts) con format 'texto', source manual; la
-//     extracción (tareas, compromisos, decisiones) sale por el outbox como cualquier junta. Responde
-//     EFÍMERO con el link a la bandeja (/app/meetings).
+//   · junta.modal: createMeeting (src/meetings/service.ts) con format 'texto', source manual. La
+//     junta queda como registro (sin extracción de tareas). Responde EFÍMERO con el link a Juntas.
 import { db } from '../../../db/supabase.js';
 import { createMeeting } from '../../../meetings/service.js';
 import { AppError, ValidationError } from '../../../utils/errors.js';
@@ -101,7 +100,7 @@ export const handlers: HandlerModule = {
         }
         return openModal(
           modal(buildCustomId('junta.modal', projectId), 'Nueva junta para roz', [
-            textField({ customId: 'titulo', label: 'Título', maxLength: 200, placeholder: 'Ej.: Kickoff con el cliente' }),
+            textField({ customId: 'titulo', label: 'Título (opcional)', required: false, maxLength: 200, placeholder: 'Si lo dejas vacío, sale del texto de Granola' }),
             textField({
               customId: 'notas',
               label: 'Notas o transcript',
@@ -121,14 +120,12 @@ export const handlers: HandlerModule = {
       async run(ctx) {
         const title = field(ctx.fields, 'titulo');
         const notes = field(ctx.fields, 'notas');
-        if (!title) throw new ValidationError('la junta necesita un título');
         if (!notes) throw new ValidationError('pega las notas o el transcript de la junta');
         const meeting = await createMeeting(
           meetingUser(ctx.actor),
           {
-            title,
-            heldAt: new Date().toISOString(),
-            attendees: [],
+            // Vacíos: título, fecha y asistentes salen del texto pegado (formato Granola) si los trae.
+            title: title || undefined,
             projectId: ctx.customId.args[0] ?? null,
             format: 'texto',
             content: notes,
@@ -142,7 +139,7 @@ export const handlers: HandlerModule = {
           notice(
             'ok',
             `Junta «${meeting.title}» guardada${where}`,
-            `roz está leyendo las notas: las tareas y compromisos aparecerán en la bandeja de Juntas en un momento${btn ? '' : ' (roz → Juntas)'}.`,
+            `Quedó en el registro de Juntas${btn ? '' : ' (roz → Juntas)'}: búscala ahí o pídele a Claude que la traiga con zeus.`,
             btn ? [row(btn)] : [],
           ),
         );

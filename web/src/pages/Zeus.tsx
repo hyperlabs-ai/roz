@@ -34,7 +34,7 @@ export default function Zeus({ section = 'mapa' }: { section?: ZeusSection }) {
   return (
     <Layout
       title={title}
-      eyebrow="Zeus"
+      eyebrow={section === 'mapa' || section === 'biblioteca' || section === 'equipo' ? 'Contexto' : 'Trabajo'}
       width="full"
       actions={
         me.data ? (

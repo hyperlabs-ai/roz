@@ -11,10 +11,10 @@
 // un secreto. Por eso quitar un acceso marca el entorno para rotación.
 import { createHash } from 'node:crypto';
 import { db } from '../db/supabase.js';
-import type { ZeusVaultEnvSummary, ZeusVaultKey, ZeusVaultOverview } from '../types/zeus.js';
+import type { ZeusVaultEnvSummary, ZeusVaultGrantIntent, ZeusVaultKey, ZeusVaultOverview } from '../types/zeus.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { isUuid, logActivity, requireAdmin, resolveProject, actorActivity, type ZeusActor } from './core.js';
-import { notifyEnvChange } from './inbox.js';
+import { inboxNotice, notifyEnvChange } from './inbox.js';
 
 export const VAULT_STALE_CODE = 'ZEUS_VAULT_STALE';
 export const VAULT_NO_ACCESS_CODE = 'ZEUS_VAULT_NO_ACCESS';
@@ -606,6 +606,7 @@ export async function grantAccess(
   if (error) throw error;
   for (const g of grants) audit(actor, 'grant', env.id, g.keyId, { project: project.key, env: env.name, to: valid.get(g.keyId)!.name });
   logActivity(actorActivity(actor), 'env.grant', `project:${project.id}`, { env: env.name, keys: grants.length });
+  await fulfillIntents(env, project, [...new Set([...valid.values()].map((k) => k.dev_id))], actor);
   return { ok: true, granted: grants.length };
 }
 
@@ -749,6 +750,295 @@ export async function rotateDeviceKey(input: DeviceKeyRotateInput, actor: ZeusAc
   return { ok: true, moved: rows.length };
 }
 
+// ---------------------------------------------------------------- accesos aprobados en la web
+//
+// "Aprobar en la web, cifrar en el CLI". El navegador no tiene la DEK de ningún entorno (ni debe
+// tenerla), así que no puede dar acceso. Lo que hace es dejar registrada una DECISIÓN: "Fer aprueba
+// que Ana entre a api-hyperhub-production". El acceso real lo da después el CLI de alguien que ya lo
+// tiene (`zeus env grant --pending`): abre la DEK con su llave privada y la envuelve para la llave
+// pública de cada equipo de Ana.
+//
+// Modelo de amenaza:
+//   · El servidor solo registra quién aprobó a quién. No guarda ni ve material criptográfico nuevo:
+//     comprometer esta tabla no abre ningún secreto.
+//   · Aprobar exige tener acceso vigente al entorno (la misma regla que `zeus env grant`: solo
+//     compartes lo que tú puedes leer). El rol de admin no basta.
+//   · Un servidor COMPROMETIDO sí podría inyectar aprobaciones falsas, o colgarle a un nombre real
+//     una llave pública del atacante. Por eso el CLI que cifra calcula la huella de cada llave con
+//     su pública, la compara con la que reporta zeus y con las ya verificadas en ese equipo, la
+//     muestra y PIDE CONFIRMACIÓN humana antes de envolver nada (la persona debe cotejarla con el
+//     destinatario por un canal distinto a zeus). Saltarse eso exige un `--yes` explícito.
+//   · `zeus doctor` (y el inicio de sesión de Claude) solo AVISA que hay accesos por cifrar; nunca
+//     cifra por su cuenta.
+
+interface IntentRow {
+  id: string;
+  env_id: string;
+  to_dev_id: string;
+  approved_by: string | null;
+  created_at: string;
+}
+const INTENT_COLS = 'id, env_id, to_dev_id, approved_by, created_at';
+
+type ProjectLite = { id: string; key: string; name: string };
+type ActiveKey = { id: string; dev_id: string; name: string; fingerprint: string; public_key: string };
+
+async function loadEnvById(envId: string): Promise<{ env: EnvRow; project: ProjectLite }> {
+  if (!isUuid(envId)) throw new ValidationError('id de entorno inválido');
+  const { data, error } = await db().from('zeus_vault_env').select(ENV_COLS).eq('id', envId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new NotFoundError('ese entorno no existe en la bóveda');
+  const env = data as EnvRow;
+  const { data: p, error: pErr } = await db().from('project').select('id, key, name').eq('id', env.project_id).maybeSingle();
+  if (pErr) throw pErr;
+  if (!p) throw new NotFoundError('el proyecto de ese entorno ya no existe');
+  return { env, project: p as ProjectLite };
+}
+
+/** Llaves que hoy pueden abrir la DEK vigente de un entorno. */
+async function grantedKeyIds(env: EnvRow): Promise<Set<string>> {
+  const { data, error } = await db().from('zeus_vault_grant').select('key_id').eq('env_id', env.id).eq('dek_version', env.dek_version);
+  if (error) throw error;
+  return new Set(((data ?? []) as Array<{ key_id: string }>).map((g) => g.key_id));
+}
+
+async function activeKeysOf(devIds: string[]): Promise<ActiveKey[]> {
+  if (!devIds.length) return [];
+  const { data, error } = await db()
+    .from('zeus_vault_key')
+    .select('id, dev_id, name, fingerprint, public_key')
+    .in('dev_id', [...new Set(devIds)])
+    .is('revoked_at', null)
+    .order('created_at');
+  if (error) throw error;
+  return (data ?? []) as ActiveKey[];
+}
+
+/** Lo mismo que exige `grantAccess`: alguna llave vigente de quien llama abre la DEK vigente. */
+async function requireEnvAccess(env: EnvRow, actor: ZeusActor, what: string): Promise<void> {
+  const [mine, granted] = await Promise.all([activeKeysOf([actor.devId]), grantedKeyIds(env)]);
+  if (!mine.some((k) => granted.has(k.id))) {
+    throw new AppError(VAULT_NO_ACCESS_CODE, `solo quien tiene acceso a este entorno puede ${what}`, 403);
+  }
+}
+
+function toIntent(r: IntentRow, names: Map<string, string>, pendingKeys: number): ZeusVaultGrantIntent {
+  return {
+    id: r.id,
+    envId: r.env_id,
+    toDevId: r.to_dev_id,
+    toDevName: names.get(r.to_dev_id) ?? 'alguien',
+    approvedByName: r.approved_by ? (names.get(r.approved_by) ?? null) : null,
+    createdAt: r.created_at,
+    pendingKeys,
+  };
+}
+
+/**
+ * Aprobar desde la web que alguien entre a un entorno. No da acceso: queda pendiente hasta que un
+ * CLI con acceso lo cifre (`zeus env grant --pending`). Aprobar dos veces devuelve la misma.
+ */
+export async function createGrantIntent(
+  input: { envId?: string | null; projectKey?: string | null; env?: string | null; toDevId: string },
+  actor: ZeusActor,
+): Promise<ZeusVaultGrantIntent> {
+  const { env, project } = input.envId ? await loadEnvById(input.envId) : await loadEnv(String(input.projectKey ?? ''), String(input.env ?? ''));
+  if (!isUuid(input.toDevId ?? '')) throw new ValidationError('falta a quién dar acceso');
+  await requireEnvAccess(env, actor, 'aprobar accesos');
+  const supabase = db();
+  const { data: to, error: toErr } = await supabase.from('dev').select('id, name, active').eq('id', input.toDevId).maybeSingle();
+  if (toErr) throw toErr;
+  const target = to as { id: string; name: string; active: boolean } | null;
+  if (!target || target.active === false) throw new NotFoundError('esa persona no está en el equipo');
+
+  const [keys, granted] = await Promise.all([activeKeysOf([target.id]), grantedKeyIds(env)]);
+  if (!keys.length) {
+    throw new AppError('ZEUS_VAULT_NO_KEY', `${target.name} aún no registra la llave de su equipo: que corra \`zeus key init\` en su PC y vuelve a aprobar`, 409);
+  }
+  const pending = keys.filter((k) => !granted.has(k.id));
+  if (!pending.length) throw new AppError('ZEUS_VAULT_ALREADY_GRANTED', `${target.name} ya tiene acceso a ${project.key}/${env.name} en todos sus equipos`, 409);
+
+  const open = async (): Promise<IntentRow | null> => {
+    const { data, error } = await supabase
+      .from('zeus_vault_grant_intent')
+      .select(INTENT_COLS)
+      .eq('env_id', env.id)
+      .eq('to_dev_id', target.id)
+      .is('fulfilled_at', null)
+      .is('cancelled_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    return data as IntentRow | null;
+  };
+  const existing = await open();
+  if (existing) return toIntent(existing, await devNames([target.id, existing.approved_by]), pending.length);
+
+  const { data, error } = await supabase
+    .from('zeus_vault_grant_intent')
+    .insert({ env_id: env.id, to_dev_id: target.id, approved_by: actor.devId })
+    .select(INTENT_COLS)
+    .single();
+  if (error) {
+    // Dos aprobaciones a la vez: el índice parcial deja pasar una y la otra devuelve esa.
+    if ((error as { code?: string }).code === '23505') {
+      const raced = await open();
+      if (raced) return toIntent(raced, await devNames([target.id, raced.approved_by]), pending.length);
+    }
+    throw error;
+  }
+  audit(actor, 'grant.approve', env.id, null, { project: project.key, env: env.name, to: target.name });
+  logActivity(actorActivity(actor), 'env.grant_approve', `project:${project.id}`, { env: env.name, to: target.name });
+  return toIntent(data as IntentRow, await devNames([target.id, actor.devId]), pending.length);
+}
+
+/** Cancelar una aprobación abierta: quien la aprobó, el destinatario, alguien con acceso o un admin. */
+export async function cancelGrantIntent(id: string, actor: ZeusActor): Promise<{ ok: true }> {
+  if (!isUuid(id)) throw new ValidationError('id inválido');
+  const supabase = db();
+  const { data, error } = await supabase.from('zeus_vault_grant_intent').select(`${INTENT_COLS}, fulfilled_at, cancelled_at`).eq('id', id).maybeSingle();
+  if (error) throw error;
+  const row = data as (IntentRow & { fulfilled_at: string | null; cancelled_at: string | null }) | null;
+  if (!row) throw new NotFoundError('esa aprobación no existe');
+  if (row.fulfilled_at) throw new AppError('ZEUS_VAULT_INTENT_DONE', 'ese acceso ya se cifró: para quitarlo usa `zeus env revoke`', 409);
+  if (row.cancelled_at) return { ok: true };
+  const { env, project } = await loadEnvById(row.env_id);
+  if (!actor.admin && actor.devId !== row.approved_by && actor.devId !== row.to_dev_id) await requireEnvAccess(env, actor, 'cancelar accesos aprobados');
+  const { error: updErr } = await supabase
+    .from('zeus_vault_grant_intent')
+    .update({ cancelled_at: new Date().toISOString(), cancelled_by: actor.devId })
+    .eq('id', id)
+    .is('fulfilled_at', null)
+    .is('cancelled_at', null);
+  if (updErr) throw updErr;
+  const names = await devNames([row.to_dev_id]);
+  audit(actor, 'grant.cancel', env.id, null, { project: project.key, env: env.name, to: names.get(row.to_dev_id) ?? null });
+  return { ok: true };
+}
+
+export interface CliGrantIntent {
+  id: string;
+  projectKey: string;
+  env: string;
+  dekVersion: number;
+  toDevId: string;
+  toDevName: string;
+  approvedByName: string | null;
+  createdAt: string;
+  /** Equipos vigentes del destinatario que aún no tienen la llave: a estos hay que envolverla. */
+  keys: Array<{ keyId: string; name: string; fingerprint: string; publicKey: string }>;
+}
+
+/**
+ * Para `zeus env grant --pending` y `zeus doctor`: las aprobaciones abiertas de los entornos donde
+ * quien llama tiene acceso vigente (solo esas puede cifrar), con las públicas que hay que envolver.
+ */
+export async function listGrantIntentsForCli(actor: ZeusActor): Promise<CliGrantIntent[]> {
+  const supabase = db();
+  const mine = await activeKeysOf([actor.devId]);
+  if (!mine.length) return [];
+  const { data: held, error: heldErr } = await supabase.from('zeus_vault_grant').select('env_id').in('key_id', mine.map((k) => k.id));
+  if (heldErr) throw heldErr;
+  const heldEnvs = [...new Set(((held ?? []) as Array<{ env_id: string }>).map((g) => g.env_id))];
+  if (!heldEnvs.length) return [];
+  const { data: intents, error } = await supabase
+    .from('zeus_vault_grant_intent')
+    .select(INTENT_COLS)
+    .in('env_id', heldEnvs)
+    .is('fulfilled_at', null)
+    .is('cancelled_at', null)
+    .order('created_at');
+  if (error) throw error;
+  const rows = (intents ?? []) as IntentRow[];
+  if (!rows.length) return [];
+
+  const envIds = [...new Set(rows.map((r) => r.env_id))];
+  const [envs, grants, projects] = await Promise.all([
+    supabase.from('zeus_vault_env').select(ENV_COLS).in('id', envIds),
+    supabase.from('zeus_vault_grant').select('env_id, key_id, dek_version').in('env_id', envIds),
+    supabase.from('project').select('id, key, name'),
+  ]);
+  for (const r of [envs, grants, projects]) if (r.error) throw r.error;
+  const envById = new Map(((envs.data ?? []) as EnvRow[]).map((e) => [e.id, e]));
+  const projectById = new Map(((projects.data ?? []) as ProjectLite[]).map((p) => [p.id, p]));
+  const grantRows = (grants.data ?? []) as Array<{ env_id: string; key_id: string; dek_version: number }>;
+  // Solo cuenta el acceso a la versión VIGENTE de cada entorno (no uno de antes de una rotación).
+  const covered = new Set(grantRows.filter((g) => envById.get(g.env_id)?.dek_version === g.dek_version).map((g) => `${g.env_id}:${g.key_id}`));
+  const keys = await activeKeysOf(rows.map((r) => r.to_dev_id));
+  const names = await devNames(rows.flatMap((r) => [r.to_dev_id, r.approved_by]));
+
+  return rows.flatMap((r) => {
+    const env = envById.get(r.env_id);
+    const project = env ? projectById.get(env.project_id) : undefined;
+    if (!env || !project || !mine.some((k) => covered.has(`${env.id}:${k.id}`))) return [];
+    return [
+      {
+        id: r.id,
+        projectKey: project.key,
+        env: env.name,
+        dekVersion: env.dek_version,
+        toDevId: r.to_dev_id,
+        toDevName: names.get(r.to_dev_id) ?? 'alguien',
+        approvedByName: r.approved_by ? (names.get(r.approved_by) ?? null) : null,
+        createdAt: r.created_at,
+        keys: keys
+          .filter((k) => k.dev_id === r.to_dev_id && !covered.has(`${env.id}:${k.id}`))
+          .map((k) => ({ keyId: k.id, name: k.name, fingerprint: k.fingerprint, publicKey: k.public_key })),
+      },
+    ];
+  });
+}
+
+/**
+ * Tras dar acceso: cierra las aprobaciones de esas personas en ese entorno cuyas llaves vigentes ya
+ * quedaron todas cubiertas, y le avisa a cada una en su bandeja. Nunca hace fallar el grant.
+ */
+async function fulfillIntents(env: EnvRow, project: ProjectLite, devIds: string[], actor: ZeusActor): Promise<void> {
+  try {
+    if (!devIds.length) return;
+    const supabase = db();
+    const { data, error } = await supabase
+      .from('zeus_vault_grant_intent')
+      .select(INTENT_COLS)
+      .eq('env_id', env.id)
+      .in('to_dev_id', devIds)
+      .is('fulfilled_at', null)
+      .is('cancelled_at', null);
+    if (error) throw error;
+    const rows = (data ?? []) as IntentRow[];
+    if (!rows.length) return;
+    const [keys, granted] = await Promise.all([activeKeysOf(rows.map((r) => r.to_dev_id)), grantedKeyIds(env)]);
+    const names = await devNames(rows.map((r) => r.approved_by));
+    for (const r of rows) {
+      const theirs = keys.filter((k) => k.dev_id === r.to_dev_id);
+      if (!theirs.length || theirs.some((k) => !granted.has(k.id))) continue;
+      const { data: done, error: updErr } = await supabase
+        .from('zeus_vault_grant_intent')
+        .update({ fulfilled_at: new Date().toISOString(), fulfilled_by: actor.devId })
+        .eq('id', r.id)
+        .is('fulfilled_at', null)
+        .is('cancelled_at', null)
+        .select('id');
+      if (updErr) throw updErr;
+      if (!((done ?? []) as unknown[]).length) continue;
+      const approver = r.approved_by ? names.get(r.approved_by) : null;
+      await inboxNotice({
+        toDevId: r.to_dev_id,
+        fromDevId: actor.devId,
+        subject: `Ya tienes acceso a ${project.key}/${env.name}`,
+        body: [
+          `${actor.name} cifró la llave de ${project.key}/${env.name} para ${theirs.length === 1 ? 'tu equipo' : `tus ${theirs.length} equipos`}${approver ? ` (lo aprobó ${approver})` : ''}.`,
+          '',
+          `Bájalo: zeus env pull ${project.key} ${env.name}   (dentro del repo basta la etapa: local o prod)`,
+        ].join('\n'),
+        ref: `project:${project.id}`,
+        projectId: project.id,
+      });
+    }
+  } catch {
+    // El cierre es un extra: el acceso ya quedó dado. La aprobación seguiría visible como abierta.
+  }
+}
+
 // ---------------------------------------------------------------- vistas
 
 /** Proyectos y entornos, y si ALGUNA llave de quien llama tiene acceso. Para `zeus env ls`. */
@@ -780,15 +1070,16 @@ export async function listProjectsForCli(actor: ZeusActor): Promise<Array<{ key:
 /** Lo que el dashboard muestra: nombres, quién tiene acceso y la auditoría. Jamás valores. */
 export async function vaultOverview(): Promise<ZeusVaultOverview> {
   const supabase = db();
-  const [envs, secrets, grants, keys, auditRes, projects] = await Promise.all([
+  const [envs, secrets, grants, keys, auditRes, projects, intents] = await Promise.all([
     supabase.from('zeus_vault_env').select(ENV_COLS).order('name'),
     supabase.from('zeus_vault_secret').select('env_id, name, dek_version, version, updated_at, updated_by').order('name'),
     supabase.from('zeus_vault_grant').select('env_id, key_id, dek_version, created_at'),
     supabase.from('zeus_vault_key').select(KEY_COLS).order('created_at'),
     supabase.from('zeus_vault_audit').select('id, at, dev_id, env_id, action, detail').order('at', { ascending: false }).limit(60),
     supabase.from('project').select('id, key, name'),
+    supabase.from('zeus_vault_grant_intent').select(INTENT_COLS).is('fulfilled_at', null).is('cancelled_at', null).order('created_at'),
   ]);
-  for (const r of [envs, secrets, grants, keys, auditRes, projects]) if (r.error) throw r.error;
+  for (const r of [envs, secrets, grants, keys, auditRes, projects, intents]) if (r.error) throw r.error;
   const keyRows = (keys.data ?? []) as KeyRow[];
   type S = { env_id: string; name: string; dek_version: number; version: number; updated_at: string; updated_by: string | null };
   type G = { env_id: string; key_id: string; dek_version: number; created_at: string };
@@ -796,7 +1087,13 @@ export async function vaultOverview(): Promise<ZeusVaultOverview> {
   const secretRows = (secrets.data ?? []) as S[];
   const grantRows = (grants.data ?? []) as G[];
   const auditRows = (auditRes.data ?? []) as A[];
-  const names = await devNames([...keyRows.map((k) => k.dev_id), ...secretRows.map((s) => s.updated_by), ...auditRows.map((a) => a.dev_id)]);
+  const intentRows = (intents.data ?? []) as IntentRow[];
+  const names = await devNames([
+    ...keyRows.map((k) => k.dev_id),
+    ...secretRows.map((s) => s.updated_by),
+    ...auditRows.map((a) => a.dev_id),
+    ...intentRows.flatMap((i) => [i.to_dev_id, i.approved_by]),
+  ]);
   const keyById = new Map(keyRows.map((k) => [k.id, k]));
   const projectById = new Map(((projects.data ?? []) as Array<{ id: string; key: string; name: string }>).map((p) => [p.id, p]));
   const envRows = (envs.data ?? []) as EnvRow[];
@@ -825,9 +1122,14 @@ export async function vaultOverview(): Promise<ZeusVaultOverview> {
     }];
   });
   out.sort((a, b) => a.projectName.localeCompare(b.projectName) || a.name.localeCompare(b.name));
+  const envById = new Map(envRows.map((e) => [e.id, e]));
+  const covered = new Set(grantRows.filter((g) => envById.get(g.env_id)?.dek_version === g.dek_version).map((g) => `${g.env_id}:${g.key_id}`));
   return {
     envs: out,
     keys: keyRows.map((k) => toKey(k, names)),
+    intents: intentRows
+      .filter((i) => envById.has(i.env_id))
+      .map((i) => toIntent(i, names, keyRows.filter((k) => k.dev_id === i.to_dev_id && !k.revoked_at && !covered.has(`${i.env_id}:${k.id}`)).length)),
     audit: auditRows.map((a) => ({
       id: Number(a.id),
       at: a.at,

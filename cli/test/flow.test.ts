@@ -14,7 +14,8 @@ import { detectRepo, type RegisteredKey } from '../src/commands/vault.js';
 import { parseDotenv } from '../src/dotenv.js';
 import { defaultEnvFile, readHeader } from '../src/envfile.js';
 import { loadDeviceKey } from '../src/store.js';
-import { FakeZeus, machine, plaintextForms, type Machine } from './helpers.js';
+import { ZeusClient } from '../src/api.js';
+import { FakeZeus, ZEUS_URL, machine, plaintextForms, type Machine } from './helpers.js';
 
 let zeus: FakeZeus;
 let ana: Machine; // admin
@@ -362,7 +363,19 @@ describe('zeus setup claude', () => {
   it('agrega los hooks sin duplicar ni tocar lo demás, y registra el MCP', async () => {
     const settings = path.join(ana.ctx.cwd, '.claude', 'settings.json');
     ana.fs.files.set(settings, JSON.stringify({ model: 'opus', hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'mi-hook' }] }] } }));
-    expect(await setup(ana.ctx, ['claude', '--project', '--yes'], 'zeus_' + 'x'.repeat(43))).toBe(0);
+    // `setup claude` es el nombre de antes: ya conectado y con llave, solo toca Claude Code.
+    const token = zeus.devs[0]!.token;
+    const spawn = ana.ctx.spawn;
+    ana.ctx.spawn = async (cmd, args, env, opts) => (await spawn(cmd, args, env, opts), 0);
+    const deps = {
+      config: { url: ZEUS_URL, token },
+      connect: (url: string, t: string) => new ZeusClient({ url, token: t, fetch: zeus.fetch }),
+      device: (url: string) => new ZeusClient({ url, token: '', fetch: zeus.fetch }),
+      sleep: async () => undefined,
+      which: (cmd: string) => `/usr/bin/${cmd}`,
+    };
+    expect(await setup(ana.ctx, ['claude', '--project', '--yes'], deps)).toBe(0);
+    expect(zeus.devices).toHaveLength(0);
     const s = JSON.parse(ana.fs.files.get(settings)!);
     expect(s.model).toBe('opus');
     expect(s.hooks.PreToolUse).toHaveLength(2);

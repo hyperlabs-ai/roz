@@ -756,18 +756,14 @@ export interface RozV2Status {
   granolaEnabled: boolean;
 }
 
-// ---- Juntas
+// ---- Juntas (espejo de src/types/roz-v2.ts y src/meetings/service.ts)
 
 export type MeetingSource = 'manual' | 'granola';
-export type MeetingStatus = 'pendiente' | 'extrayendo' | 'lista' | 'error';
-export type TranscriptFormat = 'texto' | 'vtt' | 'srt' | 'granola_resumen' | 'granola_api';
-export type ManualTranscriptFormat = Exclude<TranscriptFormat, 'granola_api'>;
-export type MeetingProjectSource = 'dominio' | 'elegido';
+export type ManualTranscriptFormat = 'texto' | 'vtt' | 'srt' | 'granola_resumen';
 export interface MeetingAttendee { name: string; email: string | null }
-export type MeetingCandidateKind = 'tarea' | 'compromiso' | 'decision';
-export type MeetingCandidateStatus = 'pendiente' | 'aceptada' | 'comentada' | 'descartada' | 'guardada';
 export const MEETING_TRANSCRIPT_MAX_CHARS = 400_000;
 
+/** Una junta: solo registro (texto, quién estuvo, cuándo, proyecto). */
 export interface MeetingSummary {
   id: string;
   source: MeetingSource;
@@ -777,81 +773,52 @@ export interface MeetingSummary {
   attendees: MeetingAttendee[];
   projectId: string | null;
   projectName: string | null;
-  projectSource: MeetingProjectSource | null;
-  transcriptFormat: TranscriptFormat;
-  status: MeetingStatus;
-  error: string | null;
-  extractedAt: string | null;
-  counts: { pendientes: number; aceptadas: number; descartadas: number; decisiones: number };
+  createdBy: { id: string; name: string } | null;
   createdAt: string;
+  /** Solo al buscar por texto: recorte de dónde coincidió. */
+  snippet?: string | null;
 }
 export interface MeetingDetail extends MeetingSummary {
   transcript: string;
-  extractionModel: string | null;
-}
-export interface MeetingCandidate {
-  id: string;
-  meetingId: string;
-  kind: MeetingCandidateKind;
-  title: string;
-  description: string | null;
-  quote: string;
-  quoteStart: number | null;
-  ownerHint: string | null;
-  dueHint: string | null;
-  dueDate: string | null;
-  solutionTypeId: string | null;
-  solutionTypeName: string | null;
-  estimate: number | null;
-  priority: 1 | 2 | 3 | 4 | null;
-  duplicate: { workItemId: string; identifier: string; name: string; status: TaskState; url: string | null; score: number } | null;
-  proposedDev: { id: string; name: string; avatarUrl: string | null } | null;
-  assignmentDecisionId: string | null;
-  status: MeetingCandidateStatus;
-  discardReason: string | null;
-  issue: { linearIssueId: string; identifier: string; url: string | null } | null;
-  linearCommentId: string | null;
-  knowledgeAtomId: string | null;
-  decidedAt: string | null;
-  decidedBy: { id: string; name: string } | null;
-  createdAt: string;
-}
-export interface InboxCandidate extends MeetingCandidate {
-  meeting: { id: string; title: string; heldAt: string; projectId: string | null; projectName: string | null };
 }
 export interface MeetingsResponse { meetings: MeetingSummary[]; granolaEnabled: boolean }
-export interface MeetingDetailResponse { meeting: MeetingDetail; candidates: MeetingCandidate[] }
-export interface InboxResponse { candidates: InboxCandidate[] }
+export interface MeetingDetailResponse { meeting: MeetingDetail }
+/** POST /meetings/parse: lo que se lee del texto pegado. Fecha y hora locales, sin zona. */
+export interface ParsedMeetingPaste {
+  title: string | null;
+  date: string | null;
+  time: string | null;
+  durationMin: number | null;
+  attendees: MeetingAttendee[];
+}
 export interface ResolveProjectResponse {
   projectId: string | null;
   matches: { projectId: string; projectName: string; domain: string }[];
 }
 export interface CreateMeetingRequest {
-  title: string;
-  heldAt: string;
+  title?: string | null;
+  heldAt?: string | null;
   durationMin?: number | null;
-  attendees: MeetingAttendee[];
+  attendees?: MeetingAttendee[];
   projectId?: string | null;
-  format: ManualTranscriptFormat;
+  format?: ManualTranscriptFormat;
   content: string;
   fileName?: string | null;
 }
-export interface AcceptCandidateRequest {
-  mode?: 'crear' | 'comentar';
+export interface UpdateMeetingRequest {
   title?: string;
-  description?: string | null;
-  assigneeDevId?: string | null;
-  priority?: 1 | 2 | 3 | 4 | null;
-  estimate?: number | null;
-  solutionTypeId?: string | null;
-  dueDate?: string | null;
-  override?: { category: string; note?: string | null };
+  heldAt?: string;
+  durationMin?: number | null;
+  attendees?: MeetingAttendee[];
+  projectId?: string | null;
 }
-export interface AcceptCandidateResponse {
-  candidate: MeetingCandidate;
-  issue: { linearIssueId: string; identifier: string; url: string; workItemId: string } | null;
-  comment: { commentId: string; url: string | null; identifier: string } | null;
-  warnings: string[];
+export interface MeetingsQuery {
+  q?: string;
+  projectId?: string;
+  attendee?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
 }
 
 // ---- Planes del agente
@@ -1051,27 +1018,20 @@ export const rozV2Api = {
     apiGet<PulseResponse>(`/pulse?groupBy=${groupBy}${weekStart ? `&weekStart=${weekStart}` : ''}`),
   pulseFeed: (after: string, limit = 50) => apiGet<PulseFeedResponse>(`/pulse/feed?after=${enc(after)}&limit=${limit}`),
 
-  meetings: (opts: { status?: MeetingStatus; projectId?: string; limit?: number } = {}) => {
+  meetings: (opts: MeetingsQuery = {}) => {
     const p = new URLSearchParams();
-    if (opts.status) p.set('status', opts.status);
-    if (opts.projectId) p.set('projectId', opts.projectId);
-    if (opts.limit) p.set('limit', String(opts.limit));
+    for (const [k, v] of Object.entries(opts)) if (v !== undefined && v !== '') p.set(k, String(v));
     const q = p.toString();
     return apiGet<MeetingsResponse>(`/meetings${q ? `?${q}` : ''}`);
   },
   meeting: (id: string) => apiGet<MeetingDetailResponse>(`/meetings/${id}`),
+  parseMeeting: (content: string) => apiSend<ParsedMeetingPaste>('POST', '/meetings/parse', { content }),
   createMeeting: (body: CreateMeetingRequest) => apiSend<{ meeting: MeetingSummary }>('POST', '/meetings', body),
   resolveProject: (emails: string[]) =>
     apiGet<ResolveProjectResponse>(`/meetings/resolve-project?emails=${enc(emails.join(','))}`),
-  inbox: (projectId?: string) => apiGet<InboxResponse>(`/meetings/inbox${projectId ? `?projectId=${projectId}` : ''}`),
-  setMeetingProject: (id: string, projectId: string | null) =>
-    apiSend<{ meeting: MeetingSummary }>('PATCH', `/meetings/${id}`, { projectId }),
-  retryMeeting: (id: string) => apiSend<{ meeting: MeetingSummary }>('POST', `/meetings/${id}/retry`),
+  updateMeeting: (id: string, body: UpdateMeetingRequest) =>
+    apiSend<{ meeting: MeetingSummary }>('PATCH', `/meetings/${id}`, body),
   deleteMeeting: (id: string) => apiSend<{ ok: true }>('DELETE', `/meetings/${id}`),
-  acceptCandidate: (id: string, body: AcceptCandidateRequest) =>
-    apiSend<AcceptCandidateResponse>('POST', `/meetings/candidates/${id}/accept`, body),
-  discardCandidate: (id: string, reason: string | null) =>
-    apiSend<{ candidate: MeetingCandidate }>('POST', `/meetings/candidates/${id}/discard`, { reason }),
 
   plans: (scope: PlanScope, status?: PlanStatus | null) =>
     apiGet<PlansResponse>(`/plans?scope=${scope}${status ? `&status=${status}` : ''}`),
@@ -1418,7 +1378,7 @@ export interface DiscordTaskCreateBody {
 // ---- Comandos de /roz desde el compositor (docs/discord-commands-contract.md §9) ----
 // Espejo a mano de src/discord/commands/definitions.ts (CommandMenuItem) y from-roz.ts.
 
-export type DiscordRozSubcommand = 'tarea' | 'ticket' | 'status' | 'plan' | 'pulso' | 'infra' | 'junta';
+export type DiscordRozSubcommand = 'tarea' | 'ticket' | 'status' | 'plan' | 'pulso' | 'infra' | 'junta' | 'bandeja' | 'linear' | 'crear';
 
 /** Una entrada del menú "/" (misma lista y descripciones que el desplegable de Discord). */
 export interface DiscordCommandMenuItem {

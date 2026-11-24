@@ -16,6 +16,7 @@ import type {
 } from '../types/zeus.js';
 import { isZeusAdmin, needsAdmin, requireAdmin, isUuid, logActivity, actorActivity, type ZeusActor } from './core.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
+import { ZEUS_DUTIES, ZEUS_DUTY_KEYS, assertDuty, loadDuties, setDutyHolders, type DutyRow } from './duties.js';
 
 interface DevRow {
   id: string;
@@ -26,18 +27,21 @@ interface DevRow {
   active: boolean;
   reports_to: string | null;
   zeus_admin: boolean | null;
+  title: string | null;
+  also_reports_to: string[] | null;
 }
 
-const DEV_COLS = 'id, name, email, role, github_login, active, reports_to, zeus_admin';
+const DEV_COLS = 'id, name, email, role, github_login, active, reports_to, zeus_admin, title, also_reports_to';
 
 async function loadOrgData(now: Date) {
   const supabase = db();
-  const [devs, assignments, skills, runners, projects] = await Promise.all([
+  const [devs, assignments, skills, runners, projects, duties] = await Promise.all([
     supabase.from('dev').select(DEV_COLS).eq('active', true).order('name'),
     supabase.from('dev_assignment').select('dev_id, project_id'),
     supabase.from('dev_skill').select('dev_id, skill:skill_id(tag)'),
     supabase.from('runner').select('id, dev_id, name, platform, last_seen_at').is('revoked_at', null),
     supabase.from('project').select('id, key, name, color, active'),
+    loadDuties(),
   ]);
   for (const r of [devs, assignments, skills, runners, projects]) if (r.error) throw r.error;
   const runnerRows = (runners.data ?? []) as Array<{ id: string; dev_id: string; name: string; platform: string | null; last_seen_at: string | null }>;
@@ -49,6 +53,7 @@ async function loadOrgData(now: Date) {
     runners: runnerRows,
     projects: (projects.data ?? []) as Array<{ id: string; key: string; name: string; color: string | null; active: boolean }>,
     online,
+    duties: duties as DutyRow[],
   };
 }
 
@@ -67,6 +72,9 @@ function toMember(d: DevRow, ctx: Awaited<ReturnType<typeof loadOrgData>>): Zeus
     githubLogin: d.github_login,
     active: d.active,
     reportsTo: d.reports_to,
+    title: d.title?.trim() || null,
+    alsoReportsTo: (d.also_reports_to ?? []).filter((id) => id !== d.reports_to),
+    duties: ctx.duties.filter((r) => r.dev_id === d.id).map((r) => r.duty),
     zeusAdmin: isZeusAdmin(d),
     projects,
     skills: [...new Set(skills)],
@@ -77,7 +85,14 @@ function toMember(d: DevRow, ctx: Awaited<ReturnType<typeof loadOrgData>>): Zeus
 export async function getOrg(now: Date = new Date()): Promise<ZeusOrg> {
   const ctx = await loadOrgData(now);
   const members = ctx.devs.map((d) => toMember(d, ctx));
-  return { members, needsAdmin: !members.some((m) => m.zeusAdmin) };
+  const active = new Set(members.map((m) => m.devId));
+  const duties = ZEUS_DUTY_KEYS.map((duty) => ({
+    duty,
+    label: ZEUS_DUTIES[duty].label,
+    hint: ZEUS_DUTIES[duty].hint,
+    devIds: ctx.duties.filter((r) => r.duty === duty && active.has(r.dev_id)).sort((a, b) => a.rank - b.rank).map((r) => r.dev_id),
+  }));
+  return { members, duties, needsAdmin: !members.some((m) => m.zeusAdmin) };
 }
 
 /** True si poner a `managerId` como jefe de `devId` cerraría un ciclo en la jerarquía. */
@@ -90,7 +105,14 @@ export function createsCycle(devId: string, managerId: string, reportsTo: Map<st
   return false;
 }
 
-export async function updateOrgMember(devId: string, patch: { reportsTo?: string | null; zeusAdmin?: boolean }, actor: ZeusActor): Promise<ZeusOrgMember> {
+export interface OrgMemberPatch {
+  reportsTo?: string | null;
+  zeusAdmin?: boolean;
+  title?: string | null;
+  alsoReportsTo?: string[];
+}
+
+export async function updateOrgMember(devId: string, patch: OrgMemberPatch, actor: ZeusActor): Promise<ZeusOrgMember> {
   requireAdmin(actor);
   if (!isUuid(devId)) throw new ValidationError('devId inválido');
   const ctx = await loadOrgData(new Date());
@@ -116,9 +138,16 @@ export async function updateOrgMember(devId: string, patch: { reportsTo?: string
     }
     next.zeus_admin = patch.zeusAdmin;
   }
+  if (patch.title !== undefined) next.title = patch.title?.trim().slice(0, 80) || null;
+  if (patch.alsoReportsTo !== undefined) {
+    const ids = [...new Set(patch.alsoReportsTo)];
+    if (ids.includes(devId)) throw new ValidationError('nadie se reporta a sí mismo');
+    if (ids.some((id) => !ctx.devs.some((d) => d.id === id))) throw new ValidationError('alguna de esas personas no existe o está inactiva');
+    next.also_reports_to = ids;
+  }
   const { error } = await db().from('dev').update(next).eq('id', devId);
   if (error) throw error;
-  logActivity(actorActivity(actor), 'org.update', `dev:${devId}`, patch);
+  logActivity(actorActivity(actor), 'org.update', `dev:${devId}`, { ...patch });
   const fresh = await loadOrgData(new Date());
   return toMember(fresh.devs.find((d) => d.id === devId)!, fresh);
 }
@@ -219,4 +248,16 @@ export async function getGraph(input: { projectId?: string | null } = {}, now: D
   const counts: Partial<Record<ZeusGraphKind, number>> = {};
   for (const n of nodes) counts[n.kind] = (counts[n.kind] ?? 0) + 1;
   return { nodes, edges, counts, generatedAt: now.toISOString() };
+}
+
+/** Quién atiende un tema, en orden (solo admin de zeus). Lista vacía = nadie. */
+export async function setOrgDuty(duty: string, devIds: string[], actor: ZeusActor): Promise<ZeusOrg> {
+  requireAdmin(actor);
+  const key = assertDuty(duty);
+  if (!Array.isArray(devIds) || devIds.some((id) => !isUuid(id))) throw new ValidationError('devIds inválidos');
+  const ctx = await loadOrgData(new Date());
+  if (devIds.some((id) => !ctx.devs.some((d) => d.id === id))) throw new ValidationError('alguna de esas personas no existe o está inactiva');
+  await setDutyHolders(key, devIds);
+  logActivity(actorActivity(actor), 'org.duty', null, { duty: key, devs: devIds.length });
+  return getOrg();
 }

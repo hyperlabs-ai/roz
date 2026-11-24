@@ -1,6 +1,6 @@
 // Diálogos de la Bandeja: escribir o responder un mensaje, abrir una solicitud y resolverla.
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, Send } from 'lucide-react';
+import { Loader2, Reply, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -12,7 +12,7 @@ import { invalidate } from '@/lib/store';
 import { useAction } from '@/lib/useAction';
 import { ZEUS_REQUEST_KINDS, zeusApi, type ZeusMe, type ZeusMessage, type ZeusRequest, type ZeusRequestKind } from '@/lib/zeus';
 import { INBOX_KEY, ME_KEY, useZeusGraph, useZeusOrg } from './hooks';
-import { KIND_META, REQUEST_KIND_LABEL } from './zeus-ui';
+import { KIND_META, MESSAGE_KIND_LABEL, REQUEST_KIND_LABEL, dateTime } from './zeus-ui';
 
 export function refreshInbox(): void {
   invalidate(INBOX_KEY);
@@ -178,7 +178,8 @@ export function StatusDialog({ target, onClose }: { target: { message: ZeusMessa
 }
 
 /** El plan completo, con sus versiones anteriores si lo ajustaron. */
-export function PlanDialog({ messageId, onClose }: { messageId: string | null; onClose: () => void }) {
+/** Abre cualquier mensaje completo (plan, encargo, mensaje o aviso), aunque ya esté leído o cerrado. */
+export function PlanDialog({ messageId, onClose, onReply }: { messageId: string | null; onClose: () => void; onReply?: (m: ZeusMessage) => void }) {
   const [data, setData] = useState<(ZeusMessage & { history: ZeusMessage[] }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState<string | null>(null);
@@ -202,9 +203,11 @@ export function PlanDialog({ messageId, onClose }: { messageId: string | null; o
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-2xl">
-        <DialogHeader eyebrow={data ? `Zeus · plan de ${data.fromName}${data.projectKey ? ` · ${data.projectKey}` : ''}` : 'Zeus · plan'}>
+        <DialogHeader eyebrow={data ? `${MESSAGE_KIND_LABEL[data.kind]} · de ${data.fromName} para ${data.toName}${data.projectKey ? ` · ${data.projectKey}` : ''} · ${dateTime(data.createdAt)}` : 'Zeus'}>
           <DialogTitle>{data?.subject ?? 'Cargando…'}</DialogTitle>
-          <DialogDescription>Para implementarlo con Claude: pídele que revise tu bandeja de zeus (o /mcp__zeus__pendientes) y te preguntará si lo implementa o lo ajusta.</DialogDescription>
+          {data?.kind === 'plan' && (
+            <DialogDescription>Para implementarlo con Claude: pídele que revise tu bandeja de zeus (o /mcp__zeus__pendientes) y te preguntará si lo implementa o lo ajusta.</DialogDescription>
+          )}
         </DialogHeader>
         {error && <p className="text-sm text-red">{error}</p>}
         {versions.length > 1 && (
@@ -222,17 +225,25 @@ export function PlanDialog({ messageId, onClose }: { messageId: string | null; o
         {current?.statusNote && (
           <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">Nota:</span> {current.statusNote}</p>
         )}
+        {data && onReply && data.fromDevId && data.via !== 'system' && (
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => onReply(data)}><Reply /> Responder</Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
 const NO_RESOURCE = '__ninguno__';
+const NO_TOPIC = '__sin_tema__';
 
 export function NewRequestDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (r: ZeusRequest) => void }) {
   const graph = useZeusGraph(null);
+  const org = useZeusOrg();
   const act = useAction();
   const [kind, setKind] = useState<ZeusRequestKind>('access');
+  const [topic, setTopic] = useState<string>(NO_TOPIC);
   const [title, setTitle] = useState('');
   const [detail, setDetail] = useState('');
   const [resource, setResource] = useState<string>(NO_RESOURCE);
@@ -242,7 +253,12 @@ export function NewRequestDialog({ open, onClose, onCreated }: { open: boolean; 
     setTitle('');
     setDetail('');
     setResource(NO_RESOURCE);
+    setTopic(NO_TOPIC);
   }, [open]);
+  // Quién la recibiría por el tema elegido: se dice antes de mandarla.
+  const names = new Map((org.data?.members ?? []).map((m) => [m.devId, m.name]));
+  const duty = (org.data?.duties ?? []).find((d) => d.duty === topic);
+  const topicWho = duty?.devIds.map((id) => names.get(id)).filter(Boolean).join(' → ');
 
   const options = useMemo<ComboboxOption[]>(
     () => [
@@ -263,7 +279,7 @@ export function NewRequestDialog({ open, onClose, onCreated }: { open: boolean; 
         <DialogHeader eyebrow="Zeus · solicitud">
           <DialogTitle>Nueva solicitud</DialogTitle>
           <DialogDescription>
-            No hace falta saber a quién pedírselo: zeus la manda al dueño del recurso; si no tiene, al líder del proyecto, a tu jefe directo o a un admin.
+            No hace falta saber a quién pedírselo: con un tema va a quien se encarga de eso; si no, al dueño del recurso, al líder del proyecto, a quien le reportas o a un admin.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 sm:grid-cols-[150px_1fr]">
@@ -279,6 +295,15 @@ export function NewRequestDialog({ open, onClose, onCreated }: { open: boolean; 
             <Input id="zr-title" autoFocus value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="Acceso de lectura a la base de staging" />
           </Field>
         </div>
+        <Field label="Tema" htmlFor="zr-topic" hint={topicWho ? `Le llega a ${topicWho} (en ese orden; nunca a ti).` : 'Revisión de un PR, deploys, arquitectura, clientes o accesos avanzados.'} optional>
+          <Select value={topic} onValueChange={setTopic}>
+            <SelectTrigger id="zr-topic"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_TOPIC}>Sin tema en particular</SelectItem>
+              {(org.data?.duties ?? []).map((d) => <SelectItem key={d.duty} value={d.duty}>{d.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </Field>
         <Field label="Sobre qué" htmlFor="zr-resource" hint="Si eliges un recurso o proyecto, la solicitud va directo con su dueño." optional>
           <Combobox id="zr-resource" value={resource} onChange={setResource} options={options} searchFrom={0} searchPlaceholder="Buscar en zeus…" emptyText="Nada con ese nombre" />
         </Field>
@@ -292,7 +317,7 @@ export function NewRequestDialog({ open, onClose, onCreated }: { open: boolean; 
             onClick={() =>
               void act.run(
                 'new-request',
-                () => zeusApi.createRequest({ kind, title: title.trim(), ...(detail.trim() ? { detail: detail.trim() } : {}), ...(resource !== NO_RESOURCE ? { resourceRef: resource } : {}) }),
+                () => zeusApi.createRequest({ kind, title: title.trim(), ...(detail.trim() ? { detail: detail.trim() } : {}), ...(resource !== NO_RESOURCE ? { resourceRef: resource } : {}), ...(topic !== NO_TOPIC ? { topic } : {}) }),
                 {
                   // El aviso dice a quién se le envió: es lo que la persona quiere saber al terminar.
                   success: false,

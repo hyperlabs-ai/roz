@@ -59,6 +59,7 @@ vi.mock('../src/adapters/linear.js', async (orig) => ({
 }));
 
 import { linearWebhookRoutes } from '../src/routes/linear.js';
+import { cached, clearLinearCache } from '../src/zeus/linear-cache.js';
 import { handleLinearWebhook, toWebhookPayload } from '../src/linear/webhook.js';
 import { reconcileLinear, reconcileSince, reconcileTickKey, scheduleLinearReconcile, RECONCILE_OVERLAP_MS } from '../src/linear/reconcile.js';
 
@@ -84,6 +85,7 @@ const issueBody = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  clearLinearCache();
   h.sot = true;
   h.emitted = [];
   h.upserts = [];
@@ -95,12 +97,25 @@ beforeEach(() => {
 });
 
 describe('POST /webhooks/linear', () => {
-  it('flag apagado: 200 skipped, sin emitir (ni verificar)', async () => {
+  it('espejo apagado pero con secreto: verifica, refresca la caché de zeus y no encola nada', async () => {
     h.sot = false;
-    const res = await post(issueBody(), { secret: 'otra' });
+    expect((await post(issueBody(), { secret: 'otra' })).status).toBe(401);
+    await cached('board:dev-1', async () => ['vieja']);
+    await cached('teams', async () => ['HYP']);
+    const res = await post(issueBody());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, skipped: 'flag' });
+    expect(await res.json()).toEqual({ ok: true, refreshed: 1 });
     expect(h.emitted).toEqual([]);
+    // La copia de tickets se fue; el catálogo (equipos) sigue.
+    expect(await cached('board:dev-1', async () => ['nueva'])).toEqual(['nueva']);
+    expect(await cached('teams', async () => ['otro'])).toEqual(['HYP']);
+  });
+
+  it('un cambio de catálogo (estados, equipos, usuarios) borra todo', async () => {
+    h.sot = false;
+    await cached('teams', async () => ['HYP']);
+    await post(issueBody({ type: 'WorkflowState' }));
+    expect(await cached('teams', async () => ['nuevo'])).toEqual(['nuevo']);
   });
 
   it('firma inválida → 401 y nada encolado', async () => {

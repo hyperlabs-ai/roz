@@ -20,8 +20,9 @@ import { cn } from '@/lib/utils';
 import { zeusApi, type ZeusMe, type ZeusOrgMember } from '@/lib/zeus';
 import { ME_KEY, ORG_KEY, useZeusOrg } from './hooks';
 import { MemberDialog } from './OrgDialogs';
+import { OrgDuties } from './OrgDuties';
 import { OrgMatrix, roleLabel } from './OrgMatrix';
-import { buildOrgTree, type TreeNode } from './org-tree';
+import { NODE_H, NODE_W, buildOrgTree, layoutOrg, type OrgLayout, type TreeNode } from './org-tree';
 import { Figure, RailTitle } from './zeus-ui';
 import './zeus.css';
 
@@ -44,11 +45,11 @@ function PersonNode({ member, isMe, canEdit, onEdit }: NodeProps) {
       <span className="flex max-w-full items-center gap-1">
         <span className="truncate text-[13px] font-semibold">{member.name}</span>
       </span>
-      <span className="label-caps max-w-full truncate text-[9.5px]">{roleLabel(member.role)}{!member.active && ' · inactivo'}</span>
+      <span className="line-clamp-3 max-w-full text-[11px] leading-snug text-muted-foreground">{member.title ?? roleLabel(member.role)}{!member.active && ' · inactivo'}</span>
     </>
   );
   const cls = cn(
-    'grid w-[132px] justify-items-center gap-1.5 rounded-lg border bg-card px-2.5 py-3 text-center',
+    'grid h-full w-full content-start justify-items-center gap-1 rounded-lg border bg-card px-2.5 py-3 text-center',
     !member.active && 'opacity-60',
     isMe && 'border-orange/60',
   );
@@ -70,7 +71,7 @@ function PersonChip({ member, isMe, canEdit, onEdit, assign }: NodeProps & { ass
         <span className="flex min-w-0 items-center gap-1">
           <span className="truncate text-[13px] font-semibold">{member.name}</span>
         </span>
-        <span className="label-caps truncate text-[9.5px]">{roleLabel(member.role)}{!member.active && ' · inactivo'}</span>
+        <span className="truncate text-[11px] text-muted-foreground">{member.title ?? roleLabel(member.role)}{!member.active && ' · inactivo'}</span>
       </span>
       {canEdit && assign && <UserPlus className="size-3.5 shrink-0 text-faint transition-colors group-hover/chip:text-orange" />}
     </>
@@ -98,16 +99,29 @@ interface TreeProps {
   onEdit: (m: ZeusOrgMember) => void;
 }
 
-function Branch({ node, me, canEdit, onEdit }: Omit<TreeProps, 'nodes'> & { node: TreeNode }) {
+/**
+ * Líneas del organigrama: cada jefe baja a un travesaño y de ahí a su gente. Si un grupo le reporta a
+ * dos personas (co-CTOs), las dos bajan al MISMO travesaño: la línea dice "les reporta a ambos".
+ */
+function Connectors({ layout }: { layout: OrgLayout }) {
+  const r = 6;
+  const paths: string[] = [];
+  for (const b of layout.buses) {
+    const xs = [...b.from.map((f) => f.x), ...b.to.map((t) => t.x)];
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    if (maxX - minX > 0.5) paths.push(`M${minX} ${b.y}H${maxX}`);
+    for (const f of b.from) paths.push(`M${f.x} ${f.y}V${b.y}`);
+    for (const t of b.to) paths.push(`M${t.x} ${b.y}V${t.y}`);
+  }
   return (
-    <li>
-      <PersonNode member={node.member} isMe={node.member.devId === me} canEdit={canEdit} onEdit={() => onEdit(node.member)} />
-      {node.children.length > 0 && (
-        <ul>
-          {node.children.map((c) => <Branch key={c.member.devId} node={c} me={me} canEdit={canEdit} onEdit={onEdit} />)}
-        </ul>
-      )}
-    </li>
+    <svg className="pointer-events-none absolute inset-0 overflow-visible" width={layout.width} height={layout.height} aria-hidden>
+      <path d={paths.join('')} fill="none" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" className="stroke-border" style={{ strokeWidth: 1.5 }} />
+      {layout.buses.filter((b) => b.from.length > 1).map((b, i) => (
+        // Punto donde se juntan los jefes: deja claro que el grupo reporta a los dos.
+        <circle key={i} cx={b.to.reduce((s, t) => s + t.x, 0) / b.to.length} cy={b.y} r={r / 2 + 1} className="fill-orange" />
+      ))}
+    </svg>
   );
 }
 
@@ -132,7 +146,8 @@ const clamp = (v: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v));
 /** Lienzo del árbol: se encuadra solo al ancho disponible; con zoom propio y scroll si no cabe. */
 function TreeCanvas({ nodes, me, canEdit, onEdit }: TreeProps) {
   const wrap = useRef<HTMLDivElement>(null);
-  const tree = useRef<HTMLUListElement>(null);
+  const tree = useRef<HTMLDivElement>(null);
+  const layout = useMemo(() => layoutOrg(nodes), [nodes]);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [fit, setFit] = useState(1);
   /** null = encuadrado automático. */
@@ -162,9 +177,14 @@ function TreeCanvas({ nodes, me, canEdit, onEdit }: TreeProps) {
       <div ref={wrap} className="scroll-thin absolute inset-0 overflow-auto">
         <div className="flex min-h-full w-max min-w-full p-5">
           <div className="m-auto" style={{ width: size.w * scale || undefined, height: size.h * scale || undefined }}>
-            <ul ref={tree} className="zeus-org w-max origin-top-left gap-6" style={{ transform: `scale(${scale})` }} aria-label="Organigrama">
-              {nodes.map((n) => <Branch key={n.member.devId} node={n} me={me} canEdit={canEdit} onEdit={onEdit} />)}
-            </ul>
+            <div ref={tree} role="list" aria-label="Organigrama" className="relative origin-top-left" style={{ width: layout.width, height: layout.height, transform: `scale(${scale})` }}>
+              <Connectors layout={layout} />
+              {layout.nodes.map((n) => (
+                <div key={n.member.devId} role="listitem" className="absolute" style={{ left: n.x, top: n.y, width: NODE_W, height: NODE_H }}>
+                  <PersonNode member={n.member} isMe={n.member.devId === me} canEdit={canEdit} onEdit={() => onEdit(n.member)} />
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -331,7 +351,10 @@ export function OrgTab({ me }: { me: ZeusMe | null }) {
             </div>
           </Card>
         ) : (
-          <OrgMatrix members={members} me={meId} canEdit={canEdit} onEdit={setEditing} className="max-lg:max-h-[80dvh] max-lg:min-h-[420px]" />
+          <div className="flex min-h-0 flex-col gap-3">
+            <OrgDuties duties={org.data?.duties ?? []} members={members} canEdit={canEdit} loading={loading} />
+            <OrgMatrix members={members} me={meId} canEdit={canEdit} onEdit={setEditing} className="min-h-0 flex-1 max-lg:max-h-[80dvh] max-lg:min-h-[420px]" />
+          </div>
         )}
       </div>
 

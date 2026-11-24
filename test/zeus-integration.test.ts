@@ -28,7 +28,7 @@ vi.mock('../src/notify/push.js', () => ({ pushToDev, pushBroadcast: vi.fn(), pus
 
 import app from '../src/app.js';
 import { actorForDev, type ZeusActor } from '../src/zeus/core.js';
-import { bootstrapAdmin, getGraph, getOrg, updateOrgMember } from '../src/zeus/graph.js';
+import { bootstrapAdmin, getGraph, getOrg, setOrgDuty, updateOrgMember } from '../src/zeus/graph.js';
 import { cancelRequest, createRequest, createToken, getInbox, listRequests, markRead, resolveRequest, revokeToken, routeFor, sendMessage } from '../src/zeus/inbox.js';
 import { ingestRepo, listSources, markSourceDirty, reimportNode, zeusSweep, type GitSource } from '../src/zeus/ingest.js';
 import { archiveNode, buildContextPack, contextIndex, createEdge, createNode, deleteEdge, getNodeDetail, listNodes, searchNodes, updateNode } from '../src/zeus/nodes.js';
@@ -570,7 +570,7 @@ describe('solicitudes: a quién le toca', () => {
     expect(await routeFor(ids.caro, `project:${ids.orwel}`)).toMatchObject({ approver: { id: ids.pm }, because: expect.stringContaining('proyecto') });
     expect(await routeFor(ids.caro, 'repo:hyperlabs-ai/orwel')).toMatchObject({ approver: { id: ids.pm } });
     // Proyecto sin nadie asignado: el jefe directo.
-    expect(await routeFor(ids.caro, `project:${ids.hub}`)).toMatchObject({ approver: { id: ids.ana }, because: expect.stringContaining('jefe') });
+    expect(await routeFor(ids.caro, `project:${ids.hub}`)).toMatchObject({ approver: { id: ids.ana }, because: expect.stringContaining('reportas') });
     // Sin recurso y sin jefe: un admin.
     expect(await routeFor(ids.pm, null)).toMatchObject({ approver: { id: ids.ceo } });
     expect(await routeFor(ids.ceo, null)).toMatchObject({ approver: null });
@@ -1060,5 +1060,31 @@ describe('bóveda de punta a punta (cifrado real del CLI contra el servidor)', (
     // La auditoría registra nombres de variables, nunca valores ni sobres.
     expect(JSON.stringify(o)).not.toContain('zs1.');
     expect(JSON.stringify(o)).not.toContain('sk_live');
+  });
+});
+
+describe('organigrama: puesto, reporte secundario y quién se encarga de qué', () => {
+  it('guarda puesto y líneas punteadas, y enruta por tema saltándose a quien pide', async () => {
+    const ceo = await actor(ids.ceo);
+    // El jefe directo no se repite como línea punteada: queda solo la otra.
+    await updateOrgMember(ids.beto, { title: 'Full stack', alsoReportsTo: [ids.pm, ids.ceo] }, ceo);
+    await setOrgDuty('code_review', [ids.ana, ids.beto, ids.pm], ceo);
+    await setOrgDuty('advanced_access', [ids.ceo], ceo);
+
+    const org = await getOrg();
+    const beto = org.members.find((m) => m.devId === ids.beto)!;
+    expect(beto).toMatchObject({ title: 'Full stack', alsoReportsTo: [ids.ceo], duties: ['code_review'] });
+    expect(org.duties.find((d) => d.duty === 'code_review')!.devIds).toEqual([ids.ana, ids.beto, ids.pm]);
+
+    // Revisión: el primero de la lista; si quien pide ES el primero, el siguiente.
+    expect(await routeFor(ids.caro, null, 'code_review')).toMatchObject({ approver: { id: ids.ana }, because: expect.stringContaining('revisión de código') });
+    expect(await routeFor(ids.ana, null, 'code_review')).toMatchObject({ approver: { id: ids.beto } });
+    // Una solicitud de tipo "review" sin tema va al mismo lugar.
+    const req = await createRequest({ kind: 'review', title: 'Revisar PR #12' }, await actor(ids.caro));
+    expect(req.approverName).toBe('Ana');
+    // Tema desconocido: error claro, no un enrutado silencioso.
+    await expect(createRequest({ title: 'x', topic: 'cafe' }, await actor(ids.caro))).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    // Solo un admin de zeus cambia quién atiende un tema.
+    await expect(setOrgDuty('deploys', [ids.ana], await actor(ids.caro))).rejects.toMatchObject({ code: 'ZEUS_ADMIN_ONLY' });
   });
 });

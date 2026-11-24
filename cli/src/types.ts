@@ -113,6 +113,20 @@ export interface KeyRotateBody {
   compromised: boolean;
 }
 
+/** Un acceso aprobado en la web que falta cifrar (`zeus env grant --pending`). */
+export interface GrantIntent {
+  id: string;
+  projectKey: string;
+  env: string;
+  dekVersion: number;
+  toDevId: string;
+  toDevName: string;
+  approvedByName: string | null;
+  createdAt: string;
+  /** Equipos vigentes del destinatario que aún no tienen la llave del entorno. */
+  keys: Array<{ keyId: string; name: string; fingerprint: string; publicKey: string }>;
+}
+
 export interface InboxBrief {
   id: string;
   kind: 'message' | 'task' | 'plan' | 'env_change';
@@ -130,3 +144,28 @@ export interface InboxSummary {
   envChanges: InboxBrief[];
   toResolve: number;
 }
+
+// ---------------------------------------------------------------- conectar el equipo (zeus setup)
+
+export interface DeviceStartBody {
+  /** Nombre del equipo (hostname): es lo que la persona ve al aprobar. */
+  clientName: string;
+  platform: string;
+  version: string;
+}
+
+export interface DeviceStart {
+  /** Secreto: solo lo conoce este CLI; con él se cobra el token al aprobarse. */
+  deviceCode: string;
+  /** Código corto que la persona compara entre la terminal y la web. */
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresIn: number;
+  interval: number;
+}
+
+export type DevicePoll =
+  | { status: 'pending' | 'slow_down'; interval: number }
+  | { status: 'denied' | 'expired' | 'delivered' }
+  | { status: 'approved'; token: string; dev: { id: string; name: string; email: string | null } };

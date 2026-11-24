@@ -102,14 +102,14 @@ const resolveAna = async (id: string) => (id === U_ANA ? ACTOR : null);
 describe('menú "/" del compositor', () => {
   it('el respaldo del front es idéntico a commandMenu() (mismo orden y descripciones que Discord)', () => {
     expect(FALLBACK_MENU).toEqual(commandMenu());
-    expect(FALLBACK_MENU.map((i) => i.subcommand)).toEqual(['tarea', 'ticket', 'status', 'plan', 'pulso', 'infra', 'junta']);
+    expect(FALLBACK_MENU.map((i) => i.subcommand)).toEqual(['tarea', 'ticket', 'status', 'plan', 'pulso', 'infra', 'junta', 'bandeja', 'linear', 'crear']);
   });
 
   it('matchSlash: /, /roz, prefijos, subcomando elegido con texto y lo que no es comando', () => {
     const items = commandMenu() as any[];
-    expect(matchSlash('/', items)!.items).toHaveLength(7);
-    expect(matchSlash('/ro', items)!.items).toHaveLength(7);
-    expect(matchSlash('/roz ', items)!.items).toHaveLength(7);
+    expect(matchSlash('/', items)!.items).toHaveLength(10);
+    expect(matchSlash('/ro', items)!.items).toHaveLength(10);
+    expect(matchSlash('/roz ', items)!.items).toHaveLength(10);
     expect(matchSlash('/p', items)!.items.map((i) => i.subcommand)).toEqual(['plan', 'pulso']);
     expect(matchSlash('/roz ta', items)!.items.map((i) => i.subcommand)).toEqual(['tarea']);
     expect(matchSlash('/roz tarea login roto', items)).toEqual({ items: [items[0]], rest: 'login roto' });

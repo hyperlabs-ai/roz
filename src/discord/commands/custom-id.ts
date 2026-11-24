@@ -46,6 +46,8 @@ export const CUSTOM_ID_SPECS = {
   'plan.aprobar': { surface: 'button', args: ['uuid'], owner: 'plan' },
   'plan.cambios': { surface: 'button', args: ['uuid'], owner: 'plan' },
   'plan.cambios.modal': { surface: 'modal', args: ['uuid'], owner: 'plan' },
+  // Ticket de Linear (handlers/zeus.ts): arg = a quién asignarlo, o `_` = a quien lo crea.
+  'linear.crear.modal': { surface: 'modal', args: ['uuid?'], owner: 'zeus' },
   // Junta (handlers/junta.ts): arg = proyecto o `_`.
   'junta.modal': { surface: 'modal', args: ['uuid?'], owner: 'junta' },
   // Guardar como decisión (handlers/mensaje-decision.ts): canal + mensaje; el select elige el proyecto.

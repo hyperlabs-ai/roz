@@ -20,6 +20,7 @@ import {
   getMessage,
   listRequests,
   markRead,
+  messageHistory,
   resolveRequest,
   routeFor,
   sendMessage,
@@ -27,9 +28,12 @@ import {
   sharePlan,
 } from './inbox.js';
 import type { ZeusMessage } from '../types/zeus.js';
+import { ZEUS_DUTIES } from './duties.js';
 import { contextIndex, createEdge, createNode, deleteEdge, edgesOf, getNodeDetail, searchNodes, updateNode } from './nodes.js';
 import { reimportNode } from './ingest.js';
 import { envStatus } from './vault.js';
+import { meetingTools } from './mcp-meetings.js';
+import { createIssueAs, getIssueDetail, linearCatalog, listIssues, updateIssueAs } from './linear.js';
 
 export interface ZeusMcpTool {
   name: string;
@@ -230,8 +234,10 @@ export const zeusTools: ZeusMcpTool[] = [
   {
     name: 'zeus_org',
     description:
-      'Organigrama del equipo: rol de cada persona, a quién reporta, en qué proyectos está, sus skills, quién administra ' +
-      'zeus y quién tiene su PC en línea ahora. Úsalo para saber a quién preguntar o escalar.',
+      'Organigrama del equipo: puesto de cada persona, a quién reporta (y a quién más, en línea punteada), qué temas ' +
+      'atiende, en qué proyectos está, sus skills, quién administra zeus y quién tiene su PC en línea. Trae también ' +
+      '"duties": quién se encarga de qué (revisión de código, deploys, arquitectura, clientes, accesos avanzados), en ' +
+      'orden. Úsalo para saber a quién preguntar, pedir revisión o escalar.',
     schema: z.object({ query: z.string().optional().describe('Filtra por nombre, rol, proyecto o skill.') }),
     readOnly: true,
     handler: async (args) => {
@@ -243,22 +249,29 @@ export const zeusTools: ZeusMcpTool[] = [
         .map((m) => ({
           ref: `dev:${m.devId}`,
           name: m.name,
+          title: m.title,
           role: m.role,
           reportsTo: m.reportsTo ? (byId.get(m.reportsTo) ?? null) : null,
+          alsoReportsTo: m.alsoReportsTo.map((id) => byId.get(id)).filter(Boolean),
+          handles: m.duties.map((d) => ZEUS_DUTIES[d as keyof typeof ZEUS_DUTIES]?.label ?? d),
           projects: m.projects,
           skills: m.skills,
           zeusAdmin: m.zeusAdmin,
           online: m.online,
         }));
-      return { members, ...(org.needsAdmin ? { warning: 'Nadie administra zeus todavía: las solicitudes sin dueño no tienen a quién llegar.' } : {}) };
+      const duties = org.duties.map((d) => ({ topic: d.duty, what: d.label, inOrder: d.devIds.map((id) => byId.get(id)).filter(Boolean) }));
+      return { members, duties, ...(org.needsAdmin ? { warning: 'Nadie administra zeus todavía: las solicitudes sin dueño no tienen a quién llegar.' } : {}) };
     },
   },
   {
     name: 'zeus_who_owns',
     description:
-      'A quién hay que pedirle un acceso o un permiso sobre algo (un recurso, un proyecto, un repo, un documento) y por qué ' +
-      'esa persona. No abre nada: para pedirlo usa zeus_request.',
+      'A quién hay que pedirle algo y por qué esa persona: un acceso o permiso sobre un recurso, proyecto, repo o documento, ' +
+      'o un TEMA (topic): code_review = revisión de código / merge de PR, deploys, architecture = decisiones técnicas, ' +
+      'client_feedback = retro o pedidos de clientes, clients = contacto con clientes, advanced_access = tokens y cuentas de ' +
+      'alto nivel (Google, Meta, Ads). No abre nada: para pedirlo usa zeus_request (con el mismo topic).',
     schema: z.object({
+      topic: z.enum(['code_review', 'deploys', 'architecture', 'client_feedback', 'clients', 'advanced_access']).optional().describe('Tema de lo que se pide (gana sobre el recurso).'),
       ref: z.string().optional().describe('ref del recurso (node:…, project:…, repo:…).'),
       projectKey: z.string().optional().describe('Si no tienes ref: la clave del proyecto.'),
       query: z.string().optional().describe('Si no tienes ref: texto para encontrar el recurso (p. ej. "vercel", "stripe").'),
@@ -276,8 +289,9 @@ export const zeusTools: ZeusMcpTool[] = [
         } else if (project) ref = `project:${project.id}`;
       } else if (!ref && args.projectKey) ref = `project:${(await resolveProject(args.projectKey)).id}`;
       if (ref) mustParseRef(ref);
-      const route = await routeFor(actor.devId, ref);
+      const route = await routeFor(actor.devId, ref, args.topic ?? null);
       return {
+        ...(args.topic ? { topic: ZEUS_DUTIES[args.topic as keyof typeof ZEUS_DUTIES].label } : {}),
         resource: ref,
         ...(matched ? { matched } : {}),
         askTo: route.approver ? { ref: `dev:${route.approver.id}`, name: route.approver.name, role: route.approver.role } : null,
@@ -294,6 +308,9 @@ export const zeusTools: ZeusMcpTool[] = [
       'del recurso, quien lleva el proyecto, tu jefe directo o un admin. La respuesta dice a quién llegó y por qué. Aprobar ' +
       'NO cambia permisos por sí solo: quien aprueba da el acceso en el sistema real. Ábrela solo si la persona te lo pidió.',
     schema: z.object({
+      topic: z.enum(['code_review', 'deploys', 'architecture', 'client_feedback', 'clients', 'advanced_access'])
+        .optional()
+        .describe('Tema: code_review (revisar/mergear un PR), deploys, architecture, client_feedback, clients, advanced_access (tokens de Google/Meta/Ads). Enruta a quien lo atiende.'),
       title: z.string().max(200).describe('Qué se pide, en una línea ("Acceso de lectura al proyecto de Vercel de orwel").'),
       detail: z.string().optional().describe('Para qué se necesita y por cuánto tiempo.'),
       kind: z.enum(['access', 'permission', 'review', 'change', 'other']).optional(),
@@ -399,8 +416,9 @@ export const zeusTools: ZeusMcpTool[] = [
     name: 'zeus_inbox',
     description:
       'Tu bandeja: "open" son tus PENDIENTES (encargos y planes que te mandaron y siguen abiertos), "waiting" lo que tú mandaste y ' +
-      'otros no han cerrado, "messages" los mensajes y avisos recientes (incluye cambios de variables de entorno), "toResolve" ' +
-      'solicitudes que te toca resolver y "mine" las que abriste.',
+      'otros no han cerrado, "messages" los mensajes y avisos recientes, "envChanges" los avisos sin leer de variables de entorno ' +
+      'que cambiaron, "toResolve" solicitudes que te toca resolver y "mine" las que abriste. Tus tickets de Linear NO vienen aquí: ' +
+      'pídelos con zeus_linear_issues. Para buscar un mensaje viejo (ya leído) usa zeus_message_history.',
     schema: z.object({ unreadOnly: z.boolean().optional(), limit: z.number().int().min(1).max(100).optional() }),
     readOnly: true,
     handler: async (args, actor) => {
@@ -409,10 +427,32 @@ export const zeusTools: ZeusMcpTool[] = [
         unread: inbox.unread,
         open: inbox.open.map((m) => agentMessage(m, 2500)),
         waiting: inbox.waiting.map((m) => ({ id: m.id, kind: m.kind, to: m.toName, subject: m.subject, status: m.status, statusNote: m.statusNote, at: m.createdAt })),
-        messages: inbox.messages.filter((m) => m.kind === 'message' || m.kind === 'env_change').map((m) => agentMessage(m, 1500)),
+        messages: inbox.messages.filter((m) => m.kind === 'message').map((m) => agentMessage(m, 1500)),
+        envChanges: inbox.envChanges.filter((m) => !m.readAt).map((m) => ({ id: m.id, from: m.fromName, subject: m.subject, body: m.body, at: m.createdAt })),
         toResolve: inbox.toResolve.map((r) => ({ id: r.id, from: r.requesterName, title: r.title, detail: r.detail, kind: r.kind, because: r.routedBecause, at: r.createdAt })),
         mine: inbox.mine.map((r) => ({ id: r.id, title: r.title, status: r.status, sentTo: r.approverName, note: r.resolutionNote })),
       };
+    },
+  },
+  {
+    name: 'zeus_message_history',
+    description:
+      'Historial COMPLETO de tu bandeja (leído y no leído), para recuperar un mensaje, encargo o plan viejo: "¿qué me mandó Ana ' +
+      'sobre Growth?". Filtra por texto (q), persona (with), proyecto y tipo; box "sent" para lo que tú mandaste. Pagina con ' +
+      'before = nextBefore. Trae el texto entero de uno con zeus_get_message.',
+    schema: z.object({
+      q: z.string().optional().describe('Texto en el asunto o el cuerpo.'),
+      with: z.string().optional().describe('La otra persona: quien te lo mandó (o a quien se lo mandaste con box "sent").'),
+      projectKey: z.string().optional(),
+      kind: z.enum(['message', 'task', 'plan', 'env_change']).optional(),
+      box: z.enum(['received', 'sent']).optional(),
+      before: z.string().optional().describe('nextBefore de la página anterior.'),
+      limit: z.number().int().min(1).max(50).optional(),
+    }),
+    readOnly: true,
+    handler: async (args, actor) => {
+      const { messages, nextBefore } = await messageHistory({ ...args, limit: args.limit ?? 15 }, actor);
+      return { messages: messages.map((m) => ({ ...agentMessage(m, 600), to: m.toName })), nextBefore };
     },
   },
   {
@@ -421,6 +461,90 @@ export const zeusTools: ZeusMcpTool[] = [
     schema: z.object({ ids: z.array(z.string()).optional(), all: z.boolean().optional() }),
     readOnly: false,
     handler: async (args, actor) => ({ ok: true, marked: await markRead(args.all ? 'all' : (args.ids ?? []), actor) }),
+  },
+
+  // ---------- Linear ----------
+  {
+    name: 'zeus_linear_issues',
+    description:
+      'Tickets de Linear. Por defecto: los TUYOS abiertos (en curso, por hacer, backlog y triage), lo que tienes pendiente. ' +
+      'assignee: otra persona del equipo (nombre/correo), "nadie" para sin asignar o "todos". stateTypes para otros estados ' +
+      '(p. ej. solo ["started"], o completed/canceled para ver lo cerrado). query busca en el título o por identificador (HYP-123).',
+    schema: z.object({
+      assignee: z.string().optional(),
+      stateTypes: z.array(z.enum(['triage', 'backlog', 'unstarted', 'started', 'completed', 'canceled'])).optional(),
+      team: z.string().optional().describe('Clave del equipo de Linear (zeus_linear_teams).'),
+      query: z.string().optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+    }),
+    readOnly: true,
+    handler: (args, actor) => listIssues(args, actor),
+  },
+  {
+    name: 'zeus_linear_issue',
+    description:
+      'Un ticket de Linear COMPLETO por identificador (HYP-123): descripción, comentarios, subtareas, relaciones, enlaces, ' +
+      'rama sugerida. Úsalo antes de implementar un ticket. Antes de planear, cruza con zeus_context_index del proyecto.',
+    schema: z.object({ issue: z.string().describe('Identificador (HYP-123) o id.'), maxChars: z.number().int().min(500).max(100_000).optional() }),
+    readOnly: true,
+    handler: async (args, actor) => {
+      const d = await getIssueDetail(args.issue, { maxChars: args.maxChars });
+      logActivity(actorActivity(actor), 'linear.get', null, { issue: d.identifier });
+      return d;
+    },
+  },
+  {
+    name: 'zeus_linear_teams',
+    description: 'Equipos de Linear con sus estados (en orden) y proyectos activos: lo que necesitas para crear o mover un ticket.',
+    schema: z.object({}),
+    readOnly: true,
+    handler: () => linearCatalog(),
+  },
+  {
+    name: 'zeus_linear_create',
+    description:
+      'Crea un ticket en Linear. Por defecto se asigna a la persona que usa este MCP (assignee "nadie" para dejarlo sin ' +
+      'asignar, o el nombre de alguien del equipo). La descripción en markdown, autocontenida (objetivo, contexto, criterios de ' +
+      'aceptación). Muéstrale al usuario título, equipo y asignado y espera su OK antes de crearlo.',
+    schema: z.object({
+      team: z.string().optional().describe('Clave del equipo (zeus_linear_teams).'),
+      title: z.string().max(255),
+      description: z.string().max(60_000).optional(),
+      assignee: z.string().optional(),
+      priority: z.number().int().min(0).max(4).optional().describe('0 sin prioridad, 1 urgente, 2 alta, 3 media, 4 baja.'),
+      state: z.string().optional().describe('Nombre del estado o tipo (backlog, todo, started…). Def: el inicial del equipo.'),
+      project: z.string().optional().describe('Nombre del proyecto de Linear.'),
+      labels: z.array(z.string()).optional(),
+      dueDate: z.string().optional().describe('YYYY-MM-DD'),
+    }),
+    readOnly: false,
+    handler: async (args, actor) => {
+      const issue = await createIssueAs(args, actor);
+      logActivity(actorActivity(actor), 'linear.create', null, { issue: issue.identifier, title: issue.title });
+      return { ok: true, ...issue };
+    },
+  },
+  {
+    name: 'zeus_linear_update',
+    description:
+      'Cambia un ticket de Linear: estado (nombre exacto como "In Review" o tipo/alias: started, "en curso", hecho, cancelado), ' +
+      'asignado ("yo", "nadie" o alguien del equipo), prioridad, título, y/o deja un comentario. Cada cambio deja un comentario ' +
+      'con quién lo hizo. Al empezar a implementar un ticket muévelo a en curso; al abrir el PR, a revisión si el equipo lo usa. ' +
+      'Confirma con el usuario antes de cerrarlo o cancelarlo.',
+    schema: z.object({
+      issue: z.string().describe('Identificador (HYP-123).'),
+      state: z.string().optional(),
+      assignee: z.string().optional(),
+      priority: z.number().int().min(0).max(4).optional(),
+      title: z.string().max(255).optional(),
+      comment: z.string().max(20_000).optional(),
+    }),
+    readOnly: false,
+    handler: async (args, actor) => {
+      const r = await updateIssueAs(args, actor);
+      logActivity(actorActivity(actor), 'linear.update', null, { issue: r.identifier, state: r.state });
+      return { ok: true, ...r };
+    },
   },
 
   // ---------- planes ----------
@@ -488,6 +612,9 @@ async function planActor(actor: ZeusActor): Promise<{ userId: string; devId: str
   return { userId, devId: actor.devId };
 }
 
+// Juntas (transcripts): solo lectura, viven en su propio archivo.
+zeusTools.push(...meetingTools);
+
 export const zeusToolsByName = new Map(zeusTools.map((t) => [t.name, t]));
 
 /** Un mensaje como lo ve el agente: recortado (los planes se piden completos con zeus_get_message). */
@@ -521,12 +648,26 @@ export const ZEUS_MCP_INSTRUCTIONS = [
     'Las reglas y decisiones vigentes se respetan. El registro de zeus es la fuente de verdad de ADR, specs, reglas y documentos: ' +
     'para cambiar uno edítalo AQUÍ con zeus_write (también los importados de un repo), no en su archivo del repo.',
   '',
-  'BANDEJA. Al empezar una sesión de trabajo revisa zeus_inbox. Si hay planes en "open" con status pending, preséntalos (quién, ' +
+  'BANDEJA. Al empezar una sesión de trabajo revisa zeus_inbox y tus tickets activos de Linear (zeus_linear_issues). Si hay planes en "open" con status pending, preséntalos (quién, ' +
     'título, resumen en 3-5 líneas; trae el texto completo con zeus_get_message) y PREGUNTA al usuario: ¿lo implemento tal cual, ' +
     'lo ajusto o lo rechazo? Si lo implementa: zeus_respond status="accepted" y al terminar "done". Si quiere ajustes: anota QUÉ ' +
     'cambiar y zeus_respond status="changes_requested" con esa nota. Encargos (kind "task") igual: confirma antes de cambiarles el ' +
     'estado. "Avísale a X…" / "pídele a X que…" = zeus_send_message (kind "task" si es trabajo que X debe hacer). "Compártele el ' +
-    'plan a X" = zeus_share_plan con el plan completo y autocontenido.',
+    'plan a X" = zeus_share_plan con el plan completo y autocontenido. Para recuperar un mensaje viejo: zeus_message_history.',
+  '',
+  'EQUIPO. Para saber a quién pedirle algo usa zeus_org (trae "duties": quién se encarga de qué) o zeus_who_owns con topic: ' +
+    'pedir revisión o merge de un PR = topic code_review; deploys; decisiones técnicas o de arquitectura = architecture; retro o ' +
+    'pedidos de clientes = client_feedback; tokens o cuentas de alto nivel (Google, Meta, Ads) = advanced_access. Para pedirlo ' +
+    'formalmente: zeus_request con ese topic (zeus lo enruta solo).',
+  '',
+  'LINEAR. Linear es donde viven las tareas del equipo. "¿Qué tengo pendiente?" = zeus_linear_issues. Para implementar un ' +
+    'ticket: zeus_linear_issue (descripción, comentarios, subtareas) + zeus_context_index del proyecto, y usa su branchName ' +
+    'para la rama. Al empezar muévelo a en curso con zeus_linear_update; al terminar, deja un comentario con lo hecho. Crear ' +
+    '(zeus_linear_create) se asigna por defecto a quien usa el MCP. Antes de crear, cerrar o cancelar un ticket, confirma con el usuario.',
+  '',
+  'JUNTAS. Las juntas del equipo (transcripts) están en zeus: "¿qué se dijo de X en la junta con Y?" = zeus_meetings con 1-4 ' +
+    'palabras clave (y projectKey/attendee/fechas si ayudan), luego zeus_meeting con el id para el texto completo. Cita lo que ' +
+    'encuentres con fecha y título de la junta.',
   '',
   'VARIABLES DE ENTORNO (CLI `zeus`, corre en la PC del usuario):',
   '- Nunca leas, imprimas ni pegues valores de secretos: ni `cat .env`, ni `zeus env pull --stdout`, ni pedirle al usuario que te ' +
@@ -561,10 +702,11 @@ export const ZEUS_MCP_PROMPTS: Array<{
 }> = [
   {
     name: 'pendientes',
-    description: 'Revisa tu bandeja de zeus: encargos, planes compartidos y avisos de variables.',
+    description: 'Revisa tu bandeja de zeus: tickets de Linear, encargos, planes compartidos y avisos de variables.',
     arguments: [],
     render: () =>
-      'Revisa mi bandeja de zeus (zeus_inbox). Primero mis pendientes ("open"): para cada plan dame quién lo manda, título y un ' +
+      'Revisa mi bandeja de zeus (zeus_inbox) y mis tickets activos de Linear (zeus_linear_issues): de Linear dame una línea por ' +
+      'ticket (identificador, título, estado, prioridad), lo en curso primero. Luego mis pendientes de zeus ("open"): para cada plan dame quién lo manda, título y un ' +
       'resumen corto, y pregúntame si lo implementamos tal cual, lo ajustamos o lo rechazamos. Para cada encargo dime qué piden y ' +
       'pregúntame qué hacemos. Luego, en una línea cada uno, los avisos de variables de entorno que cambiaron y si me conviene ' +
       'correr `zeus env status`. No cambies ningún estado sin que yo lo confirme.',

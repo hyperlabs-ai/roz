@@ -176,10 +176,16 @@ export function buildSpawnSpec(cmd: string, args: string[], platform: NodeJS.Pla
   return { file: target, args, windowsVerbatimArguments: false };
 }
 
-/** Busca `cmd` en PATH respetando PATHEXT en Windows. */
-export function resolveCommand(cmd: string, env: NodeJS.ProcessEnv = process.env, platform = process.platform): string | null {
+/** Carpetas temporales de `npx` (npm ≥ 7 las pone al frente del PATH mientras corre el paquete). */
+export const isNpxDir = (dir: string): boolean => /[\\/]_npx[\\/]/.test(dir);
+
+/**
+ * Busca `cmd` en PATH respetando PATHEXT en Windows. `skipNpx`: ignora lo que puso npx, para saber
+ * si el comando está instalado de verdad (los hooks de Claude Code lo llaman después, sin npx).
+ */
+export function resolveCommand(cmd: string, env: NodeJS.ProcessEnv = process.env, platform = process.platform, skipNpx = false): string | null {
   if (cmd.includes('/') || cmd.includes('\\')) return existsSync(cmd) ? cmd : null;
-  const dirs = (env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean);
+  const dirs = (env.PATH ?? env.Path ?? '').split(path.delimiter).filter((d) => d && !(skipNpx && isNpxDir(d)));
   const exts =
     platform === 'win32'
       ? path.extname(cmd)
@@ -195,11 +201,11 @@ export function resolveCommand(cmd: string, env: NodeJS.ProcessEnv = process.env
   return null;
 }
 
-export const realSpawn: SpawnFn = (command, args, env) =>
+export const realSpawn: SpawnFn = (command, args, env, opts) =>
   new Promise((resolve, reject) => {
     const spec = buildSpawnSpec(command, args, process.platform, resolveCommand(command, env));
     const child = spawn(spec.file, spec.args, {
-      stdio: 'inherit',
+      stdio: opts?.quiet ? 'ignore' : 'inherit',
       env,
       windowsVerbatimArguments: spec.windowsVerbatimArguments,
     });

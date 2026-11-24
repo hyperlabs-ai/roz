@@ -46,6 +46,19 @@ export const FALLBACK_MENU: DiscordCommandMenuItem[] = [
     description: 'Pega notas o el transcript de una junta para la bandeja de Juntas',
     options: [{ name: 'proyecto', description: 'Proyecto de la junta (opcional)', required: false }],
   },
+  { command: '/roz bandeja', subcommand: 'bandeja', description: 'Tu bandeja de zeus: Linear, encargos, mensajes y variables (solo tú)', options: [] },
+  {
+    command: '/roz linear',
+    subcommand: 'linear',
+    description: 'Tickets activos de Linear (solo los ves tú)',
+    options: [{ name: 'persona', description: 'De quién (si no, los tuyos)', required: false }],
+  },
+  {
+    command: '/roz crear',
+    subcommand: 'crear',
+    description: 'Crea un ticket en Linear (asignado a ti si no eliges a alguien)',
+    options: [{ name: 'para', description: 'Asignarlo a esta persona', required: false }],
+  },
 ];
 
 /** Subcomandos que en Discord abren un modal: aquí el diálogo pide además estos campos. */
@@ -54,8 +67,12 @@ export const COMMAND_FIELDS: Partial<Record<DiscordRozSubcommand, { name: string
     { name: 'titulo', label: 'Título', multiline: false, required: true, max: 200, placeholder: 'Qué hay que hacer' },
     { name: 'descripcion', label: 'Descripción', multiline: true, required: false, max: 4000, placeholder: 'Contexto, pasos, criterios de aceptación…' },
   ],
+  crear: [
+    { name: 'titulo', label: 'Título', multiline: false, required: true, max: 200, placeholder: 'Qué hay que hacer' },
+    { name: 'descripcion', label: 'Descripción', multiline: true, required: false, max: 4000, placeholder: 'Contexto y criterios de aceptación…' },
+  ],
   junta: [
-    { name: 'titulo', label: 'Título', multiline: false, required: true, max: 200, placeholder: 'Junta semanal, kickoff con el cliente…' },
+    { name: 'titulo', label: 'Título (opcional)', multiline: false, required: false, max: 200, placeholder: 'Si lo dejas vacío, sale del texto de Granola' },
     { name: 'notas', label: 'Notas o transcript', multiline: true, required: true, max: 4000, placeholder: 'Pega aquí las notas o el transcript' },
   ],
 };
@@ -66,10 +83,11 @@ export const OPTION_LABEL: Record<string, string> = {
   persona: 'Persona',
   proyecto: 'Proyecto',
   issue: 'Issue',
+  para: 'Asignar a',
 };
 
 /** Los que solo devuelven algo para quien los usa (en Discord, efímeros). */
-export const PRIVATE_COMMANDS: ReadonlySet<DiscordRozSubcommand> = new Set(['pulso', 'infra', 'junta']);
+export const PRIVATE_COMMANDS: ReadonlySet<DiscordRozSubcommand> = new Set(['pulso', 'infra', 'junta', 'bandeja', 'linear']);
 
 /** Status de Discord = un select: hasta 25 tareas. */
 export const STATUS_MAX_TASKS = 25;

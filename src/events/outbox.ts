@@ -382,8 +382,8 @@ async function dispatch(
       await reassignFromEvent(payload);
       return;
     }
-    // Junta nueva (manual o Granola): extracción con Claude → candidatas en la bandeja. Necesita el
-    // intento: en el último, la junta queda en 'error' en vez de quedarse en 'extrayendo'.
+    // Ya no se emite (las juntas son solo registro): el handler cierra sin hacer nada los que
+    // quedaron encolados de antes.
     case 'meeting.extract': {
       const { handleMeetingExtract } = await import('../meetings/index.js');
       await handleMeetingExtract(payload, ctx);

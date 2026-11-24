@@ -23,8 +23,11 @@ export interface Prompter {
   secret(question: string): Promise<string>;
 }
 
-/** Corre un comando con stdio heredado y devuelve su código de salida. */
-export type SpawnFn = (command: string, args: string[], env: NodeJS.ProcessEnv) => Promise<number>;
+/**
+ * Corre un comando con stdio heredado y devuelve su código de salida. `quiet`: sin heredar la salida
+ * (para comandos cuya salida podría repetir un secreto, p. ej. `claude mcp add` con el token).
+ */
+export type SpawnFn = (command: string, args: string[], env: NodeJS.ProcessEnv, opts?: { quiet?: boolean }) => Promise<number>;
 
 export interface Ctx {
   api: ZeusApi;

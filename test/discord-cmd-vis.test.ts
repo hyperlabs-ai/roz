@@ -520,8 +520,10 @@ describe('/roz junta', () => {
     const reply = await juntaH.modals!['junta.modal']!.run(ctx);
     const [user, req] = meetings.createMeeting.mock.calls[0]!;
     expect(user).toEqual({ id: AUTH_ANA, devId: ANA, devName: 'Ana Pérez' });
-    expect(req).toMatchObject({ title: 'Kickoff', attendees: [], projectId: PROJECT, format: 'texto', content: 'Ana: vamos con Stripe' });
-    expect(Number.isNaN(Date.parse(req.heldAt))).toBe(false);
+    expect(req).toMatchObject({ title: 'Kickoff', projectId: PROJECT, format: 'texto', content: 'Ana: vamos con Stripe' });
+    // Fecha y asistentes no se fijan aquí: los saca el parser del texto pegado (o ahora, si no trae).
+    expect(req.heldAt).toBeUndefined();
+    expect(req.attendees).toBeUndefined();
     if (reply.kind !== 'message') throw new Error('esperaba mensaje');
     expect(reply.ephemeral).toBe(true);
     expect(textOf(reply.message)).toMatch(/^🟢 Junta «Kickoff» guardada/);

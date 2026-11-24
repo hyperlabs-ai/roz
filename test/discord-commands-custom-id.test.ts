@@ -73,7 +73,7 @@ describe('custom_id', () => {
   });
 
   it('cada acción tiene superficie y dueño conocidos', () => {
-    const owners = new Set(['tarea', 'ticket', 'status', 'mensaje-crear-tarea', 'mensaje-citar', 'plan', 'pulso', 'infra', 'junta', 'mensaje-decision']);
+    const owners = new Set(['tarea', 'ticket', 'status', 'mensaje-crear-tarea', 'mensaje-citar', 'plan', 'pulso', 'infra', 'junta', 'mensaje-decision', 'zeus']);
     for (const action of CUSTOM_ID_ACTIONS) {
       const spec: CustomIdSpec = CUSTOM_ID_SPECS[action];
       expect(['button', 'select', 'modal']).toContain(spec.surface);
