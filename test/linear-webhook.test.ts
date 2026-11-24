@@ -59,6 +59,7 @@ vi.mock('../src/adapters/linear.js', async (orig) => ({
 }));
 
 import { linearWebhookRoutes } from '../src/routes/linear.js';
+import { cached, clearLinearCache } from '../src/zeus/linear-cache.js';
 import { handleLinearWebhook, toWebhookPayload } from '../src/linear/webhook.js';
 import { reconcileLinear, reconcileSince, reconcileTickKey, scheduleLinearReconcile, RECONCILE_OVERLAP_MS } from '../src/linear/reconcile.js';
 
@@ -84,6 +85,7 @@ const issueBody = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  clearLinearCache();
   h.sot = true;
   h.emitted = [];
   h.upserts = [];
@@ -95,12 +97,25 @@ beforeEach(() => {
 });
 
 describe('POST /webhooks/linear', () => {
-  it('flag apagado: 200 skipped, sin emitir (ni verificar)', async () => {
+  it('espejo apagado pero con secreto: verifica, refresca la caché de zeus y no encola nada', async () => {
     h.sot = false;
-    const res = await post(issueBody(), { secret: 'otra' });
+    expect((await post(issueBody(), { secret: 'otra' })).status).toBe(401);
+    await cached('board:dev-1', async () => ['vieja']);
+    await cached('teams', async () => ['HYP']);
+    const res = await post(issueBody());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, skipped: 'flag' });
+    expect(await res.json()).toEqual({ ok: true, refreshed: 1 });
     expect(h.emitted).toEqual([]);
+    // La copia de tickets se fue; el catálogo (equipos) sigue.
+    expect(await cached('board:dev-1', async () => ['nueva'])).toEqual(['nueva']);
+    expect(await cached('teams', async () => ['otro'])).toEqual(['HYP']);
+  });
+
+  it('un cambio de catálogo (estados, equipos, usuarios) borra todo', async () => {
+    h.sot = false;
+    await cached('teams', async () => ['HYP']);
+    await post(issueBody({ type: 'WorkflowState' }));
+    expect(await cached('teams', async () => ['nuevo'])).toEqual(['nuevo']);
   });
 
   it('firma inválida → 401 y nada encolado', async () => {
@@ -195,5 +210,24 @@ describe('reconciliación', () => {
     expect(h.since).toEqual(['2026-11-10T00:00:00.000Z']);
     expect(h.upserts.map((u) => u.source)).toEqual(['reconcile', 'reconcile']);
     expect(r).toEqual({ upserted: 1, truncated: false });
+  });
+});
+
+describe('aviso de asignación desde Linear (sin espejo)', () => {
+  it('reconoce ticket nuevo con asignado y cambio de asignado; ignora lo demás', async () => {
+    const { isAssignmentEvent } = await import('../src/zeus/linear-notify.js');
+    const ev = (over: Record<string, unknown>) => ({ type: 'Issue', action: 'update', data: { id: 'i', assigneeId: 'u1' }, updatedFrom: null, ...over }) as never;
+    expect(isAssignmentEvent(ev({ action: 'create' }))).toBe(true);
+    expect(isAssignmentEvent(ev({ updatedFrom: { assigneeId: 'u0' } }))).toBe(true);
+    expect(isAssignmentEvent(ev({ updatedFrom: { title: 'otro' } }))).toBe(false);
+    expect(isAssignmentEvent(ev({ action: 'create', data: { id: 'i', assigneeId: null } }))).toBe(false);
+    expect(isAssignmentEvent(ev({ type: 'Comment', action: 'create' }))).toBe(false);
+  });
+
+  it('lee quién lo creó por zeus de la firma de la descripción', async () => {
+    const { zeusAuthor } = await import('../src/zeus/linear-notify.js');
+    expect(zeusAuthor('Hacer X\n\n— vía zeus · Sebas')).toBe('Sebas');
+    expect(zeusAuthor('Sin firma')).toBeNull();
+    expect(zeusAuthor(null)).toBeNull();
   });
 });

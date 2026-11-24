@@ -13,16 +13,20 @@ import { keyCommand } from './commands/key.js';
 import { run } from './commands/run.js';
 import { CliError, UsageError, type Ctx } from './context.js';
 import { configPath, keyPath, loadConfig, zeusHome, type ZeusConfig } from './store.js';
-import { realClipboard, realFs, realLatestVersion, realOpenUrl, realPrompt, realSpawn, realStdin } from './system.js';
+import { realClipboard, realFs, realLatestVersion, realOpenUrl, realPrompt, realSpawn, realStdin, resolveCommand } from './system.js';
 import { updateNotice } from './update.js';
 import { VERSION } from './version.js';
 
 const HELP = `zeus ${VERSION} — variables de entorno del equipo en una bóveda de conocimiento cero, y tu PC conectada a zeus.
 
-Conexión:
+Instalar (un solo comando: CLI + cuenta + llave + Claude Code, aprobando en el navegador):
+  npx -y @hyperlabs-ai/zeus@latest setup [--yes]
+  zeus setup [--yes] [--url <zeus>] [--relogin] [--name <equipo>] [--no-install] [--no-browser]
+             [--project] [--no-mcp] [--no-hooks]     idempotente: lo que ya está se salta
+
+Conexión a mano (CI, servidores):
   zeus login --url https://zeus.tu-equipo.com [--token zeus_…]   (sin --token lo pregunta, sin eco)
   zeus whoami
-  zeus setup claude [--project] [--no-mcp] [--no-hooks]   conecta Claude Code: MCP + hooks que protegen secretos
   zeus mcp                                   solo el comando para conectar el MCP a mano
   zeus doctor                                estado de este equipo, tu bandeja y los .env de esta carpeta
   zeus key init [--name <equipo>] [--force]  crea y registra la llave de este equipo
@@ -50,20 +54,23 @@ Accesos (lo hace quien tiene acceso al entorno; no hace falta ser admin):
   zeus env init   <proyecto> [entorno]
   zeus env grant  <proyecto> [entorno] --to <dev, correo o id de llave> [--all-devices] [--yes]
   zeus env grant  <proyecto> --all-envs --to <…>   ·   zeus env grant --all [--env <entorno>] --to <…>
+  zeus env grant  --pending [--yes]   cifra los accesos aprobados en la web (confirma la huella de cada uno)
   zeus env revoke <proyecto> [entorno] --key <id de llave> [--yes]
   zeus env rotate <proyecto> [entorno] [--yes]   ·   zeus env rotate --all [--include-ok]
 
 Para Claude Code:
-  zeus guard     hook (lo instala \`zeus setup claude\`): bloquea leer .env y pegar secretos en el chat
+  zeus guard     hook (lo instala \`zeus setup\`): bloquea leer .env y pegar secretos en el chat
 
 Archivos: ${configPath(zeusHome())} (URL y token) y ${keyPath(zeusHome())} (llave privada de este equipo).
 Variables: ZEUS_HOME, ZEUS_URL, ZEUS_TOKEN, ZEUS_DEBUG=1.`;
 
 const connect = (url: string, token: string): ZeusApi => new ZeusClient({ url, token, userAgent: `zeus-cli/${VERSION}` });
+/** Rutas públicas device/* (login por navegador de `zeus setup`): sin token todavía. */
+const deviceClient = (url: string) => new ZeusClient({ url, token: '', userAgent: `zeus-cli/${VERSION}` });
 
 /** Para los comandos que no llaman a zeus: si alguno lo intenta, el error dice qué falta. */
 const noApi = new Proxy({} as ZeusApi, {
-  get: () => () => Promise.reject(new CliError('este equipo no está conectado a zeus: corre `zeus login`')),
+  get: () => () => Promise.reject(new CliError('este equipo no está conectado a zeus: corre `zeus setup`')),
 });
 
 function buildCtx(cfg: ZeusConfig | null): Ctx {
@@ -122,7 +129,7 @@ const QUIET = new Set(['guard', 'mcp', 'doctor', 'setup']);
 
 async function route(cmd: string, rest: string[], ctx: Ctx, cfg: ZeusConfig | null): Promise<number> {
   const needConfig = (): ZeusConfig => {
-    if (!cfg) throw new CliError('este equipo no está conectado a zeus: corre `zeus login`');
+    if (!cfg) throw new CliError('este equipo no está conectado a zeus: corre `zeus setup`');
     return cfg;
   };
 
@@ -133,7 +140,14 @@ async function route(cmd: string, rest: string[], ctx: Ctx, cfg: ZeusConfig | nu
     case 'mcp':
       return mcp(ctx, needConfig().token);
     case 'setup':
-      return setup(ctx, rest, cfg?.token ?? null);
+      return setup(ctx, rest, {
+        config: cfg,
+        connect,
+        device: deviceClient,
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        // Instalado de verdad: lo que npx puso en el PATH mientras corre no cuenta.
+        which: (cmd) => resolveCommand(cmd, process.env, process.platform, true),
+      });
     case 'guard':
       // Sin config también protege: bloquear secretos no necesita a zeus.
       return guard(ctx);

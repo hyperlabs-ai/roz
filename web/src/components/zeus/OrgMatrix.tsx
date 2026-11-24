@@ -58,7 +58,7 @@ export function OrgMatrix({
   // se deja completa (buscar "roz" no debe esconder a la gente, y buscar "Alan" no esconde proyectos).
   const needle = fold(q.trim());
   const colHits = needle ? allCols.filter((c) => fold(`${c.name} ${c.key}`).includes(needle)) : allCols;
-  const rowHits = needle ? people.filter((m) => fold(`${m.name} ${roleLabel(m.role)}`).includes(needle)) : people;
+  const rowHits = needle ? people.filter((m) => fold(`${m.name} ${m.title ?? ''} ${roleLabel(m.role)}`).includes(needle)) : people;
   const noMatch = !!needle && colHits.length === 0 && rowHits.length === 0;
   const cols = colHits.length ? colHits : allCols;
   const rows = rowHits.length ? rowHits : people;
@@ -147,7 +147,7 @@ export function OrgMatrix({
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className={cn('truncate text-[13px] font-semibold', isMe && 'text-orange-ink')}>{m.name}</span>
                       </span>
-                      <span className="label-caps truncate text-[9.5px]">{roleLabel(m.role)}{isMe && ' · tú'}</span>
+                      <span className="truncate text-[11px] text-muted-foreground">{m.title ?? roleLabel(m.role)}{isMe && ' · tú'}</span>
                     </span>
                     {canEdit && (
                       <Button
@@ -220,7 +220,7 @@ export function OrgMatrix({
               <li key={m.devId} className="flex items-center gap-1.5 rounded-full bg-panel py-1 pl-1 pr-2.5">
                 <PersonAvatar name={m.name} login={m.githubLogin} email={m.email} id={m.devId} className="size-5" />
                 <span className="text-[12.5px] font-medium">{m.name}</span>
-                <span className="label-caps text-[9.5px]">{roleLabel(m.role)}</span>
+                <span className="text-[11px] text-muted-foreground">{m.title ?? roleLabel(m.role)}</span>
               </li>
             ))}
           </ul>

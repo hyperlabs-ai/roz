@@ -20,6 +20,8 @@ export const R = {
   equipo: '/equipo',
   variables: '/variables',
   mcp: '/mcp',
+  /** Aprobar el equipo que corrió `zeus setup` (?code=…). Con sesión, sin el chrome del dashboard. */
+  conectar: '/conectar',
   // Visibilidad
   pulso: '/pulso',
   resumen: '/resumen',

@@ -6,6 +6,8 @@ import { pushToDev } from '../notify/push.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { inBackground } from '../utils/background.js';
 import { mailWorkEvent } from './mail.js';
+import { envDisplay } from './env-label.js';
+import { ZEUS_DUTIES, holdersOf, isDuty, loadDuties, type ZeusDuty } from './duties.js';
 import { claimOnce, releaseOnce } from '../events/outbox.js';
 import {
   ZEUS_OPEN_STATUSES,
@@ -45,11 +47,12 @@ interface DevLite {
   role: string | null;
   github_login: string | null;
   reports_to: string | null;
+  also_reports_to?: string[] | null;
   zeus_admin: boolean | null;
 }
 
 async function activeDevs(): Promise<DevLite[]> {
-  const { data, error } = await db().from('dev').select('id, name, email, role, github_login, reports_to, zeus_admin').eq('active', true).order('name');
+  const { data, error } = await db().from('dev').select('id, name, email, role, github_login, reports_to, also_reports_to, zeus_admin').eq('active', true).order('name');
   if (error) throw error;
   return (data ?? []) as DevLite[];
 }
@@ -415,24 +418,118 @@ export interface EnvChangeNotice {
   rotated?: boolean;
 }
 
-/** Un aviso por persona con acceso: qué NOMBRES cambiaron y cómo ponerse al día. Nunca valores. */
-export async function notifyEnvChange(n: EnvChangeNotice): Promise<void> {
-  const label = `${n.projectKey}/${n.env}`;
+/** Ventana en la que cambios seguidos del mismo entorno se juntan en un solo aviso sin leer. */
+const ENV_MERGE_MS = 2 * 60 * 60_000;
+
+const ENV_GROUPS = [
+  ['added', 'Nuevas:'],
+  ['changed', 'Cambiaron:'],
+  ['deleted', 'Se quitaron:'],
+] as const;
+
+type EnvNames = Record<(typeof ENV_GROUPS)[number][0], string[]>;
+
+/** Lee los nombres de un aviso ya guardado ("Nuevas: A, B" …). Pura, para probarla. */
+export function parseEnvNotice(body: string): EnvNames & { rotated: boolean } {
+  const out: EnvNames = { added: [], changed: [], deleted: [] };
+  for (const [key, prefix] of ENV_GROUPS) {
+    const line = body.split('\n').find((l) => l.startsWith(prefix));
+    if (line) out[key] = line.slice(prefix.length).split(',').map((n) => n.trim()).filter(Boolean);
+  }
+  return { ...out, rotated: /rotó la llave/i.test(body) };
+}
+
+/**
+ * Junta dos tandas de cambios del mismo entorno. Lo que se agregó y luego se quitó desaparece; lo
+ * que se agregó y luego cambió sigue siendo "nueva". Pura, para probarla.
+ */
+export function mergeEnvNames(prev: EnvNames, next: EnvNames): EnvNames {
+  const added = new Set(prev.added);
+  const changed = new Set(prev.changed);
+  const deleted = new Set(prev.deleted);
+  for (const n of next.added) {
+    if (deleted.delete(n)) changed.add(n);
+    else added.add(n);
+  }
+  for (const n of next.changed) if (!added.has(n)) changed.add(n);
+  for (const n of next.deleted) {
+    if (added.delete(n)) continue;
+    changed.delete(n);
+    deleted.add(n);
+  }
+  const sort = (s: Set<string>) => [...s].sort();
+  return { added: sort(added), changed: sort(changed), deleted: sort(deleted) };
+}
+
+function envNoticeText(actorName: string, projectKey: string, env: string, names: EnvNames, rotated: boolean): { subject: string; body: string } | null {
+  // A la persona se le nombra como en Variables: "api-hyperhub (Prod)". El comando sí lleva el nombre real.
+  const label = envDisplay(env, projectKey);
   const lines: string[] = [];
-  if (n.rotated) lines.push(`Se rotó la llave del entorno. Los valores no cambiaron; vuelve a bajar para seguir pudiendo subir cambios.`);
-  if (n.added.length) lines.push(`Nuevas: ${n.added.join(', ')}`);
-  if (n.changed.length) lines.push(`Cambiaron: ${n.changed.join(', ')}`);
-  if (n.deleted.length) lines.push(`Se quitaron: ${n.deleted.join(', ')}`);
-  if (!lines.length) return;
-  lines.push('', `Ponte al día: zeus env pull ${n.projectKey} ${n.env}   (o \`zeus env status\` para ver qué te falta)`);
-  const total = n.added.length + n.changed.length + n.deleted.length;
-  const subject = n.rotated ? `${n.actor.name} rotó la llave de ${label}` : `${n.actor.name} cambió ${total} variable${total === 1 ? '' : 's'} de ${label}`;
-  const { error } = await db()
+  if (rotated) lines.push(`Se rotó la llave del entorno. Los valores no cambiaron; vuelve a bajar para seguir pudiendo subir cambios.`);
+  if (names.added.length) lines.push(`Nuevas: ${names.added.join(', ')}`);
+  if (names.changed.length) lines.push(`Cambiaron: ${names.changed.join(', ')}`);
+  if (names.deleted.length) lines.push(`Se quitaron: ${names.deleted.join(', ')}`);
+  if (!lines.length) return null;
+  lines.push('', `Ponte al día: zeus env pull ${projectKey} ${env}   (o \`zeus env status\` para ver qué te falta)`);
+  const total = names.added.length + names.changed.length + names.deleted.length;
+  const subject = rotated && !total ? `${actorName} rotó la llave de ${label}` : `${actorName} cambió ${total} variable${total === 1 ? '' : 's'} de ${label}`;
+  return { subject, body: lines.join('\n') };
+}
+
+/**
+ * Un aviso por persona con acceso: qué NOMBRES cambiaron y cómo ponerse al día. Nunca valores.
+ * Si esa persona aún no leyó un aviso reciente del MISMO entorno y de la misma persona, se le suma
+ * a ese en vez de dejarle otro: subir variables una por una no debe llenar la bandeja de avisos.
+ */
+export async function notifyEnvChange(n: EnvChangeNotice): Promise<void> {
+  const incoming: EnvNames = { added: n.added, changed: n.changed, deleted: n.deleted };
+  if (!n.rotated && !n.added.length && !n.changed.length && !n.deleted.length) return;
+  const supabase = db();
+  const since = new Date(Date.now() - ENV_MERGE_MS).toISOString();
+  const { data: openRows, error: openErr } = await supabase
     .from('zeus_message')
-    .insert(n.devIds.map((id) => ({ kind: 'env_change', from_dev_id: n.actor.devId, to_dev_id: id, subject, body: lines.join('\n'), project_id: n.projectId, via: 'system' })));
-  if (error) throw error;
-  const { data } = await db().from('dev').select('id, email').in('id', n.devIds);
-  for (const d of (data ?? []) as Array<{ id: string; email: string | null }>) notify(d.id, d.email, subject, lines[0] ?? '', 'bandeja');
+    .select('id, to_dev_id, subject, body')
+    .eq('kind', 'env_change')
+    .eq('from_dev_id', n.actor.devId)
+    .eq('project_id', n.projectId)
+    .is('read_at', null)
+    .gte('created_at', since)
+    .in('to_dev_id', n.devIds);
+  if (openErr) throw openErr;
+  // El entorno exacto sale del comando del cuerpo ("zeus env pull PROYECTO entorno"); los avisos
+  // viejos lo traían al final del asunto. Se compara aquí, no con LIKE (`_` es comodín).
+  const cmd = `zeus env pull ${n.projectKey} ${n.env} `;
+  const oldSuffix = ` de ${n.projectKey}/${n.env}`;
+  const openByDev = new Map(
+    ((openRows ?? []) as Array<{ id: string; to_dev_id: string; subject: string | null; body: string }>)
+      .filter((r) => r.body.includes(cmd) || r.subject?.endsWith(oldSuffix))
+      .map((r) => [r.to_dev_id, r]),
+  );
+
+  const fresh = envNoticeText(n.actor.name, n.projectKey, n.env, incoming, !!n.rotated);
+  const inserts: Array<Record<string, unknown>> = [];
+  for (const devId of n.devIds) {
+    const prev = openByDev.get(devId);
+    if (!prev) {
+      if (fresh) inserts.push({ kind: 'env_change', from_dev_id: n.actor.devId, to_dev_id: devId, subject: fresh.subject, body: fresh.body, project_id: n.projectId, via: 'system' });
+      continue;
+    }
+    const old = parseEnvNotice(prev.body);
+    const merged = envNoticeText(n.actor.name, n.projectKey, n.env, mergeEnvNames(old, incoming), old.rotated || !!n.rotated);
+    // Si todo se canceló (se agregó y se quitó), el aviso deja de tener sentido: se da por leído.
+    const { error } = merged
+      ? await supabase.from('zeus_message').update({ subject: merged.subject, body: merged.body, created_at: new Date().toISOString() }).eq('id', prev.id)
+      : await supabase.from('zeus_message').update({ read_at: new Date().toISOString() }).eq('id', prev.id);
+    if (error) throw error;
+  }
+  if (inserts.length) {
+    const { error } = await supabase.from('zeus_message').insert(inserts);
+    if (error) throw error;
+  }
+  // El push sí va cada vez: es lo que avisa "acaba de cambiar".
+  if (!fresh) return;
+  const { data } = await supabase.from('dev').select('id, email').in('id', n.devIds);
+  for (const d of (data ?? []) as Array<{ id: string; email: string | null }>) notify(d.id, d.email, fresh.subject, fresh.body.split('\n')[0] ?? '', 'bandeja');
 }
 
 export async function markRead(ids: string[] | 'all', actor: ZeusActor): Promise<number> {
@@ -503,16 +600,38 @@ export interface Route {
 
 const LEAD_ROLES = ['pm', 'ceo', 'account_manager'];
 
+/** "Revisión de código y merge de PRs" → "revisión de código y merge de PRs" (siglas intactas). */
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+/** El tema de una solicitud: el que se pidió, o el implícito de su tipo ("review" = revisión de código). */
+export function topicFor(kind: ZeusRequestKind | null | undefined, topic: string | null | undefined): ZeusDuty | null {
+  if (topic && isDuty(topic)) return topic;
+  return kind === 'review' ? 'code_review' : null;
+}
+
 /**
- * A quién le toca decidir sobre un recurso, y por qué. Orden: el dueño del recurso → quien lidera
- * el proyecto → el jefe directo de quien pide → un administrador de zeus. Nunca se le enruta a uno
- * mismo: pedirse permiso a sí mismo no es un control.
+ * A quién le toca decidir sobre un recurso, y por qué. Orden: quien atiende el TEMA (si la solicitud
+ * trae uno: revisión de código, deploys, accesos avanzados…) → el dueño del recurso → quien lidera el
+ * proyecto → el jefe directo de quien pide (o, si no tiene, a quien más reporta) → un administrador de
+ * zeus. Nunca se le enruta a uno mismo: pedirse permiso a sí mismo no es un control.
  */
-export async function routeFor(requesterId: string, resourceRef: string | null): Promise<Route> {
+export async function routeFor(requesterId: string, resourceRef: string | null, topic: ZeusDuty | null = null): Promise<Route> {
   const devs = await activeDevs();
   const byId = new Map(devs.map((d) => [d.id, d]));
   const usable = (id: string | null | undefined): DevLite | null => (id && id !== requesterId ? (byId.get(id) ?? null) : null);
   const supabase = db();
+
+  if (topic) {
+    const holders = holdersOf(await loadDuties(), topic, requesterId).map((r) => usable(r.dev_id)).filter((d): d is DevLite => !!d);
+    const first = holders[0];
+    if (first) {
+      const next = holders.slice(1, 3).map((d) => d.name);
+      return {
+        approver: first,
+        because: `${first.name} se encarga de ${lowerFirst(ZEUS_DUTIES[topic].label)}${next.length ? ` (si no está: ${next.join(', luego ')})` : ''}`,
+      };
+    }
+  }
 
   let projectId: string | null = null;
   const parsed = resourceRef ? parseRef(resourceRef) : null;
@@ -542,8 +661,11 @@ export async function routeFor(requesterId: string, resourceRef: string | null):
     if (lead) return { approver: lead, because: `${lead.name} lleva ese proyecto` };
   }
 
-  const boss = usable(byId.get(requesterId)?.reports_to);
-  if (boss) return { approver: boss, because: `${boss.name} es tu jefe directo y el recurso no tiene dueño asignado` };
+  const me = byId.get(requesterId);
+  const boss = usable(me?.reports_to);
+  if (boss) return { approver: boss, because: `le reportas directamente a ${boss.name} y el recurso no tiene dueño asignado` };
+  const dotted = (me?.also_reports_to ?? []).map(usable).find((d): d is DevLite => !!d);
+  if (dotted) return { approver: dotted, because: `también le reportas a ${dotted.name} y el recurso no tiene dueño asignado` };
 
   const admin = devs.find((d) => d.id !== requesterId && isZeusAdmin(d));
   if (admin) return { approver: admin, because: `${admin.name} administra zeus y no hay un dueño más específico` };
@@ -552,6 +674,8 @@ export async function routeFor(requesterId: string, resourceRef: string | null):
 
 export interface CreateRequestInput {
   kind?: ZeusRequestKind;
+  /** Tema (code_review, deploys, architecture, client_feedback, clients, advanced_access): enruta a quien lo atiende. */
+  topic?: string | null;
   title: string;
   detail?: string;
   resourceRef?: string | null;
@@ -566,7 +690,8 @@ export async function createRequest(input: CreateRequestInput, actor: ZeusActor)
   const kind = input.kind ?? 'access';
   if (!REQUEST_KINDS.includes(kind)) throw new ValidationError(`tipo inválido (usa: ${REQUEST_KINDS.join(', ')})`);
   if (input.resourceRef && !parseRef(input.resourceRef)) throw new ValidationError('resourceRef inválida');
-  const route = await routeFor(actor.devId, input.resourceRef ?? null);
+  if (input.topic && !isDuty(input.topic)) throw new ValidationError(`tema desconocido (usa: ${Object.keys(ZEUS_DUTIES).join(', ')})`);
+  const route = await routeFor(actor.devId, input.resourceRef ?? null, topicFor(kind, input.topic));
   const { data, error } = await db()
     .from('zeus_request')
     .insert({
@@ -662,25 +787,32 @@ export async function listRequests(scope: 'mine' | 'to_me' | 'all', actor: ZeusA
 export async function getInbox(actor: ZeusActor, opts: { unreadOnly?: boolean; limit?: number } = {}): Promise<ZeusInbox> {
   const supabase = db();
   const limit = Math.min(opts.limit ?? 50, 200);
-  let received = supabase.from('zeus_message').select(MESSAGE_COLS).eq('to_dev_id', actor.devId);
+  // Mensajes y avisos de variables van en consultas separadas: los avisos son muchos y, juntos,
+  // empujaban fuera del tope a los mensajes de personas (y los dejaban enterrados al leerlos).
+  let received = supabase.from('zeus_message').select(MESSAGE_COLS).eq('to_dev_id', actor.devId).in('kind', ['message', 'task', 'plan']);
   if (opts.unreadOnly) received = received.is('read_at', null);
+  let envReceived = supabase.from('zeus_message').select(MESSAGE_COLS).eq('to_dev_id', actor.devId).eq('kind', 'env_change');
+  if (opts.unreadOnly) envReceived = envReceived.is('read_at', null);
   const open = [...ZEUS_OPEN_STATUSES];
-  const [inbox, sent, openForMe, waiting, unread, toResolve, mine] = await Promise.all([
+  const [inbox, envs, sent, openForMe, waiting, unread, toResolve, mine] = await Promise.all([
     received.order('created_at', { ascending: false }).limit(limit),
-    supabase.from('zeus_message').select(MESSAGE_COLS).eq('from_dev_id', actor.devId).order('created_at', { ascending: false }).limit(20),
+    envReceived.order('created_at', { ascending: false }).limit(30),
+    // Un aviso de variables se guarda una vez por destinatario: en "enviados" saldría N veces.
+    supabase.from('zeus_message').select(MESSAGE_COLS).eq('from_dev_id', actor.devId).neq('kind', 'env_change').neq('via', 'system').order('created_at', { ascending: false }).limit(20),
     supabase.from('zeus_message').select(MESSAGE_COLS).eq('to_dev_id', actor.devId).in('status', open).order('created_at', { ascending: false }).limit(100),
     supabase.from('zeus_message').select(MESSAGE_COLS).eq('from_dev_id', actor.devId).in('status', open).order('created_at', { ascending: false }).limit(100),
     supabase.from('zeus_message').select('id', { count: 'exact', head: true }).eq('to_dev_id', actor.devId).is('read_at', null),
     listRequests('to_me', actor),
     listRequests('mine', actor, 30),
   ]);
-  for (const r of [inbox, sent, openForMe, waiting, unread]) if (r.error) throw r.error;
-  const lists = [inbox, sent, openForMe, waiting].map((r) => (r.data ?? []) as MessageRow[]);
+  for (const r of [inbox, envs, sent, openForMe, waiting, unread]) if (r.error) throw r.error;
+  const lists = [inbox, envs, sent, openForMe, waiting].map((r) => (r.data ?? []) as MessageRow[]);
   const all = await hydrate(lists.flat());
   const byId = new Map(all.map((m) => [m.id, m]));
-  const [messages, sentMsgs, openMsgs, waitingMsgs] = lists.map((rows) => rows.map((r) => byId.get(r.id)!));
+  const [messages, envMsgs, sentMsgs, openMsgs, waitingMsgs] = lists.map((rows) => rows.map((r) => byId.get(r.id)!));
   return {
     messages: messages!,
+    envChanges: envMsgs!,
     sent: sentMsgs!,
     open: openMsgs!,
     waiting: waitingMsgs!,
@@ -688,6 +820,45 @@ export async function getInbox(actor: ZeusActor, opts: { unreadOnly?: boolean; l
     mine,
     unread: unread.count ?? 0,
   };
+}
+
+export interface MessageHistoryQuery {
+  /** received = lo que me mandaron; sent = lo que mandé. */
+  box?: 'received' | 'sent';
+  kind?: ZeusMessageKind | null;
+  /** La otra persona (quien lo mandó si box=received, a quien si box=sent): id, nombre o correo. */
+  with?: string | null;
+  projectKey?: string | null;
+  /** Texto en el asunto o el cuerpo. */
+  q?: string | null;
+  /** Paginación: trae lo anterior a esta fecha (ISO). */
+  before?: string | null;
+  limit?: number;
+}
+
+/**
+ * Historial completo de la bandeja, leído y no leído, con filtros. Es lo que permite volver a abrir
+ * un mensaje viejo: la bandeja muestra lo reciente y lo pendiente; esto, todo.
+ */
+export async function messageHistory(query: MessageHistoryQuery, actor: ZeusActor): Promise<{ messages: ZeusMessage[]; nextBefore: string | null }> {
+  const limit = Math.min(Math.max(query.limit ?? 30, 1), 100);
+  const box = query.box ?? 'received';
+  let q = db().from('zeus_message').select(MESSAGE_COLS);
+  q = box === 'sent' ? q.eq('from_dev_id', actor.devId).neq('kind', 'env_change').neq('via', 'system') : q.eq('to_dev_id', actor.devId);
+  if (query.kind) q = q.eq('kind', query.kind);
+  if (query.with?.trim()) {
+    const other = await findDev(query.with);
+    q = box === 'sent' ? q.eq('to_dev_id', other.id) : q.eq('from_dev_id', other.id);
+  }
+  if (query.projectKey?.trim()) q = q.eq('project_id', (await resolveProject(query.projectKey)).id);
+  const text = query.q?.trim().replace(/[%_,()\\]/g, ' ').trim();
+  if (text) q = q.or(`subject.ilike.%${text}%,body.ilike.%${text}%`);
+  if (query.before && !Number.isNaN(Date.parse(query.before))) q = q.lt('created_at', new Date(query.before).toISOString());
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(limit + 1);
+  if (error) throw error;
+  const rows = (data ?? []) as MessageRow[];
+  const page = rows.slice(0, limit);
+  return { messages: await hydrate(page), nextBefore: rows.length > limit ? page[page.length - 1]!.created_at : null };
 }
 
 /** Origen público de zeus, tal como lo ve quien llama (detrás del proxy de Railway o del rewrite). */

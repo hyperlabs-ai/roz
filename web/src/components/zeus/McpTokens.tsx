@@ -1,5 +1,6 @@
-// Conectar tu Claude a zeus, en compacto: el único comando que hace falta, qué es (y qué NO es) el
-// token del MCP, y tus tokens con crear/revocar.
+// Conectar tu PC a zeus. Lo normal es UN comando (`zeus setup`, que pide aprobar en el navegador y
+// crea su propio token); aquí quedan esos comandos y los tokens manuales (CI, servidores) con
+// crear/revocar.
 import { useState } from 'react';
 import { ChevronRight, KeyRound, Loader2, Plus, ShieldAlert, Trash2 } from 'lucide-react';
 import {
@@ -22,8 +23,26 @@ export const TOKENS_KEY = '/zeus/tokens';
 export const mcpCommand = (mcpUrl: string, token: string): string =>
   `claude mcp add --transport http zeus ${mcpUrl} --header "Authorization: Bearer ${token}"`;
 export const cliCommand = (apiUrl: string, token: string): string => `zeus login --url ${apiUrl} --token ${token}`;
-/** Conecta Claude Code de una vez: MCP + hooks de `zeus guard` (ver cli/README.md). */
-export const SETUP_COMMAND = 'zeus setup claude';
+
+/** El zeus que el CLI usa si no se le dice otro (cli/src/api.ts, DEFAULT_ZEUS_URL). */
+export const DEFAULT_ZEUS_URL = 'https://zeus.galaaxy.tech';
+
+/**
+ * Un solo comando que deja la PC lista: instala el CLI, conecta la cuenta aprobando en el navegador
+ * (/conectar), crea la llave de la bóveda y conecta Claude Code (hooks + MCP). Ver cli/README.md.
+ * `--url` solo si este zeus no es el de siempre.
+ */
+export function setupCommand(apiUrl?: string | null, yes = false): string {
+  const url = apiUrl?.replace(/\/+$/, '');
+  return `npx -y @hyperlabs-ai/zeus@latest setup${yes ? ' --yes' : ''}${url && url !== DEFAULT_ZEUS_URL ? ` --url ${url}` : ''}`;
+}
+
+/** Lo mismo, para pedírselo a tu Claude: corre sin terminal (`--yes`) y la aprobación es tuya, en el navegador. */
+export const setupPrompt = (apiUrl?: string | null): string =>
+  `Instala zeus en esta PC: corre \`${setupCommand(apiUrl, true)}\` y, cuando abra el navegador, avísame para aprobarlo. Al terminar dime qué quedó listo.`;
+
+/** Con el CLI ya instalado: lo mismo que el de npx. */
+export const SETUP_COMMAND = 'zeus setup';
 
 /** Crear un token y mostrarlo UNA vez. El secreto vive solo en el estado de este diálogo. */
 function CreateTokenDialog({ open, me, onClose }: { open: boolean; me: ZeusMe | null; onClose: () => void }) {
@@ -85,7 +104,7 @@ function CreateTokenDialog({ open, me, onClose }: { open: boolean; me: ZeusMe | 
             </div>
             <CommandBlock label="1 · Instala el CLI (Node 20+)" command={CLI_INSTALL} />
             {me?.apiUrl && <CommandBlock label="2 · Entra con tu token" command={cliCommand(me.apiUrl, created.token)} />}
-            <CommandBlock label="3 · Conecta Claude Code (MCP + protector de secretos)" command={SETUP_COMMAND} />
+            <CommandBlock label="3 · Llave y Claude Code (MCP + protector de secretos)" command={SETUP_COMMAND} />
             <p className="flex items-start gap-2 rounded-md bg-yellow-soft px-3 py-2 text-xs text-yellow-ink">
               <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
               Trátalo como una contraseña: quien lo tenga actúa como tú en zeus. No lo pegues en un chat ni lo subas a un repo.

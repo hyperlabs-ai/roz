@@ -12,10 +12,8 @@ import DeveloperProfile from '@/pages/DeveloperProfile';
 import Projects from '@/pages/Projects';
 import ProjectDetail from '@/pages/ProjectDetail';
 import Infra from '@/pages/Infra';
-import Tasks from '@/pages/Tasks';
 import Capacity from '@/pages/Capacity';
 import Tickets from '@/pages/Tickets';
-import Ticket from '@/pages/Ticket';
 import Skills from '@/pages/Skills';
 import Settings from '@/pages/Settings';
 import Chat from '@/pages/Chat';
@@ -23,6 +21,7 @@ import Pulse from '@/pages/Pulse';
 import Meetings from '@/pages/Meetings';
 import Plans from '@/pages/Plans';
 import Zeus from '@/pages/Zeus';
+import Connect from '@/pages/Connect';
 import { LEGACY_ROUTES, R, stripAppPrefix, zeusTabTarget } from '@/lib/routes';
 
 /**
@@ -190,9 +189,10 @@ export function dashboardRoutes() {
       <Route path="proyectos/:id" element={<ProjectDetail />} />
 
       <Route path="juntas" element={<Meetings />} />
-      {/* Ticket inteligente (crear). Los reportes de trabajo viven en /reportes. */}
-      <Route path="ticket" element={<Ticket />} />
-      <Route path="tareas" element={<Tasks />} />
+      {/* Tareas y Ticket se quitaron: las tareas viven en Linear y lo activo de cada quien está en la
+          Bandeja. Los enlaces viejos llevan ahí. */}
+      <Route path="ticket" element={<Navigate to={R.bandeja} replace />} />
+      <Route path="tareas" element={<Navigate to={R.bandeja} replace />} />
       <Route path="chat" element={<Chat />} />
       <Route path="chat/m/:messageId" element={<Chat />} />
       <Route path="chat/:conversationId" element={<Chat />} />
@@ -229,6 +229,9 @@ export default function App() {
 
         {/* La app, detrás de login, en la raíz. Su comodín recoge cualquier ruta desconocida. */}
         <Route path="/" element={<RequireAuth />}>
+          {/* Aprobar una PC de `zeus setup`: con sesión (si no hay, el login se pinta aquí mismo y al
+              entrar sigue en esta dirección), pero sin el chrome del dashboard. */}
+          <Route path={R.conectar.slice(1)} element={<Connect />} />
           {dashboardRoutes()}
         </Route>
     </Routes>

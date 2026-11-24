@@ -1,10 +1,12 @@
-// Diálogo de una persona del organigrama: a quién reporta y si administra zeus (solo admins).
+// Diálogo de una persona del organigrama: su puesto, a quién reporta (y a quién más, en línea
+// punteada) y si administra zeus (solo admins).
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, ShieldAlert } from 'lucide-react';
+import { Loader2, ShieldAlert, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Combobox, type ComboboxOption } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { invalidate } from '@/lib/store';
 import { useAction } from '@/lib/useAction';
@@ -30,10 +32,14 @@ export function MemberDialog({
   const act = useAction();
   const [reportsTo, setReportsTo] = useState<string>(NOBODY);
   const [admin, setAdmin] = useState(false);
+  const [title, setTitle] = useState('');
+  const [also, setAlso] = useState<string[]>([]);
   useEffect(() => {
     if (!member) return;
     setReportsTo(member.reportsTo ?? NOBODY);
     setAdmin(member.zeusAdmin);
+    setTitle(member.title ?? '');
+    setAlso(member.alsoReportsTo);
   }, [member]);
 
   const options = useMemo<ComboboxOption[]>(() => {
@@ -54,7 +60,14 @@ export function MemberDialog({
   if (!member) return null;
   const busy = act.busy(`member:${member.devId}`);
   const nextReports = reportsTo === NOBODY ? null : reportsTo;
-  const dirty = nextReports !== member.reportsTo || admin !== member.zeusAdmin;
+  const nextTitle = title.trim() || null;
+  const nextAlso = also.filter((id) => id !== nextReports);
+  const alsoChanged = nextAlso.join() !== member.alsoReportsTo.join();
+  const dirty = nextReports !== member.reportsTo || admin !== member.zeusAdmin || nextTitle !== member.title || alsoChanged;
+  const byId = new Map(members.map((m) => [m.devId, m]));
+  const alsoOptions = members
+    .filter((m) => m.active && m.devId !== member.devId && m.devId !== nextReports && !nextAlso.includes(m.devId))
+    .map((m) => ({ value: m.devId, label: m.name, hint: m.title ?? m.role }));
   const droppingSelf = member.devId === me && member.zeusAdmin && !admin;
 
   return (
@@ -62,10 +75,26 @@ export function MemberDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader eyebrow="Zeus · organización">
           <DialogTitle>{member.name}</DialogTitle>
-          <DialogDescription>{member.role || 'Sin rol'}{member.email ? ` · ${member.email}` : ''}</DialogDescription>
+          <DialogDescription>{member.title ?? member.role ?? 'Sin rol'}{member.email ? ` · ${member.email}` : ''}</DialogDescription>
         </DialogHeader>
+        <Field label="Puesto" htmlFor="zo-title" hint="Lo que hace en el equipo, como lo dirían ustedes (p. ej. «Líder técnico y desarrollador de AI»).">
+          <Input id="zo-title" value={title} maxLength={80} onChange={(e) => setTitle(e.target.value)} placeholder="Frontend, Jefa de operaciones…" />
+        </Field>
         <Field label="Reporta a" htmlFor="zo-reports" hint="Las solicitudes sin dueño ni líder de proyecto se envían a esta persona.">
           <Combobox id="zo-reports" value={reportsTo} onChange={setReportsTo} options={options} searchPlaceholder="Buscar persona…" emptyText="Nadie con ese nombre" />
+        </Field>
+        <Field label="También reporta a" hint="Línea punteada: otras personas con las que trabaja de cerca. Si no tiene jefe directo, las solicitudes van aquí.">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {nextAlso.map((id) => (
+              <span key={id} className="inline-flex items-center gap-1 rounded-full border border-dashed bg-card py-0.5 pl-2.5 pr-1 text-[12.5px]">
+                {byId.get(id)?.name ?? 'alguien'}
+                <button type="button" onClick={() => setAlso((p) => p.filter((x) => x !== id))} className="grid size-5 place-items-center rounded-full text-faint hover:bg-panel hover:text-foreground" aria-label="Quitar">
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+            <Combobox size="sm" value={null} onChange={(v) => setAlso((p) => [...p, v])} options={alsoOptions} placeholder="Agregar…" searchPlaceholder="Buscar persona…" emptyText="No queda nadie más" className="w-[150px]" />
+          </div>
         </Field>
         <label htmlFor="zo-admin" className="flex cursor-pointer items-start gap-3 rounded-md border bg-sidebar px-3.5 py-3">
           <Switch id="zo-admin" checked={admin} onCheckedChange={setAdmin} className="mt-0.5" />
@@ -93,6 +122,8 @@ export function MemberDialog({
                   zeusApi.updateMember(member.devId, {
                     ...(nextReports !== member.reportsTo ? { reportsTo: nextReports } : {}),
                     ...(admin !== member.zeusAdmin ? { zeusAdmin: admin } : {}),
+                    ...(nextTitle !== member.title ? { title: nextTitle } : {}),
+                    ...(alsoChanged ? { alsoReportsTo: nextAlso } : {}),
                   }),
                 {
                   success: 'Organigrama actualizado',

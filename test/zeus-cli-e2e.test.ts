@@ -201,7 +201,7 @@ describe('historial y avisos de la bóveda (CLI real contra servidor real)', () 
     const notices = await pg.sql<{ kind: string; subject: string; body: string; to_dev_id: string }>(`select kind, subject, body, to_dev_id from roz.zeus_message`);
     expect(notices).toHaveLength(1); // solo Fer: Beto hizo el cambio y Ana ya no tiene acceso
     expect(notices[0]).toMatchObject({ kind: 'env_change', to_dev_id: await devId('Fer') });
-    expect(notices[0]!.subject).toMatch(/Beto cambió 1 variable de ORWEL\/development/);
+    expect(notices[0]!.subject).toMatch(/Beto cambió 1 variable de ORWEL \(Local\)/);
     expect(notices[0]!.body).toMatch(/Cambiaron: API_KEY/);
     expect(JSON.stringify(notices)).not.toContain('rotada_por_beto');
   });
@@ -316,5 +316,54 @@ describe('Claude con zeus: instrucciones, encargos y planes compartidos', () => 
   it('doctor (y el inicio de sesión de Claude) resume pendientes y avisos', async () => {
     const lines = (await doctorReport(beto.ctx, { brief: true })).join('\n');
     expect(lines).toMatch(/\[plan · accepted\] Migrar pagos a Stripe v2 — de Fer/);
+  });
+});
+
+// ---------------------------------------------------------------- dar acceso desde la web
+
+describe('acceso aprobado en la web y cifrado con `zeus env grant --pending`', () => {
+  it('doctor avisa sin cifrar; el CLI muestra la huella, respeta un "no" y cifra con un "sí"', async () => {
+    const { createGrantIntent } = await import('../src/zeus/vault.js');
+    const [envRow] = await pg.sql<{ id: string }>(`select id from roz.zeus_vault_env where name = 'development'`);
+    const anaId = await devId('Ana');
+    await pg.sql(`delete from roz.zeus_message where to_dev_id = $1`, [anaId]);
+    await expect(envPull(ana.ctx, ['ORWEL', '--stdout'])).rejects.toThrow(/acceso/i);
+    // Fer (con acceso) aprueba en la web; nada se cifra todavía.
+    await createGrantIntent({ envId: envRow!.id, toDevId: anaId }, await actorForDev(await devId('Fer'), 'web'));
+    const grantsBefore = await pg.sql(`select key_id from roz.zeus_vault_grant`);
+
+    // doctor solo avisa, y solo a quien puede cifrarlo.
+    expect((await doctorReport(fer.ctx, { brief: true })).join('\n')).toContain('1 acceso(s) aprobado(s) por cifrar: `zeus env grant --pending`');
+    expect((await doctorReport(ana.ctx, { brief: true })).join('\n')).not.toContain('por cifrar');
+    expect(await pg.sql(`select key_id from roz.zeus_vault_grant`)).toEqual(grantsBefore);
+
+    // Sin terminal y sin --yes no cifra nada.
+    fer.prompt.interactive = false;
+    await expect(envGrant(fer.ctx, ['--pending'])).rejects.toThrow(/terminal/);
+    fer.prompt.interactive = true;
+    // --pending no se mezcla con --to.
+    await expect(envGrant(fer.ctx, ['--pending', '--to', 'Ana'])).rejects.toThrow(/uso/);
+
+    // "No": la aprobación sigue abierta y Ana sigue fuera.
+    fer.log.length = 0;
+    fer.prompt.answers = [false];
+    expect(await envGrant(fer.ctx, ['--pending'])).toBe(0);
+    const [anaKey] = await pg.sql<{ id: string; fingerprint: string }>(`select id, fingerprint from roz.zeus_vault_key where name = 'laptop-ana' and revoked_at is null`);
+    expect(fer.log.join('\n')).toContain(`huella ${anaKey!.fingerprint}`);
+    expect(fer.prompt.questions.at(-1)).toMatch(/canal distinto a zeus/);
+    expect(await pg.sql(`select fulfilled_at from roz.zeus_vault_grant_intent where cancelled_at is null`)).toEqual([{ fulfilled_at: null }]);
+    await expect(envPull(ana.ctx, ['ORWEL', '--stdout'])).rejects.toThrow(/acceso/i);
+
+    // "Sí": se envuelve la DEK para el equipo de Ana, la aprobación se cierra y le llega el aviso.
+    fer.prompt.answers = [true];
+    expect(await envGrant(fer.ctx, ['--pending'])).toBe(0);
+    expect(await envPull(ana.ctx, ['ORWEL', '--stdout', '--format', 'json'])).toBe(0);
+    expect(JSON.parse(ana.out[ana.out.length - 1]!)).toHaveProperty('DATABASE_URL', SECRETS.DATABASE_URL);
+    expect((await pg.sql<{ fulfilled_at: string | null }>(`select fulfilled_at from roz.zeus_vault_grant_intent`))[0]!.fulfilled_at).toBeTruthy();
+    expect((await pg.sql<{ subject: string }>(`select subject from roz.zeus_message where to_dev_id = $1`, [anaId])).map((m) => m.subject)).toContain('Ya tienes acceso a ORWEL (Local)');
+    // Ya no queda nada por cifrar.
+    fer.out.length = 0;
+    expect(await envGrant(fer.ctx, ['--pending'])).toBe(0);
+    expect(fer.out.join('\n')).toMatch(/no hay accesos aprobados/);
   });
 });

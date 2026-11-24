@@ -2,7 +2,11 @@
 // texto cifrado. fetch inyectable para los tests.
 import type {
   CreateEnvBody,
+  DevicePoll,
+  DeviceStart,
+  DeviceStartBody,
   GrantBody,
+  GrantIntent,
   InboxSummary,
   KeyRotateBody,
   PutSecretsBody,
@@ -41,12 +45,24 @@ export interface ZeusApi {
   history(projectKey: string, env: string, keyId: string, name?: string): Promise<{ dekVersion: number; revisions: VaultRevision[] }>;
   rotateDeviceKey(body: KeyRotateBody): Promise<{ ok: boolean; moved: number }>;
   inbox(): Promise<InboxSummary>;
+  /** Accesos aprobados en la web que este dev puede cifrar (zeus ≥ CLI 0.2.4). */
+  grantIntents(): Promise<{ intents: GrantIntent[] }>;
 }
+
+/** Conectar un equipo aprobando en el navegador (`zeus setup`): rutas públicas, sin token. */
+export interface DeviceApi {
+  start(body: DeviceStartBody): Promise<DeviceStart>;
+  poll(deviceCode: string): Promise<DevicePoll>;
+}
+
+/** El zeus del equipo cuando no se dice otro (--url o ZEUS_URL lo cambian; zeus es self-host). */
+export const DEFAULT_ZEUS_URL = 'https://zeus.galaaxy.tech';
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
 
 export interface ZeusClientOptions {
   url: string;
+  /** Vacío solo para las rutas públicas (device/*). */
   token: string;
   fetch?: FetchLike;
   timeoutMs?: number;
@@ -55,7 +71,7 @@ export interface ZeusClientOptions {
 
 const BASE_PATH = '/v1/zeus';
 
-export class ZeusClient implements ZeusApi {
+export class ZeusClient implements ZeusApi, DeviceApi {
   private readonly base: string;
   private readonly fetchFn: FetchLike;
   private readonly timeoutMs: number;
@@ -106,6 +122,17 @@ export class ZeusClient implements ZeusApi {
   inbox(): Promise<InboxSummary> {
     return this.request('GET', '/inbox');
   }
+  grantIntents(): Promise<{ intents: GrantIntent[] }> {
+    return this.request('GET', '/vault/grant-intents');
+  }
+
+  // ---- device/* (públicas: el token todavía no existe)
+  start(body: DeviceStartBody): Promise<DeviceStart> {
+    return this.request('POST', '/device/start', body);
+  }
+  poll(deviceCode: string): Promise<DevicePoll> {
+    return this.request('POST', '/device/poll', { deviceCode });
+  }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     let res: Response;
@@ -113,7 +140,7 @@ export class ZeusClient implements ZeusApi {
       res = await this.fetchFn(this.base + BASE_PATH + path, {
         method,
         headers: {
-          authorization: `Bearer ${this.opts.token}`,
+          ...(this.opts.token ? { authorization: `Bearer ${this.opts.token}` } : {}),
           accept: 'application/json',
           'user-agent': this.opts.userAgent ?? 'zeus-cli',
           ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
@@ -141,7 +168,7 @@ export class ZeusClient implements ZeusApi {
       const code = e?.code ?? `HTTP_${res.status}`;
       let message = e?.message ?? `zeus respondió ${res.status}`;
       if (res.status === 401) {
-        message = 'token de zeus inválido o revocado: crea uno nuevo en el dashboard (zeus → MCP) y corre `zeus login`';
+        message = 'token de zeus inválido o revocado: conecta este equipo otra vez con `zeus setup`';
       }
       throw new ZeusApiError(message, res.status, code);
     }

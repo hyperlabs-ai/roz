@@ -1,14 +1,15 @@
 // Página "MCP": cómo trabaja tu Claude con zeus, con datos reales (GET /zeus/mcp, src/zeus/mcp-status.ts).
 // Mismo lenguaje que Env: arriba un diagrama vivo (quién pide → zeus → qué se movió), y abajo tres
 // columnas que caben en el alto de la pantalla:
-//   · conectar el tuyo, con pasos que se marcan solos según lo que zeus ya vio de ti, y tus tokens;
+//   · conectar tu PC: UN comando (`zeus setup`, o el prompt para que lo corra tu Claude), lo que zeus
+//     ya vio de ti marcado solo, y los tokens a mano plegados (CI, servidores);
 //   · el último trabajo, AGRUPADO (diez "consultó las variables" seguidos son una sola fila ×10) y
 //     filtrable por parte de zeus;
 //   · quién está conectado, lo pendiente del equipo y la salud (repos que piden atención, runners).
 // Una lista vacía se rellena con siluetas punteadas, como el resto de zeus: nunca un hueco.
 import { useMemo, useState, type ReactNode } from 'react';
-import { Loader2, Search, X } from 'lucide-react';
-import { ErrorCard } from '@/components/bits';
+import { Check, Loader2, Search, X } from 'lucide-react';
+import { Disclosure, ErrorCard } from '@/components/bits';
 import { PersonAvatar } from '@/components/avatars';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,12 +23,13 @@ import { cn } from '@/lib/utils';
 import { zeusApi, type ZeusActivityEvent, type ZeusMcpConnection, type ZeusMcpPendingItem, type ZeusMcpStatus, type ZeusMe } from '@/lib/zeus';
 import { GRAPH_KEY, NODES_KEY } from './hooks';
 import { AREA_META, McpDiagram, areaOf, type WorkArea } from './McpDiagram';
-import { McpTokenList, SETUP_COMMAND, cliCommand } from './McpTokens';
-import { CmdLine, Step, StepNote, Steps, type StepState } from './zeus-steps';
-import { CLI_INSTALL, MESSAGE_STATUS, OnlineDot, ago, dateTime, describeActivity, viaLabel } from './zeus-ui';
+import { McpTokenList, setupCommand, setupPrompt } from './McpTokens';
+import { CmdLine } from './zeus-steps';
+import { EnvName, isEnvName } from './EnvName';
+import { CopyButton, MESSAGE_STATUS, OnlineDot, RailTitle, ago, dateTime, describeActivity, viaLabel } from './zeus-ui';
 import './access.css';
 
-export { SETUP_COMMAND, cliCommand, mcpCommand } from './McpTokens';
+export { SETUP_COMMAND, cliCommand, mcpCommand, setupCommand, setupPrompt } from './McpTokens';
 
 const MCP_KEY = '/zeus/mcp';
 
@@ -167,11 +169,18 @@ function WorkRow({ g, person, now }: { g: WorkGroup; person: ZeusMcpConnection |
       <span className="grid min-w-0 flex-1 gap-1">
         <span className="text-[12.5px] leading-snug">
           <span className="font-semibold">{d.who}</span> <span className="text-muted-foreground">{d.verb}</span>
-          {g.targets.length === 1 && <> <span className="break-all font-mono text-[11.5px] font-medium">{g.targets[0]}</span></>}
+          {g.targets.length === 1 &&
+            (isEnvName(g.targets[0]!) ? (
+              <> <EnvName name={g.targets[0]!} className="text-[11.5px]" /></>
+            ) : (
+              <> <span className="break-all font-mono text-[11.5px] font-medium">{g.targets[0]}</span></>
+            ))}
         </span>
         {g.targets.length > 1 && (
           <span className="flex flex-wrap gap-1">
-            {g.targets.slice(0, 4).map((t) => (
+            {g.targets.slice(0, 4).map((t) => isEnvName(t) ? (
+              <span key={t} className="rounded-[4px] bg-panel px-1.5 py-0.5 text-[10.5px]"><EnvName name={t} /></span>
+            ) : (
               <span key={t} className="rounded-[4px] bg-panel px-1.5 py-0.5 font-mono text-[10.5px] font-medium">{t}</span>
             ))}
             {g.targets.length > 4 && <span className="px-1 py-0.5 text-[10.5px] text-faint">+{g.targets.length - 4}</span>}
@@ -295,11 +304,14 @@ export function AccessTab({ me }: { me: ZeusMe | null }) {
       },
     });
 
-  // Pasos para conectar el tuyo: se marcan solos con lo que zeus ya vio de ti.
+  // Lo que `zeus setup` deja listo, marcado solo con lo que zeus ya vio de ti.
   const mine = d?.connections.find((c) => c.devId === me?.devId) ?? null;
-  const done = [!!mine && mine.tokens > 0, !!mine?.lastCliAt, !!mine?.lastMcpAt];
-  const firstOpen = done.indexOf(false);
-  const stepState = (i: number): StepState => (done[i] ? 'done' : i === firstOpen ? 'current' : 'todo');
+  const checks = [
+    { label: 'Cuenta conectada', done: !!mine && mine.tokens > 0, note: mine && mine.tokens > 0 ? `${mine.tokens} ${mine.tokens === 1 ? 'equipo o token' : 'equipos o tokens'}` : null },
+    { label: 'CLI en uso', done: !!mine?.lastCliAt, note: mine?.lastCliAt ? ago(mine.lastCliAt, now) : null },
+    { label: 'Claude Code usa zeus', done: !!mine?.lastMcpAt, note: mine?.lastMcpAt ? ago(mine.lastMcpAt, now) : null },
+  ];
+  const doneCount = checks.filter((c) => c.done).length;
 
   const connections = useMemo(
     () => [...(d?.connections ?? [])].sort((a, b) => (lastSeen(b) ?? '').localeCompare(lastSeen(a) ?? '') || b.events7d - a.events7d),
@@ -317,28 +329,54 @@ export function AccessTab({ me }: { me: ZeusMe | null }) {
       <McpDiagram data={d ?? null} refetching={status.refetching} onRefresh={status.reload} className="shrink-0" />
 
       <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[296px_minmax(0,1fr)_320px] 2xl:grid-cols-[336px_minmax(0,1fr)_360px]">
-        {/* Conecta tu Claude */}
-        <Section title="Conecta tu Claude" meta={<span className="label-caps tabular-nums">{d ? `${done.filter(Boolean).length} de 3` : '– de 3'}</span>} bodyClassName="px-4 py-3.5">
-          <Steps>
-            <Step n={1} state={stepState(0)} title="Crea un token" stateLabel={done[0] && mine ? `Hecho · ${mine.tokens}` : undefined}>
-              <StepNote>Te identifica ante zeus. Uno por equipo: así revocas uno sin tumbar los demás. Se crea abajo, en Tus tokens.</StepNote>
-            </Step>
-            <Step n={2} state={stepState(1)} title="Instala el CLI y entra" stateLabel={mine?.lastCliAt ? `Hecho · ${ago(mine.lastCliAt, now)}` : undefined}>
-              <CmdLine wrap command={CLI_INSTALL} />
-              {/* La URL la da zeus (GET /zeus/me): nadie tiene que saberla ni escribirla. */}
-              {me?.apiUrl ? <CmdLine wrap command={cliCommand(me.apiUrl, '<token>')} /> : <StepNote>Leyendo la URL de zeus…</StepNote>}
-            </Step>
-            <Step n={3} state={stepState(2)} title="Conecta Claude Code" stateLabel={mine?.lastMcpAt ? `Hecho · ${ago(mine.lastMcpAt, now)}` : undefined} last>
-              <CmdLine wrap command={SETUP_COMMAND} />
-              <StepNote>Conecta el MCP y el protector de secretos. Las instrucciones llegan solas a Claude: no hay skill que instalar.</StepNote>
-            </Step>
-          </Steps>
-          <div className="mt-4 border-t pt-3.5">
-            <McpTokenList me={me} />
+        {/* Conecta tu PC: un comando (o un prompt para tu Claude) y lo demás plegado. */}
+        <Section title="Conecta tu PC" meta={<span className="label-caps tabular-nums">{d ? `${doneCount} de 3` : '– de 3'}</span>} bodyClassName="px-4 py-3.5">
+          <div className="grid gap-2">
+            <p className="text-[12.5px] leading-snug text-muted-foreground">
+              Un comando instala el CLI, conecta tu cuenta (apruebas en el navegador, sin copiar tokens), crea la llave de la bóveda y conecta Claude Code.
+            </p>
+            {/* `--url` solo aparece si este zeus no es el de siempre (lo dice GET /zeus/me). */}
+            <CmdLine wrap command={setupCommand(me?.apiUrl)} />
           </div>
+
+          <div className="mt-4 grid gap-2">
+            <RailTitle meta={<CopyButton text={setupPrompt(me?.apiUrl)} className="h-6 px-1.5" />}>O pídeselo a tu Claude</RailTitle>
+            <p className="rounded-md border border-dashed bg-panel/50 px-3 py-2 text-[12px] leading-snug">{setupPrompt(me?.apiUrl)}</p>
+          </div>
+
+          <ul className="mt-4 grid gap-1 border-t pt-3">
+            {checks.map((c) => (
+              <li key={c.label} className="flex items-center gap-2 text-[12.5px]">
+                <span
+                  className={cn(
+                    'grid size-4 shrink-0 place-items-center rounded-full',
+                    c.done ? 'bg-green-soft text-green' : 'border border-dashed border-toggle-off',
+                  )}
+                >
+                  {c.done && <Check className="size-2.5" strokeWidth={3} />}
+                </span>
+                <span className={cn('min-w-0 flex-1 truncate', !c.done && 'text-muted-foreground')}>{c.label}</span>
+                <span className="shrink-0 text-[11px] tabular-nums text-faint">{c.note ?? (d ? 'pendiente' : '–')}</span>
+              </li>
+            ))}
+          </ul>
+
+          <Disclosure
+            className="mt-3 border-t pt-2.5"
+            summaryClassName="py-1 text-[12px] font-medium text-muted-foreground"
+            summary={<>Equipos y tokens a mano <span className="text-[11px] font-normal text-faint">CI, servidores</span></>}
+          >
+            <div className="grid gap-2 pt-2">
+              <p className="text-[11.5px] leading-snug text-muted-foreground">
+                Cada PC conectada con <code className="font-mono text-[11px] text-foreground">zeus setup</code> aparece aquí como «equipo (setup)». Crea uno a mano solo donde no hay navegador.
+              </p>
+              <McpTokenList me={me} />
+            </div>
+          </Disclosure>
+
           <p className="mt-3 rounded-md bg-panel px-3 py-2 text-[11.5px] leading-snug text-muted-foreground">
-            <span className="font-medium text-foreground">El token no abre la bóveda.</span> Las variables se descifran con la llave de tu PC (
-            <code className="font-mono text-[11px] text-foreground">zeus key init</code>, en Variables).
+            <span className="font-medium text-foreground">El token no abre la bóveda.</span> Las variables se descifran con la llave de tu PC, que{' '}
+            <code className="font-mono text-[11px] text-foreground">zeus setup</code> crea en este equipo.
           </p>
         </Section>
 

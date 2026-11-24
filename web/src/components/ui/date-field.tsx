@@ -124,10 +124,40 @@ function Reel({ label, values, selected, onPick }: { label: string; values: numb
     const el = ref.current?.querySelector<HTMLElement>('[aria-selected="true"]');
     if (el && ref.current) ref.current.scrollTop = el.offsetTop - ref.current.clientHeight / 2 + el.clientHeight / 2;
   }, []);
+  // Dentro de un Dialog (p. ej. "Nueva junta") el popover vive en un portal FUERA del modal, y el
+  // bloqueo de scroll del modal se come la rueda y el arrastre: el carrete quedaba trabado en las
+  // primeras horas. Se mueve a mano, con listeners nativos no pasivos (React los registra pasivos).
+  React.useEffect(() => {
+    const box = ref.current;
+    if (!box) return;
+    let lastY: number | null = null;
+    const wheel = (e: WheelEvent) => {
+      box.scrollTop += e.deltaMode === 1 ? e.deltaY * 28 : e.deltaY;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const start = (e: TouchEvent) => { lastY = e.touches[0]?.clientY ?? null; };
+    const move = (e: TouchEvent) => {
+      const y = e.touches[0]?.clientY;
+      if (lastY == null || y == null) return;
+      box.scrollTop += lastY - y;
+      lastY = y;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    box.addEventListener('wheel', wheel, { passive: false });
+    box.addEventListener('touchstart', start, { passive: true });
+    box.addEventListener('touchmove', move, { passive: false });
+    return () => {
+      box.removeEventListener('wheel', wheel);
+      box.removeEventListener('touchstart', start);
+      box.removeEventListener('touchmove', move);
+    };
+  }, []);
   return (
     <div className="grid gap-1">
       <span className="label-caps px-1 text-center text-[10px]">{label}</span>
-      <div ref={ref} role="listbox" aria-label={label} className="scroll-none relative grid h-[196px] w-14 content-start gap-0.5 overflow-y-auto rounded-md bg-panel/60 p-1">
+      <div ref={ref} role="listbox" aria-label={label} className="scroll-thin relative grid h-[196px] w-14 content-start gap-0.5 overflow-y-auto overscroll-contain rounded-md bg-panel/60 p-1">
         {values.map((n) => (
           <button
             key={n}

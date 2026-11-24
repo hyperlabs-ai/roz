@@ -86,12 +86,17 @@ export interface MeetingAttendee {
   email: string | null;
 }
 
+/** Del extractor de tareas que ya no corre: siguen en la base (roz.meeting_candidate), sin uso nuevo. */
 export type MeetingCandidateKind = 'tarea' | 'compromiso' | 'decision';
 export type MeetingCandidateStatus = 'pendiente' | 'aceptada' | 'comentada' | 'descartada' | 'guardada';
 
 /** Límite del texto de una junta (caracteres, después de normalizar). */
 export const MEETING_TRANSCRIPT_MAX_CHARS = 400_000;
 
+/**
+ * Una junta en la lista. Las juntas son solo REGISTRO: el texto, quién estuvo, cuándo y de qué
+ * proyecto. Se consultan desde roz (Juntas) o desde Claude por el MCP de zeus.
+ */
 export interface MeetingSummary {
   id: string;
   source: MeetingSource;
@@ -101,52 +106,26 @@ export interface MeetingSummary {
   attendees: MeetingAttendee[];
   projectId: string | null;
   projectName: string | null;
-  projectSource: MeetingProjectSource | null;
-  transcriptFormat: TranscriptFormat;
-  status: MeetingStatus;
-  error: string | null;
-  extractedAt: string | null;
-  /** Conteos por estado de sus candidatas (tareas/compromisos) y decisiones guardadas. */
-  counts: { pendientes: number; aceptadas: number; descartadas: number; decisiones: number };
+  /** Quién la subió (null = llegó sola de Granola). */
+  createdBy: { id: string; name: string } | null;
   createdAt: string;
+  /** Solo al buscar por texto: recorte del transcript alrededor de la primera coincidencia. */
+  snippet?: string | null;
 }
 
 export interface MeetingDetail extends MeetingSummary {
   transcript: string;
-  extractionModel: string | null;
 }
 
-export interface MeetingCandidate {
-  id: string;
-  meetingId: string;
-  kind: MeetingCandidateKind;
-  title: string;
-  description: string | null;
-  quote: string;
-  quoteStart: number | null;
-  ownerHint: string | null;
-  dueHint: string | null;
-  dueDate: string | null;
-  solutionTypeId: string | null;
-  solutionTypeName: string | null;
-  estimate: number | null;
-  priority: Exclude<LinearPriority, 0> | null;
-  duplicate: { workItemId: string; identifier: string; name: string; status: TaskState; url: string | null; score: number } | null;
-  proposedDev: { id: string; name: string; avatarUrl: string | null } | null;
-  assignmentDecisionId: string | null;
-  status: MeetingCandidateStatus;
-  discardReason: string | null;
-  issue: { linearIssueId: string; identifier: string; url: string | null } | null;
-  linearCommentId: string | null;
-  knowledgeAtomId: string | null;
-  decidedAt: string | null;
-  decidedBy: { id: string; name: string } | null;
-  createdAt: string;
-}
-
-/** Candidata en la bandeja (todas las juntas): lleva el contexto mínimo de su junta. */
-export interface InboxCandidate extends MeetingCandidate {
-  meeting: { id: string; title: string; heldAt: string; projectId: string | null; projectName: string | null };
+/** Lo que se autollena al pegar una junta (POST /meetings/parse). Fecha y hora LOCALES, sin zona. */
+export interface ParsedMeetingPaste {
+  title: string | null;
+  /** 'YYYY-MM-DD' */
+  date: string | null;
+  /** 'HH:mm' (24 h) */
+  time: string | null;
+  durationMin: number | null;
+  attendees: MeetingAttendee[];
 }
 
 // ================================================================ Planes del agente

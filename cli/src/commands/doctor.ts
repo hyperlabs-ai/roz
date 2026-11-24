@@ -28,14 +28,14 @@ export async function doctorReport(ctx: Ctx, opts: { brief?: boolean } = {}): Pr
   const notice = await update;
   if (notice) lines.push(`! ${notice}${brief ? ' (sugiéreselo a la persona; no lo actualices sin su permiso)' : ''}`);
   if (!me) {
-    if (!brief) lines.push('✗ sin conexión con zeus (¿corriste `zeus login`?)');
+    if (!brief) lines.push('✗ sin conexión con zeus: corre `zeus setup` (o `npx -y @hyperlabs-ai/zeus@latest setup`)');
     return lines;
   }
   if (!brief) lines.push(`✓ conectado como ${me.dev.name}${me.zeusAdmin ? ' (admin)' : ''} a ${ctx.url}`);
 
   const key = await loadDeviceKey(ctx.fs, ctx.home).catch(() => null);
   const registered = key?.keyId && key.url === ctx.url ? (key as RegisteredKey) : null;
-  if (!registered) lines.push('! este equipo no tiene llave de la bóveda: `zeus key init`');
+  if (!registered) lines.push('! este equipo no tiene llave de la bóveda: `zeus setup` (o `zeus key init`)');
 
   // Bandeja.
   const inbox = await timeout(ctx.api.inbox().catch(() => null), HOOK_BUDGET_MS);
@@ -53,6 +53,17 @@ export async function doctorReport(ctx: Ctx, opts: { brief?: boolean } = {}): Pr
     }
     if (inbox.toResolve) lines.push(`• ${inbox.toResolve} solicitud(es) de acceso esperan tu decisión (roz → Zeus → Bandeja)`);
     if (!brief && inbox.waiting.length) lines.push(`· ${inbox.waiting.length} encargo(s)/plan(es) tuyos siguen abiertos con otras personas`);
+  }
+
+  // Accesos aprobados en la web que este equipo puede cifrar. Solo se AVISA: cifrar pide que la
+  // persona confirme cada huella (`zeus env grant --pending`), nunca se hace solo.
+  if (registered) {
+    const pending = await timeout(ctx.api.grantIntents().catch(() => null), HOOK_BUDGET_MS);
+    const n = pending ? pending.intents.filter((i) => i.keys.length > 0).length : 0;
+    if (n) {
+      lines.push(`• tienes ${n} acceso(s) aprobado(s) por cifrar: \`zeus env grant --pending\``);
+      if (brief) lines.push('    (díselo a la persona; que lo corra ella en su terminal para confirmar las huellas. No uses --yes sin que te lo pida)');
+    }
   }
 
   // Variables de esta carpeta.

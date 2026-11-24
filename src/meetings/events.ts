@@ -6,6 +6,7 @@ import type { GranolaImportPayload, MeetingExtractPayload } from '../types/roz-v
 
 type OutboxType = Parameters<typeof emit>[0];
 
+/** Ya no se emite (las juntas son solo registro); queda para reencolar a mano si algún día vuelve. */
 export function emitMeetingExtract(p: MeetingExtractPayload, idempotencyKey: string): Promise<string | null> {
   return emit('meeting.extract' as OutboxType, { ...p }, { idempotencyKey });
 }

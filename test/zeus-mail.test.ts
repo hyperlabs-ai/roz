@@ -134,8 +134,8 @@ describe('resumen diario de variables', () => {
     expect(to('alan')).toHaveLength(1);
     const m = to('alan')[0]!;
     expect(m.subject).toBe('Cambiaron variables en 2 entornos');
-    expect(m.text).toMatch(/HYPERHUB\/api-hyperhub-production: Nuevas: REDIS_URL; cambiaron: STRIPE_KEY \(Lo cambió Fer\)/);
-    expect(m.text).toMatch(/HYPERHUB\/site-hyperhub-production: Se quitaron: OLD_FLAG \(Lo cambió Crix\)/);
+    expect(m.text).toMatch(/api-hyperhub \(Prod\): Nuevas: REDIS_URL; cambiaron: STRIPE_KEY \(Lo cambió Fer\)/);
+    expect(m.text).toMatch(/site-hyperhub \(Prod\): Se quitaron: OLD_FLAG \(Lo cambió Crix\)/);
     expect(m.text).toMatch(/zeus env status/);
     expect(to('crix')).toHaveLength(0);
 
@@ -146,7 +146,7 @@ describe('resumen diario de variables', () => {
   it('parseEnvNotice lee el aviso que escribe notifyEnvChange', () => {
     const body = 'Nuevas: A, B\nCambiaron: C\n\nPonte al día: zeus env pull HYPERHUB api-hyperhub-production   (o `zeus env status`)';
     expect(parseEnvNotice('Fer cambió 3 variables de HYPERHUB/api-hyperhub-production', body, 'Fer')).toEqual({
-      label: 'HYPERHUB/api-hyperhub-production',
+      label: 'api-hyperhub (Prod)',
       actor: 'Fer',
       added: ['A', 'B'],
       changed: ['C'],

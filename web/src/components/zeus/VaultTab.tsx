@@ -1,6 +1,7 @@
 // Pestaña "Variables": la bóveda de variables de entorno. Aquí solo hay NOMBRES: los valores se cifran
-// en la PC de cada dev y el servidor guarda texto cifrado que no puede leer. Leer, subir, dar acceso
-// y rotar se hace con el CLI `zeus`; la web muestra el estado y permite revocar una llave de equipo.
+// en la PC de cada dev y el servidor guarda texto cifrado que no puede leer. Leer, subir y rotar se
+// hace con el CLI `zeus`; la web muestra el estado por repo (variantes Local y Prod), permite revocar
+// una llave de equipo y APROBAR accesos, que luego cifra el CLI de alguien con acceso.
 //
 // La pantalla es un tablero: arriba el diagrama de cómo viaja un secreto (con las cifras vivas), y
 // debajo la puesta en marcha con estado real, la matriz de quién puede descifrar qué, las llaves de
@@ -21,14 +22,15 @@ import { cn } from '@/lib/utils';
 import { zeusApi, type ZeusMe, type ZeusVaultKey, type ZeusVaultOverview } from '@/lib/zeus';
 import { useZeusOrg } from './hooks';
 import { VaultDiagram } from './VaultDiagram';
-import { VaultEnvDialog, VaultMatrix, type VaultProject } from './VaultMatrix';
+import { StageChip, VAULT_KEY, VaultMatrix, VaultRepoDialog, type VaultProject } from './VaultMatrix';
+import { auditEnvParts, groupVaultEnvs } from './vault-groups';
 import { CmdLine, Step, StepNote, Steps, type StepState } from './zeus-steps';
 import { CLI_INSTALL, ago, dateTime } from './zeus-ui';
 import './vault.css';
 
-const VAULT_KEY = '/zeus/vault';
-
 const AUDIT_LABEL: Array<[RegExp, string]> = [
+  [/grant\.approve/, 'aprobó un acceso a'],
+  [/grant\.cancel/, 'canceló un acceso aprobado de'],
   [/rotate/, 'rotó la llave de'],
   [/grant.*(revoke|delete|remove)|ungrant/, 'quitó un acceso a'],
   [/grant/, 'dio acceso a'],
@@ -47,7 +49,7 @@ function auditVerb(action: string): string {
 /** Punto de la línea de tiempo: quitar va en rojo, rotar en amarillo, dar o subir en naranja. */
 function auditDot(action: string): string {
   const a = action.toLowerCase();
-  if (/revoke|ungrant|delete|remove/.test(a)) return 'bg-red';
+  if (/revoke|ungrant|delete|remove|cancel/.test(a)) return 'bg-red';
   if (/rotate/.test(a)) return 'bg-yellow';
   if (/grant|push|write|set|put|create|register|init/.test(a)) return 'bg-orange';
   return 'bg-faint';
@@ -66,30 +68,35 @@ function GhostRow({ wide = 96 }: { wide?: number }) {
   );
 }
 
+/** `HUB · api-hyperhub-production` en la auditoría: el repo y su variante, como en la matriz. */
+function AuditEnv({ label }: { label: string }) {
+  const { repo, stage } = auditEnvParts(label);
+  return (
+    <span className="inline-flex items-center gap-1 align-baseline" data-tip={label}>
+      <span className="font-mono text-[11px]">{repo}</span>
+      <StageChip stage={stage} className="px-1 text-[9px]" />
+    </span>
+  );
+}
+
 export function VaultTab({ me }: { me: ZeusMe | null }) {
   const vault = useApi<ZeusVaultOverview>(() => zeusApi.vault(), [], { key: VAULT_KEY, ttl: 30_000 });
   const org = useZeusOrg();
   const act = useAction();
   const [revoking, setRevoking] = useState<ZeusVaultKey | null>(null);
-  const [openEnv, setOpenEnv] = useState<string | null>(null);
+  const [open, setOpen] = useState<{ repoId: string; envId: string } | null>(null);
   const data = vault.data;
 
-  const projects = useMemo<VaultProject[]>(() => {
-    const m = new Map<string, Omit<VaultProject, 'id'>>();
-    for (const e of data?.envs ?? []) {
-      const p = m.get(e.projectId) ?? { key: e.projectKey, name: e.projectName, envs: [] };
-      p.envs.push(e);
-      m.set(e.projectId, p);
-    }
-    return [...m.entries()].map(([id, p]) => ({ id, ...p })).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-  }, [data]);
+  // Un repo por fila con sus variantes (`api-hyperhub-development` + `-production`).
+  const projects = useMemo<VaultProject[]>(() => groupVaultEnvs(data?.envs ?? []), [data]);
   const keys = useMemo(
     () => [...(data?.keys ?? [])].sort((a, b) => Number(!!a.revokedAt) - Number(!!b.revokedAt) || a.devName.localeCompare(b.devName, 'es')),
     [data],
   );
   const activeKeys = useMemo(() => keys.filter((k) => !k.revokedAt), [keys]);
   const revokeBusy = revoking ? act.busy(`revoke-key:${revoking.id}`) : false;
-  const env = openEnv ? (data?.envs ?? []).find((e) => e.id === openEnv) ?? null : null;
+  const openRepo = open ? (projects.flatMap((p) => p.repos).find((r) => r.id === open.repoId) ?? null) : null;
+  const intents = data?.intents ?? [];
 
   // Puesta en marcha: cada paso se da por hecho con lo que la bóveda ya sabe.
   const myKey = activeKeys.find((k) => k.devId === me?.devId) ?? null;
@@ -126,8 +133,11 @@ export function VaultTab({ me }: { me: ZeusMe | null }) {
                 <CmdLine wrap command="zeus env push <proyecto> prod" />
               </Step>
               <Step n={3} state={stepState(2)} title="Comparte con alguien" last>
-                <StepNote>Cualquiera con acceso al entorno puede compartirlo. La persona corre antes `zeus key init` y te lee su huella.</StepNote>
-                <CmdLine wrap command="zeus env grant <proyecto> prod --to <persona>" />
+                <StepNote>
+                  Abre el repo en la matriz y usa «Dar acceso» (lo aprueba quien ya tiene acceso). Como la web no tiene la llave, falta que alguien con acceso lo
+                  cifre en su PC confirmando la huella; su Claude se lo recuerda al abrir sesión.
+                </StepNote>
+                <CmdLine wrap command="zeus env grant --pending" />
               </Step>
             </Steps>
 
@@ -159,8 +169,9 @@ export function VaultTab({ me }: { me: ZeusMe | null }) {
           keys={activeKeys}
           members={org.data?.members ?? []}
           me={me}
+          intents={intents}
           ready={!!data}
-          onOpenEnv={setOpenEnv}
+          onOpen={(repoId, envId) => setOpen({ repoId, envId })}
         />
 
         {/* Llaves de equipo + auditoría */}
@@ -246,7 +257,7 @@ export function VaultTab({ me }: { me: ZeusMe | null }) {
                       <span className="text-[12px] leading-snug">
                         <span className="font-semibold">{a.devName ?? 'zeus'}</span>{' '}
                         <span className="text-muted-foreground">{auditVerb(a.action)}</span>
-                        {a.envLabel && <> <span className="font-mono text-[11px]">{a.envLabel}</span></>}
+                        {a.envLabel && <> <AuditEnv label={a.envLabel} /></>}
                       </span>
                       <span className="text-[10.5px] tabular-nums text-faint" title={dateTime(a.at)}>{ago(a.at)}</span>
                     </span>
@@ -258,7 +269,16 @@ export function VaultTab({ me }: { me: ZeusMe | null }) {
         </div>
       </div>
 
-      <VaultEnvDialog env={env} onClose={() => setOpenEnv(null)} />
+      <VaultRepoDialog
+        repo={openRepo}
+        envId={open?.envId ?? null}
+        onSelect={(envId) => setOpen((o) => (o ? { ...o, envId } : o))}
+        onClose={() => setOpen(null)}
+        keys={activeKeys}
+        members={org.data?.members ?? []}
+        me={me}
+        intents={intents}
+      />
 
       <AlertDialog open={!!revoking} onOpenChange={(v) => !v && !revokeBusy && setRevoking(null)}>
         <AlertDialogContent>

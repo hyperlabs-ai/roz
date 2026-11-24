@@ -14,6 +14,7 @@ import { handlers as pulso } from './handlers/pulso.js';
 import { handlers as infra } from './handlers/infra.js';
 import { handlers as junta } from './handlers/junta.js';
 import { handlers as mensajeDecision } from './handlers/mensaje-decision.js';
+import { handlers as zeus } from './handlers/zeus.js';
 
 export interface Registry {
   slash: Partial<Record<RozSubcommand, SlashHandler>>;
@@ -34,6 +35,7 @@ export const HANDLER_MODULES: Record<string, HandlerModule> = {
   infra,
   junta,
   'mensaje-decision': mensajeDecision,
+  zeus,
 };
 
 export function buildRegistry(modules: Record<string, HandlerModule> = HANDLER_MODULES): { registry: Registry; problems: string[] } {

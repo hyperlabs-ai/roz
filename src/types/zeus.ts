@@ -154,6 +154,12 @@ export interface ZeusOrgMember {
   githubLogin: string | null;
   active: boolean;
   reportsTo: string | null;
+  /** Puesto visible ("Líder técnico y desarrollador de AI"); `role` es la categoría de capacidad. */
+  title: string | null;
+  /** Líneas punteadas: a quién más se reporta. */
+  alsoReportsTo: string[];
+  /** Temas que atiende (code_review, deploys…), de ZeusOrg.duties. */
+  duties: string[];
   zeusAdmin: boolean;
   /** Claves de los proyectos donde está asignado. */
   projects: string[];
@@ -162,8 +168,18 @@ export interface ZeusOrgMember {
   online: boolean;
 }
 
+/** Un tema del equipo y quién lo atiende, en orden. */
+export interface ZeusOrgDuty {
+  duty: string;
+  label: string;
+  hint: string;
+  devIds: string[];
+}
+
 export interface ZeusOrg {
   members: ZeusOrgMember[];
+  /** Quién se encarga de qué (revisión de código, deploys, clientes…). */
+  duties: ZeusOrgDuty[];
   /** True si todavía nadie administra zeus: cualquiera puede tomar el rol una vez. */
   needsAdmin: boolean;
 }
@@ -260,6 +276,8 @@ export interface ZeusMessage {
 
 export interface ZeusInbox {
   messages: ZeusMessage[];
+  /** Avisos de cambios de variables (aparte: son muchos y no deben tapar los mensajes). */
+  envChanges: ZeusMessage[];
   /** Mensajes que yo envié (los más recientes). */
   sent: ZeusMessage[];
   /** Encargos y planes que me mandaron y siguen abiertos: mis pendientes. */
@@ -271,6 +289,39 @@ export interface ZeusInbox {
   /** Solicitudes que yo abrí. */
   mine: ZeusRequest[];
   unread: number;
+}
+
+// ---------------------------------------------------------------- Linear (en vivo, sin espejo)
+
+/** Un ticket de Linear como lo ve la bandeja. */
+export interface ZeusLinearIssue {
+  id: string;
+  identifier: string;
+  title: string;
+  url: string;
+  state: string;
+  stateType: 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled' | 'triage';
+  /** 0 sin prioridad, 1 urgente … 4 baja. */
+  priority: number;
+  priorityLabel: string;
+  team: string;
+  project: string | null;
+  assignee: string | null;
+  labels: string[];
+  dueDate: string | null;
+  cycle: string | null;
+  branchName: string | null;
+  updatedAt: string;
+}
+
+/** Lo de Linear para la bandeja: tus tickets en curso y por hacer. */
+export interface ZeusLinearBoard {
+  /** ok · not_configured (zeus sin llave) · no_user (tu correo no está en Linear) · error. */
+  status: 'ok' | 'not_configured' | 'no_user' | 'error';
+  user: string | null;
+  issues: ZeusLinearIssue[];
+  fetchedAt: string;
+  error?: string;
 }
 
 // ---------------------------------------------------------------- fuentes y actividad
@@ -429,9 +480,25 @@ export interface ZeusVaultEnvSummary {
   needsRotation: boolean;
 }
 
+/**
+ * Acceso aprobado en la web y aún sin cifrar: falta que alguien con acceso corra
+ * `zeus env grant --pending` en su PC (el servidor no puede envolver la DEK).
+ */
+export interface ZeusVaultGrantIntent {
+  id: string;
+  envId: string;
+  toDevId: string;
+  toDevName: string;
+  approvedByName: string | null;
+  createdAt: string;
+  /** Equipos vigentes del destinatario que aún no tienen la llave del entorno (0 = sin llave registrada). */
+  pendingKeys: number;
+}
+
 export interface ZeusVaultOverview {
   envs: ZeusVaultEnvSummary[];
   keys: ZeusVaultKey[];
+  intents: ZeusVaultGrantIntent[];
   audit: Array<{ id: number; at: string; devName: string | null; action: string; envLabel: string | null; detail: Record<string, unknown> }>;
 }
 
@@ -450,4 +517,24 @@ export interface ZeusContextPack {
   generatedAt: string;
   query: string;
   items: ZeusContextPackItem[];
+}
+
+// ---------------------------------------------------------------- conectar una PC (zeus setup)
+
+export type ZeusDeviceStatus = 'pending' | 'approved' | 'denied' | 'delivered' | 'expired';
+
+/** Solicitud de `zeus setup` vista desde la web (/conectar): qué equipo pide entrar y con qué código. */
+export interface ZeusDeviceRequest {
+  userCode: string;
+  /** Nombre del equipo que dio el CLI (hostname). */
+  clientName: string;
+  clientPlatform: string | null;
+  clientVersion: string | null;
+  /** IP desde la que el CLI abrió la solicitud (para reconocerla o sospechar). */
+  clientIp: string | null;
+  status: ZeusDeviceStatus;
+  createdAt: string;
+  expiresAt: string;
+  /** Quién la aprobó o rechazó. */
+  decidedBy: string | null;
 }

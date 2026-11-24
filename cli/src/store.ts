@@ -55,7 +55,7 @@ async function writePrivate(fs: FileOps, home: string, file: string, data: unkno
 
 /** Config efectiva: el archivo, con ZEUS_URL y ZEUS_TOKEN por encima. null si falta URL o token. */
 export async function loadConfig(fs: FileOps, home: string, env: NodeJS.ProcessEnv): Promise<ZeusConfig | null> {
-  const file = await readJson<Partial<ZeusConfig>>(fs, configPath(home), 'bórralo y corre `zeus login`');
+  const file = await readJson<Partial<ZeusConfig>>(fs, configPath(home), 'bórralo y corre `zeus setup`');
   const url = env.ZEUS_URL?.trim() || file?.url;
   const token = env.ZEUS_TOKEN?.trim() || file?.token;
   if (!url || !token) return null;

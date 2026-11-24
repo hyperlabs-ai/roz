@@ -3,14 +3,14 @@
 import { CliError, UsageError, confirmOrAbort, type Ctx } from '../context.js';
 import { VaultCryptoError, decryptSecret, encryptSecret, fingerprint, generateDek, secretAad, unwrapDek, wrapAad, wrapDek, zeroize } from '../crypto.js';
 import { loadKnownKeys, rememberKeys } from '../store.js';
-import type { VaultKey, WrappedGrant } from '../types.js';
+import type { GrantIntent, VaultKey, WrappedGrant } from '../types.js';
 import { ENV_ALIASES, decryptAll, label, openEnv, parse, requireKey, resolveTarget, stageOf, staleToCliError, type RegisteredKey, type Target } from './vault.js';
 
 /** Un entorno que ya existe, tal como lo lista zeus (para las operaciones en bloque). */
 const existingTarget = (projectKey: string, env: string): Target => ({ projectKey, env, stage: stageOf(env) ?? env, repo: null, exists: true });
 
 /** Huella calculada AQUÍ con la pública; si zeus manda otra, algo anda mal y no se sigue. */
-function localFingerprint(key: VaultKey): string {
+function localFingerprint(key: Pick<VaultKey, 'id' | 'devName' | 'publicKey' | 'fingerprint'>): string {
   let fp: string;
   try {
     fp = fingerprint(key.publicKey);
@@ -94,12 +94,18 @@ export async function envGrant(ctx: Ctx, args: string[]): Promise<number> {
     'all-envs': { type: 'boolean' },
     all: { type: 'boolean' },
     env: { type: 'string' },
+    pending: { type: 'boolean' },
     yes: { type: 'boolean', short: 'y' },
   });
   const usage =
     'uso: zeus env grant <proyecto> [entorno] --to <dev, correo o id de llave> [--all-devices]\n' +
     '     zeus env grant <proyecto> --all-envs --to <…>          todos los entornos del proyecto a los que tienes acceso\n' +
-    '     zeus env grant --all [--env <entorno>] --to <…>        todos los proyectos (o solo ese entorno de cada uno)';
+    '     zeus env grant --all [--env <entorno>] --to <…>        todos los proyectos (o solo ese entorno de cada uno)\n' +
+    '     zeus env grant --pending [--yes]                       cifra los accesos aprobados en la web (pide confirmar cada uno)';
+  if (opts.pending) {
+    if (opts.to || opts.all || opts['all-envs'] || opts['all-devices'] || opts.env || positionals.length) throw new UsageError(usage);
+    return grantPending(ctx, opts.yes ?? false);
+  }
   if (!opts.to) throw new UsageError(usage);
   if (opts.all && (positionals.length > 0 || opts['all-envs'])) throw new UsageError(usage);
   if (opts['all-envs'] && positionals.length !== 1) throw new UsageError(usage);
@@ -165,6 +171,112 @@ export async function envGrant(ctx: Ctx, args: string[]): Promise<number> {
   if (total === 0) ctx.out(`nada que hacer: ${who} ya tenía acceso a ${targetsEnv.length === 1 ? label(targetsEnv[0]!) : 'todos esos entornos'}`);
   else ctx.out(`listo. ${who} ya puede correr \`zeus env pull <proyecto> <entorno>\`.`);
   return 0;
+}
+
+// ---------------------------------------------------------------- grant --pending
+//
+// "Aprobar en la web, cifrar en el CLI": alguien con acceso aprobó en roz que una persona entre a
+// un entorno; el servidor no puede envolver la DEK, así que lo hace este equipo. zeus podría estar
+// comprometido e inventar una aprobación (o colgarle a un nombre real una llave ajena): por eso
+// cada una se muestra con la huella calculada AQUÍ y se pide confirmar una por una. `--yes` lo salta
+// y solo debe usarse si la persona lo decide.
+
+export async function grantPending(ctx: Ctx, yes: boolean): Promise<number> {
+  if (!yes && !ctx.prompt.interactive) {
+    throw new CliError('cifrar accesos aprobados pide confirmar cada huella y no hay terminal interactiva: córrelo tú en tu terminal (o con --yes si ya las verificaste)');
+  }
+  const key = await requireKey(ctx);
+  const { intents } = await ctx.api.grantIntents();
+  if (intents.length === 0) {
+    ctx.out('no hay accesos aprobados por cifrar en los entornos a los que tienes acceso');
+    return 0;
+  }
+  // Lo que zeus lista como llaves vigentes, para cruzarlo con lo que trae cada aprobación.
+  const registry = new Map((await ctx.api.listKeys(true)).keys.map((k) => [k.id, k]));
+  const known = await loadKnownKeys(ctx.fs, ctx.home);
+  ctx.log(`${intents.length} acceso(s) aprobado(s) en la web esperan que alguien con acceso los cifre:`);
+
+  let granted = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const it of intents) {
+    const t = existingTarget(it.projectKey, it.env);
+    ctx.log('');
+    ctx.log(`${it.approvedByName ?? 'alguien'} aprobó dar acceso a ${it.toDevName} a ${label(t)}`);
+    if (it.keys.length === 0) {
+      ctx.log(`  ${it.toDevName} no tiene equipos por cifrar (sin llave vigente): que corra \`zeus key init\`; se salta`);
+      skipped++;
+      continue;
+    }
+    let checked: Array<{ keyId: string; publicKey: string; fp: string }>;
+    try {
+      checked = checkIntentKeys(it, registry, known);
+    } catch (err) {
+      failed++;
+      ctx.log(`  NO se cifró: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    for (const k of checked) {
+      const name = it.keys.find((x) => x.keyId === k.keyId)?.name ?? '';
+      ctx.log(`  ${it.toDevName} · equipo "${name}" · huella ${k.fp} · id ${k.keyId}${known[k.keyId] ? ' · ya verificada en este equipo' : ''}`);
+    }
+    if (!yes) {
+      const ok = await ctx.prompt.confirm(
+        `¿${it.toDevName} te leyó ${checked.length === 1 ? 'esta huella' : 'estas huellas'} por un canal distinto a zeus y coincide${checked.length === 1 ? '' : 'n'}? ¿Cifrar ${label(t)} para ${checked.length === 1 ? 'ese equipo' : 'esos equipos'}?`,
+      );
+      if (!ok) {
+        ctx.log('  saltado: la aprobación sigue abierta');
+        skipped++;
+        continue;
+      }
+    }
+    try {
+      const { remote, dek } = await openEnv(ctx, key, t);
+      try {
+        if (remote.dekVersion !== it.dekVersion) ctx.log(`  la llave de ${label(t)} cambió desde la aprobación (v${it.dekVersion} → v${remote.dekVersion}); se cifra con la vigente`);
+        const has = new Set(remote.grants.map((g) => g.keyId));
+        const todo = checked.filter((k) => !has.has(k.keyId));
+        if (todo.length) {
+          const aad = wrapAad(t.projectKey, t.env, remote.dekVersion);
+          const grants: WrappedGrant[] = todo.map((k) => ({ keyId: k.keyId, wrappedDek: wrapDek(dek, k.publicKey, aad) }));
+          const res = await ctx.api.grant(t.projectKey, t.env, { keyId: key.keyId, grants });
+          ctx.out(`${label(t)}: acceso cifrado para ${res.granted} equipo(s) de ${it.toDevName}`);
+        } else {
+          ctx.out(`${label(t)}: ${it.toDevName} ya tenía acceso`);
+        }
+        granted++;
+      } finally {
+        zeroize(dek);
+      }
+      await rememberKeys(ctx.fs, ctx.home, checked.map((k) => ({ keyId: k.keyId, fingerprint: k.fp })));
+    } catch (err) {
+      failed++;
+      ctx.log(`  NO se cifró: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  ctx.out(`listo: ${granted} cifrado(s), ${skipped} saltado(s)${failed ? `, ${failed} con error (detalle arriba)` : ''}.`);
+  if (failed) throw new CliError(`${failed} acceso(s) aprobado(s) no se pudieron cifrar`);
+  return 0;
+}
+
+/**
+ * Las llaves de una aprobación, verificadas en este equipo: la huella sale de la pública (no de lo
+ * que diga zeus), cada llave debe ser vigente y de esa persona según el registro, y si este equipo ya
+ * había verificado esa llave, la huella no puede haber cambiado.
+ */
+function checkIntentKeys(it: GrantIntent, registry: Map<string, VaultKey>, known: Record<string, string>): Array<{ keyId: string; publicKey: string; fp: string }> {
+  return it.keys.map((k) => {
+    const reg = registry.get(k.keyId);
+    if (!reg || reg.revokedAt || reg.devId !== it.toDevId || reg.publicKey !== k.publicKey) {
+      throw new CliError(`la llave ${k.keyId} no coincide con el registro de llaves de zeus para ${it.toDevName}`);
+    }
+    const fp = localFingerprint({ id: k.keyId, devName: it.toDevName, publicKey: k.publicKey, fingerprint: k.fingerprint });
+    const pinned = known[k.keyId];
+    if (pinned && pinned !== fp) {
+      throw new CliError(`la llave ${k.keyId} de ${it.toDevName} ya NO es la que verificaste en este equipo (antes ${pinned}, ahora ${fp}); avísale a quien mantiene zeus`);
+    }
+    return { keyId: k.keyId, publicKey: k.publicKey, fp };
+  });
 }
 
 // ---------------------------------------------------------------- revoke

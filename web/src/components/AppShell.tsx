@@ -2,7 +2,7 @@ import { createContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef
 import { Link, NavLink, Outlet, matchPath, useLocation, useNavigationType } from 'react-router-dom';
 import {
   LayoutDashboard, Users, FolderGit2, Server, BarChart3, GraduationCap, Sun, Moon, LogOut, Menu, Bell, BellOff, Settings,
-  ListChecks, Gauge, MessagesSquare, TicketPlus, HeartPulse, Users2, Bot, Monitor, Network, FileText, Inbox, Building2,
+  Gauge, MessagesSquare, HeartPulse, Users2, Bot, Monitor, Network, FileText, Inbox, Building2,
   KeyRound, Plug, PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react';
 import { useAuth } from '@/auth/AuthContext';
@@ -99,8 +99,6 @@ const I = {
   capacity: { to: R.capacidad, label: 'Capacidad', icon: Gauge, end: false },
   projects: { to: R.proyectos, label: 'Proyectos', icon: FolderGit2, end: false },
   infra: { to: R.infra, label: 'Infraestructura', icon: Server, end: false },
-  ticket: { to: R.ticket, label: 'Ticket', icon: TicketPlus, end: false },
-  tasks: { to: R.tareas, label: 'Tareas', icon: ListChecks, end: false },
   reports: { to: R.reportes, label: 'Reportes', icon: BarChart3, end: false },
   skills: { to: R.skills, label: 'Skills', icon: GraduationCap, end: false },
   meetings: { to: R.juntas, label: 'Juntas', icon: Users2, end: false },
@@ -108,14 +106,15 @@ const I = {
 } as const satisfies Record<string, NavItem>;
 
 /**
- * Menú según roz v2, agrupado en secciones como la consola del mock. Zeus (el contexto del equipo)
- * encabeza el menú con sus seis secciones: el mapa es la pantalla principal (`/`). Pulso y Resumen
- * viven en su propia ruta (con Linear como fuente de verdad el Pulso va primero). Con ese flag
- * aparecen además Juntas y Planes (sus endpoints responden 409 con el flag apagado, así que sin él no
- * se ofrecen).
- *
- * Actividad ya no es página (se unificó con el Pulso: su historial de eventos vive ahí) e Ideas se
- * quitó por completo. Con el chat de Discord activo, "Chat" se llama "Discord" y lleva su logo.
+ * Menú en secciones. Zeus se parte en dos:
+ *   · Contexto — lo que el equipo SABE: el mapa, la biblioteca de documentos, el organigrama y las
+ *     skills. Es lo que consultan las personas y Claude antes de trabajar.
+ *   · Trabajo  — lo que el equipo HACE día a día: la bandeja (Linear, encargos, mensajes), las juntas,
+ *     el chat de Discord, las variables de entorno y la conexión MCP.
+ * Visibilidad (pulso, resumen, gente, capacidad, proyectos) y Operación siguen aparte. Las tareas
+ * viven en Linear y lo activo de cada quien sale en la Bandeja. Planes solo aparece con Linear como
+ * fuente de verdad (sus endpoints responden 409 sin el flag). Con el chat de Discord activo, "Chat"
+ * se llama "Discord" y lleva su logo. Configuración vive en el menú del avatar.
  */
 function useNav(): NavSection[] {
   const v2 = useRozV2();
@@ -124,15 +123,14 @@ function useNav(): NavSection[] {
   const sot = v2.linearSourceOfTruth;
   const chat: NavItem = discord.data?.enabled ? { ...I.chat, label: 'Discord', icon: DiscordNavIcon } : I.chat;
   const visibility = sot ? [I.pulse, I.overview] : [I.overview, I.pulse];
-  return [
-    // Zeus no depende del flag de Linear: el contexto del equipo existe con o sin él.
-    { label: 'Zeus', items: [I.mapa, I.biblioteca, I.bandeja, I.equipo, I.variables, I.mcp] },
+  const sections: NavSection[] = [
+    { label: 'Contexto', items: [I.mapa, I.biblioteca, I.equipo, I.skills] },
+    { label: 'Trabajo', items: [I.bandeja, I.meetings, chat, I.variables, I.mcp] },
     { label: 'Visibilidad', items: [...visibility, I.developers, I.capacity, I.projects] },
-    { label: 'Entrada', items: [I.meetings, I.ticket, I.tasks, chat] },
-    { label: 'Agentes', items: [...(sot ? [I.plans] : []), I.skills] },
-    // Configuración vive en el menú del avatar (abajo a la izquierda), no en el menú lateral.
+    { label: 'Agentes', items: sot ? [I.plans] : [] },
     { label: 'Operación', items: [I.infra, I.reports] },
   ];
+  return sections.filter((s) => s.items.length > 0);
 }
 
 /** Sección del menú a la que pertenece la ruta actual (para el eyebrow del header). */

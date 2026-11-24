@@ -56,6 +56,9 @@ dashboard). Errores: `{ error: { code, message } }`.
 | `GET /tokens` | | `{ tokens: ZeusTokenSummary[] }` |
 | `POST /tokens` | `{ name }` | `{ token, summary }` (el token se muestra una vez) |
 | `DELETE /tokens/:id` | | `{ ok: true }` |
+| `GET /device/:userCode` | | `ZeusDeviceRequest` (la solicitud de `zeus setup` con ese código; una ya decidida solo la ve quien la decidió) |
+| `POST /device/:userCode/approve` | | `ZeusDeviceRequest`. 410 `ZEUS_DEVICE_EXPIRED`, 409 `ZEUS_DEVICE_DECIDED`, 409 `ZEUS_TOKEN_LIMIT` |
+| `POST /device/:userCode/deny` | | `ZeusDeviceRequest` |
 | `GET /inbox` | | `ZeusInbox` (`open`: encargos y planes que me tocan; `waiting`: los que mandé y siguen abiertos) |
 | `POST /messages` | `{ toDevId, subject?, body, ref?, kind?: 'message' \| 'task', projectKey? }` | `ZeusMessage` (un `task` exige `subject` y nace `pending`) |
 | `POST /plans` | `{ toDevId, title, plan, projectKey?, revises? }` | `ZeusMessage` (kind `plan`; con `revises` la versión anterior queda `superseded`) |
@@ -91,6 +94,14 @@ Base `/v1/zeus`, `Authorization: Bearer zeus_<43 caracteres base64url>`. El domi
 | `DELETE /vault/envs/:projectKey/:env/grants/:keyId` | | `{ ok }` (quien tiene acceso al entorno, o un admin; deja `needsRotation`) |
 | `POST /vault/envs/:projectKey/:env/rotate` | `{ keyId, dekVersion, grants: [{ keyId, wrappedDek }], secrets: [{ name, ciphertext }], revisions?: [{ name, version, ciphertext }] }` | `{ ok, dekVersion }` (quien tiene acceso vigente) |
 | `GET /inbox` | | `{ unread, open, waiting, envChanges, toResolve }` resumido (para `zeus doctor` y el inicio de sesión de Claude) |
+| `POST /device/start` (sin token) | `{ clientName, platform?, version? }` | `{ deviceCode, userCode, verificationUri, verificationUriComplete, expiresIn: 600, interval: 5 }`. 429 `RATE_LIMITED` |
+| `POST /device/poll` (sin token) | `{ deviceCode }` | `{ status: 'pending' | 'slow_down', interval }`, `{ status: 'denied' | 'expired' | 'delivered' }` o, UNA vez, `{ status: 'approved', token, dev }` |
+
+`device/*` es la conexión por navegador de `zeus setup` (estilo RFC 8628, migración 0044): el CLI abre
+la solicitud, la persona la aprueba en `<roz>/conectar?code=<userCode>` con su sesión y el siguiente
+`poll` entrega un token `zeus_…` nuevo a su nombre ("<equipo> (setup)", reemplaza al anterior del mismo
+equipo). Solo se guarda el sha256 del `deviceCode`; el token se crea al entregarlo y no se guarda.
+Modelo de amenaza en `src/zeus/device-auth.ts`.
 
 Reglas: leer y escribir secretos exige un `grant` vigente de `keyId` (que debe ser del dev del
 token y no estar revocada). `dekVersion` del cuerpo debe ser la vigente del entorno (409
@@ -138,12 +149,16 @@ Endpoint `POST /mcp` (JSON-RPC). Con un token `zeus_…` el agente actúa como e
 | `zeus_who_owns` | A quién pedirle un acceso o permiso sobre un recurso o proyecto, y por qué. |
 | `zeus_request` | Abre una solicitud (acceso, permiso, revisión, cambio) y la enruta sola. |
 | `zeus_requests` / `zeus_resolve_request` | Ver y resolver solicitudes. |
-| `zeus_send_message` / `zeus_inbox` / `zeus_mark_read` | Mensajes entre devs y agentes. `kind: "task"` = encargo con estado. `zeus_inbox` separa `open` (mis pendientes), `waiting` y `messages`. |
+| `zeus_send_message` / `zeus_inbox` / `zeus_mark_read` | Mensajes entre devs y agentes. `kind: "task"` = encargo con estado. `zeus_inbox` separa `open` (mis pendientes), `waiting`, `messages` y `envChanges` (avisos de variables, uno por entorno y persona: los cambios seguidos se juntan). |
 | `zeus_share_plan` | Comparte un plan de implementación (markdown completo). `revises` = id del plan que esta versión reemplaza. |
 | `zeus_get_message` | Mensaje, encargo o plan completo (con versiones anteriores). |
 | `zeus_respond` | Estado de un encargo o plan: `accepted`, `changes_requested`, `declined`, `done` (o `cancelled` quien lo mandó). |
 | `zeus_plans` / `zeus_plan_claim` / `zeus_plan_release` | Bandeja de planes del planificador (issues): los míos, los reclamables; tomar o soltar uno. |
 | `zeus_env_status` | Qué variables tiene un proyecto (nombres, versión, quién y cuándo), si tengo acceso y los comandos `pull`/`status`. |
+| `zeus_message_history` | Historial completo de la bandeja (leído y no leído) con filtros: texto, persona, proyecto, tipo, recibidos/enviados. |
+| `zeus_linear_issues` / `zeus_linear_issue` / `zeus_linear_teams` | Linear en vivo (sin espejo): tus tickets activos, el detalle completo de uno (descripción, comentarios, subtareas, rama) y equipos/estados/proyectos. |
+| `zeus_linear_create` / `zeus_linear_update` | Crear y mover tickets con la llave del equipo. Se asignan a quien usa el MCP y cada cambio deja "vía zeus · <nombre>" (Linear pone como autor al dueño de la llave). |
+| `zeus_meetings` / `zeus_meeting` | Juntas (transcripts subidos a mano): buscar por texto, persona, proyecto o fecha, y traer una completa. |
 
 **Instrucciones y prompts.** El `initialize` devuelve `instructions` (`ZEUS_MCP_INSTRUCTIONS` en
 `src/zeus/mcp.ts`): Claude Code las carga solo al conectarse, así que funcionan como una skill sin

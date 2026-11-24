@@ -23,7 +23,9 @@ export async function login(deps: LoginDeps, args: string[]): Promise<number> {
     token = (await deps.prompt.secret('Token de zeus (zeus_…, no se muestra): ')).trim();
   }
   if (!TOKEN_RE.test(token)) {
-    throw new CliError('ese no parece un token de zeus (zeus_ y 43 caracteres). Créalo en el dashboard: zeus → MCP → Nuevo token.');
+    throw new CliError(
+      'ese no parece un token de zeus (zeus_ y 43 caracteres). Lo fácil es `zeus setup` (apruebas en el navegador, sin copiar tokens); para CI, créalo en zeus → MCP → Tokens manuales.',
+    );
   }
 
   let me;
@@ -37,7 +39,7 @@ export async function login(deps: LoginDeps, args: string[]): Promise<number> {
   deps.out(`conectado a ${url} como ${me.dev.name}${me.zeusAdmin ? ' (admin de zeus)' : ''}`);
   deps.out(`config: ${configPath(deps.home)}`);
   if (!(await loadDeviceKey(deps.fs, deps.home).catch(() => null))) {
-    deps.out('siguiente paso: `zeus key init` para crear la llave de la bóveda de este equipo.');
+    deps.out('siguiente paso: `zeus setup` (crea la llave de la bóveda y conecta Claude Code), o solo `zeus key init`.');
   }
   return 0;
 }

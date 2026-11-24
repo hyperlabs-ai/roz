@@ -5,8 +5,8 @@ CLI que corre en la PC de cada dev. Hace dos cosas:
 1. **Mantiene sincronizadas las variables de entorno** de cada proyecto (`.env`) a través de la bóveda de
    zeus, que es de **conocimiento cero**: los valores se cifran y descifran en tu equipo; zeus solo guarda
    texto cifrado.
-2. **Conecta tu equipo con zeus** (el back de roz): guarda tu token y te da el comando para conectar
-   Claude Code al MCP de zeus.
+2. **Conecta tu equipo con zeus** (el back de roz) y a tu Claude Code con su MCP, en un paso:
+   `npx -y @hyperlabs-ai/zeus@latest setup` (apruebas en el navegador; no copias tokens).
 
 Solo habla con zeus por `/v1/zeus/*`. No tiene dependencias en tiempo de ejecución: todo el cifrado es
 `node:crypto`. Contrato: `docs/zeus-contracts.md`, secciones 4 (API) y 5 (cifrado).
@@ -56,16 +56,43 @@ la contraseña de la base de datos sigue siendo la misma hasta que la cambies do
 no lo subas a git. Quien tenga acceso a tu sesión de usuario tiene tu `key.json` y tu token. Si pierdes
 o te roban el equipo: revoca su llave desde el dashboard (zeus → Bóveda) y pide rotar.
 
-## Instalación
+## Instalación (un solo comando)
 
 Requiere Node 20 o superior.
 
 ```bash
-npm i -g @hyperlabs-ai/zeus     # deja el comando `zeus` en tu PATH
-zeus --version
+npx -y @hyperlabs-ai/zeus@latest setup
 ```
 
+O pídeselo a tu Claude Code: *"Instala zeus en esta PC: corre `npx -y @hyperlabs-ai/zeus@latest setup --yes`
+y, cuando abra el navegador, avísame para aprobarlo. Al terminar dime qué quedó listo."*
+
+`zeus setup` deja la PC lista, explica cada paso y es idempotente (lo que ya está, se salta):
+
+1. **CLI**: si `zeus` no está instalado (corres por npx), lo instala global (`npm i -g`), porque los
+   hooks de Claude Code lo llaman.
+2. **Cuenta, sin copiar tokens**: imprime un código corto (`BCDF-2345`) y abre
+   `<roz>/conectar?code=…`. Ahí, con tu sesión, compruebas que el código y el nombre del equipo sean
+   los de tu terminal y apruebas. El CLI, que estaba esperando, recibe **una sola vez** un token a tu
+   nombre ("<equipo> (setup)") y lo guarda en `~/.zeus/config.json`. La solicitud vence a los 10
+   minutos; si ya estabas conectado, se salta (`--relogin` para forzar).
+3. **Llave de la bóveda**: si este equipo no tiene, corre `zeus key init` con el nombre del equipo.
+4. **Hooks de `zeus guard`** en `~/.claude/settings.json` (ver "Claude Code con zeus").
+5. **MCP de zeus** en Claude Code, con el mismo token. Si no tienes Claude Code, te lo dice y lo
+   conecta la próxima vez que corras `zeus setup`.
+
+Al final imprime un resumen (✓ CLI, ✓ cuenta, ✓ llave, ✓ hooks, ✓ MCP). Abre una sesión nueva de
+Claude Code y escribe `/mcp__zeus__pendientes`.
+
+Opciones: `--yes` (sin preguntas; así lo corre Claude, que no tiene terminal: la única decisión, aprobar,
+es en el navegador), `--url <zeus>` (otro zeus; por defecto `https://zeus.galaaxy.tech` o `ZEUS_URL`),
+`--name <equipo>`, `--relogin`, `--no-browser` (solo imprime la URL), `--no-install`, `--project`
+(hooks en el repo), `--no-mcp`, `--no-hooks`.
+
 Para actualizar: `npm i -g @hyperlabs-ai/zeus@latest`.
+
+**CI y servidores** (sin navegador): crea un token en roz → zeus → MCP → *Tokens manuales* y usa
+`zeus login --url … --token …` o las variables `ZEUS_URL` y `ZEUS_TOKEN`.
 
 Desde el repo (para desarrollar el CLI): `cd cli && npm install && npm run build && npm link`.
 
@@ -74,12 +101,8 @@ Desde el repo (para desarrollar el CLI): `cd cli && npm install && npm run build
 ### (a) Admin: crear el entorno de un proyecto
 
 ```bash
-# 1. Token: en el dashboard, zeus → Acceso → Nuevo token. Se muestra UNA vez.
-zeus login --url https://zeus.tu-equipo.com
-#    (pega el token cuando lo pida; no se muestra en pantalla)
-
-# 2. Llave de este equipo. Imprime la huella.
-zeus key init --name "laptop de Ana"
+# 1. Conectar este equipo (cuenta + llave + Claude Code). Imprime la huella de tu llave.
+npx -y @hyperlabs-ai/zeus@latest setup --name "laptop de Ana"
 
 # 3. Crear el entorno (por defecto: development). Este equipo queda como el primero con acceso.
 zeus env init ROZ
@@ -98,21 +121,17 @@ zeus env grant ROZ --to Beto --all-devices
 ### (b) Dev nuevo: entrar a un proyecto
 
 ```bash
-zeus login --url https://zeus.tu-equipo.com
-zeus key init                            # imprime tu huella y el id de tu llave
+npx -y @hyperlabs-ai/zeus@latest setup   # apruebas en el navegador; imprime tu huella y el id de tu llave
 
 # Llama a un admin, léele la huella y pásale el id. Él corre `zeus env grant …`. Luego:
 zeus env ls                              # proyectos/entornos y si este equipo tiene acceso
 cd ~/dev/hyper/roz
 zeus env pull ROZ                        # escribe ./.env
-
-# Conectar Claude Code: MCP de zeus + hooks que protegen los secretos (ver abajo).
-zeus setup claude
 ```
 
 ### (c) Claude Code con zeus
 
-`zeus setup claude` hace dos cosas (es idempotente):
+Los pasos 4 y 5 de `zeus setup` (`zeus setup claude` es el nombre de antes y hace lo mismo):
 
 1. **Conecta el MCP de zeus.** El servidor manda sus *instrucciones* al conectarse y Claude Code las
    carga solas en cada sesión: no hace falta instalar ninguna skill. Ahí va cómo usar el contexto del
@@ -134,12 +153,12 @@ en el .env?", "sube la nueva STRIPE_KEY a prod" (tú la copias; él corre `zeus 
 
 | Comando | Qué hace |
 |---|---|
-| `login` | Valida el token con zeus y guarda URL y token en `~/.zeus/config.json` (0600). `--url`, `--token`; también lee `ZEUS_URL` y `ZEUS_TOKEN`. Nunca imprime el token. |
+| `setup` | Deja la PC lista en un paso: instala el CLI si corre por npx, conecta tu cuenta aprobando en el navegador (sin copiar tokens), crea la llave del equipo y conecta Claude Code (hooks + MCP). Idempotente. `--yes`, `--url`, `--name`, `--relogin`, `--no-browser`, `--no-install`, `--project`, `--no-mcp`, `--no-hooks`. Desde 0.3.0 (`setup claude` = alias). |
+| `login` | Para CI y servidores: valida el token con zeus y guarda URL y token en `~/.zeus/config.json` (0600). `--url`, `--token`; también lee `ZEUS_URL` y `ZEUS_TOKEN`. Nunca imprime el token. |
 | `whoami` | Quién eres en zeus, si eres admin y el estado de la llave de este equipo. |
-| `setup claude` | Conecta Claude Code: MCP de zeus + hooks de `zeus guard`. `--project` (hooks en el repo), `--no-mcp`, `--no-hooks`. |
 | `mcp` | Imprime el comando para conectar el MCP a mano. Es el único comando que muestra el token completo. |
 | `doctor` | Conexión, llave, pendientes de tu bandeja y estado de los `.env` de esta carpeta. |
-| `guard` | El hook de Claude Code (lo instala `setup claude`). Lee el evento por stdin; sale con 2 para bloquear. |
+| `guard` | El hook de Claude Code (lo instala `setup`). Lee el evento por stdin; sale con 2 para bloquear. |
 | `key init` | Genera la llave del equipo (si no hay), la guarda en `~/.zeus/key.json` (0600) y registra la pública. `--name`, `--force` (genera otra: pierdes el acceso hasta que te lo vuelvan a dar; la anterior queda en `key.json.bak`). |
 | `key rotate` | Cambia la llave de este equipo **sin perder accesos**: abre cada llave de entorno con la vieja, la envuelve para la nueva y zeus revoca la vieja. `--compromised` (equipo perdido) marca esos entornos para rotar. |
 | `key show` | Pública, huella e id de la llave. Nunca la privada. |
@@ -156,6 +175,7 @@ en el .env?", "sube la nueva STRIPE_KEY a prod" (tú la copias; él corre `zeus 
 | `run <proyecto> [entorno] -- <comando…>` | Corre el comando con los secretos en su entorno, sin escribirlos a disco. Devuelve el código de salida del comando. |
 | `env init <proyecto> [entorno]` | Crea el entorno con una DEK nueva; quien lo crea queda como el primero con acceso. Cualquier dev. |
 | `env grant <proyecto> [entorno] --to <…>` | Da acceso a los equipos de un dev (lo hace quien ya tiene acceso: solo se comparte lo que uno puede leer). `--to` acepta nombre del dev o id de llave; `--all-devices` si tiene varios. `--all-envs` (todos los entornos del proyecto) o `--all [--env <entorno>]` (todos los proyectos), con una sola verificación de huella. |
+| `env grant --pending [--yes]` | Cifra los accesos que alguien aprobó desde la web (roz → Zeus → Variables → Dar acceso). La web no tiene la llave del entorno: solo registra la decisión, y este comando la envuelve para cada equipo de la persona. Muestra la huella de cada equipo y pide confirmar uno por uno [s/N]; `--yes` lo salta (solo si ya verificaste las huellas). `zeus doctor` avisa cuando hay alguno pendiente. Desde 0.2.4. |
 | `env revoke <proyecto> [entorno] --key <id>` | Quita el acceso de una llave (quien tiene acceso al entorno, o un admin). Después hay que rotar. |
 | `env rotate <proyecto> [entorno]` | DEK nueva (quien tiene acceso) para los accesos vigentes y todos los secretos (y su historial) vueltos a cifrar. `--all` rota todos los entornos marcados; `--include-ok`, todos a los que tienes acceso. |
 
