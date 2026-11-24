@@ -201,7 +201,7 @@ describe('historial y avisos de la bóveda (CLI real contra servidor real)', () 
     const notices = await pg.sql<{ kind: string; subject: string; body: string; to_dev_id: string }>(`select kind, subject, body, to_dev_id from roz.zeus_message`);
     expect(notices).toHaveLength(1); // solo Fer: Beto hizo el cambio y Ana ya no tiene acceso
     expect(notices[0]).toMatchObject({ kind: 'env_change', to_dev_id: await devId('Fer') });
-    expect(notices[0]!.subject).toMatch(/Beto cambió 1 variable de ORWEL\/development/);
+    expect(notices[0]!.subject).toMatch(/Beto cambió 1 variable de ORWEL \(Local\)/);
     expect(notices[0]!.body).toMatch(/Cambiaron: API_KEY/);
     expect(JSON.stringify(notices)).not.toContain('rotada_por_beto');
   });
@@ -360,7 +360,7 @@ describe('acceso aprobado en la web y cifrado con `zeus env grant --pending`', (
     expect(await envPull(ana.ctx, ['ORWEL', '--stdout', '--format', 'json'])).toBe(0);
     expect(JSON.parse(ana.out[ana.out.length - 1]!)).toHaveProperty('DATABASE_URL', SECRETS.DATABASE_URL);
     expect((await pg.sql<{ fulfilled_at: string | null }>(`select fulfilled_at from roz.zeus_vault_grant_intent`))[0]!.fulfilled_at).toBeTruthy();
-    expect((await pg.sql<{ subject: string }>(`select subject from roz.zeus_message where to_dev_id = $1`, [anaId])).map((m) => m.subject)).toContain('Ya tienes acceso a ORWEL/development');
+    expect((await pg.sql<{ subject: string }>(`select subject from roz.zeus_message where to_dev_id = $1`, [anaId])).map((m) => m.subject)).toContain('Ya tienes acceso a ORWEL (Local)');
     // Ya no queda nada por cifrar.
     fer.out.length = 0;
     expect(await envGrant(fer.ctx, ['--pending'])).toBe(0);

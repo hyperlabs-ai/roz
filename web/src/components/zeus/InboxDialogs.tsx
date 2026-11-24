@@ -12,6 +12,7 @@ import { invalidate } from '@/lib/store';
 import { useAction } from '@/lib/useAction';
 import { ZEUS_REQUEST_KINDS, zeusApi, type ZeusMe, type ZeusMessage, type ZeusRequest, type ZeusRequestKind } from '@/lib/zeus';
 import { INBOX_KEY, ME_KEY, useZeusGraph, useZeusOrg } from './hooks';
+import { prettyEnvText } from './vault-groups';
 import { KIND_META, MESSAGE_KIND_LABEL, REQUEST_KIND_LABEL, dateTime } from './zeus-ui';
 
 export function refreshInbox(): void {
@@ -204,7 +205,7 @@ export function PlanDialog({ messageId, onClose, onReply }: { messageId: string 
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader eyebrow={data ? `${MESSAGE_KIND_LABEL[data.kind]} · de ${data.fromName} para ${data.toName}${data.projectKey ? ` · ${data.projectKey}` : ''} · ${dateTime(data.createdAt)}` : 'Zeus'}>
-          <DialogTitle>{data?.subject ?? 'Cargando…'}</DialogTitle>
+          <DialogTitle>{data?.subject ? prettyEnvText(data.subject) : 'Cargando…'}</DialogTitle>
           {data?.kind === 'plan' && (
             <DialogDescription>Para implementarlo con Claude: pídele que revise tu bandeja de zeus (o /mcp__zeus__pendientes) y te preguntará si lo implementa o lo ajusta.</DialogDescription>
           )}

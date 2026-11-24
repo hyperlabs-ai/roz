@@ -51,6 +51,8 @@ import { LinearBlock } from './InboxLinear';
 import { ComposeDialog, NewRequestDialog, PlanDialog, ResolveDialog, StatusDialog, refreshInbox, type StatusAction } from './InboxDialogs';
 import { MESSAGE_KIND_LABEL, MESSAGE_STATUS, REQUEST_KIND_LABEL, REQUEST_STATUS, ago, dateTime, viaLabel } from './zeus-ui';
 import { CmdLine } from './zeus-steps';
+import { EnvName } from './EnvName';
+import { prettyEnvText } from './vault-groups';
 import './inbox.css';
 
 type People = Map<string, ZeusOrgMember>;
@@ -381,8 +383,8 @@ function MessageRow({
             <span className={cn('truncate text-[13px]', unread ? 'font-semibold' : 'font-medium')}>{who}</span>
             {message.projectKey && <span className="shrink-0 font-mono text-[10.5px] text-faint">{message.projectKey}</span>}
           </span>
-          {message.subject && <span className={cn('truncate text-[13px] leading-snug', unread ? 'font-semibold' : 'text-foreground')}>{message.subject}</span>}
-          <span className="line-clamp-1 break-words text-[12px] leading-relaxed text-muted-foreground">{message.body.replace(/\s+/g, ' ')}</span>
+          {message.subject && <span className={cn('truncate text-[13px] leading-snug', unread ? 'font-semibold' : 'text-foreground')}>{prettyEnvText(message.subject)}</span>}
+          <span className="line-clamp-1 break-words text-[12px] leading-relaxed text-muted-foreground">{prettyEnvText(message.body.replace(/\s+/g, ' '))}</span>
           {sent && <span className="text-[11px] text-faint">{message.readAt ? `Leído ${ago(message.readAt)}` : 'Sin leer todavía'}</span>}
         </span>
         <span className="flex flex-col items-end gap-1 pt-0.5">
@@ -424,8 +426,11 @@ export function parseEnvChange(body: string): { groups: Array<{ label: string; n
   return { groups, rotated: /rotó la llave/i.test(body), pull };
 }
 
-/** "HYPERHUB/api-hyperhub-production" del asunto del aviso. */
-const envLabelOf = (subject: string | null) => /de (\S+\/\S+)$/.exec(subject ?? '')?.[1] ?? null;
+/** "HYPERHUB/api-hyperhub-production": del comando del cuerpo, o del asunto en los avisos viejos. */
+const envLabelOf = (m: ZeusMessage) => {
+  const cmd = /zeus env pull (\S+) (\S+)/.exec(m.body);
+  return cmd ? `${cmd[1]}/${cmd[2]}` : (/de (\S+\/\S+)$/.exec(m.subject ?? '')?.[1] ?? null);
+};
 
 interface EnvGroup {
   env: string;
@@ -443,7 +448,7 @@ function groupEnvChanges(list: ZeusMessage[]): EnvGroup[] {
   const map = new Map<string, EnvGroup>();
   // De lo más viejo a lo más nuevo, para que el último cambio de un nombre sea el que quede.
   for (const m of [...list].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-    const env = envLabelOf(m.subject) ?? m.subject ?? 'variables';
+    const env = envLabelOf(m) ?? m.subject ?? 'variables';
     const g: EnvGroup = map.get(env) ?? { env, messages: [], names: new Map(), actors: [], rotated: false, pull: null, at: m.createdAt };
     const parsed = parseEnvChange(m.body);
     g.messages.push(m);
@@ -477,7 +482,7 @@ function EnvGroupRow({ group, unread, people, onRead }: { group: EnvGroup; unrea
         }}
       >
         <KeySquare className={cn('size-3.5 shrink-0', unread ? 'text-green' : 'text-faint')} />
-        <span className="min-w-0 truncate font-mono text-[12px] font-semibold">{env}</span>
+        <EnvName name={env} project={project} className="text-[12px]" />
         {project && <span className="shrink-0 font-mono text-[10.5px] text-faint">{project}</span>}
         {group.rotated && <Badge variant="warn">Llave rotada</Badge>}
         {unread && <span className="size-1.5 shrink-0 rounded-full bg-green" aria-label="Nuevo" />}

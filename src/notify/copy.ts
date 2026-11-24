@@ -776,7 +776,7 @@ function zeusMessageNotice(i: ZeusWorkInput): Notice {
 }
 
 export interface ZeusEnvChangeItem {
-  /** `PROYECTO/entorno`. */
+  /** Entorno como lo ve la persona: "api-hyperhub (Prod)". */
   label: string;
   actor: string;
   added: string[];

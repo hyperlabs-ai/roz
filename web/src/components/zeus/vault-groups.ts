@@ -82,3 +82,21 @@ export function auditEnvParts(label: string): { project: string | null; repo: st
   const { repo, stage } = envParts(name);
   return { project, repo: stage ? (repo ?? (project ?? name).toLowerCase()) : name, stage };
 }
+
+/** Cómo se dice cada etapa en la interfaz (igual que el back: src/zeus/env-label.ts). */
+export const STAGE_LABEL: Record<Stage, string> = { development: 'Local', production: 'Prod', staging: 'Staging', preview: 'Preview', test: 'Test' };
+
+// Lo que va después de "zeus env <comando> <PROYECTO> " es un comando: se deja con el nombre real.
+const WITH_REPO = /(?<!zeus env [a-z]+ [A-Za-z0-9_-]+ )(?<![\w./-])(?:[A-Z][A-Z0-9_-]*\/)?([a-z0-9][a-z0-9._-]*?)-(development|production|staging|preview|test)\b/g;
+const ONLY_STAGE = /(?<!zeus env [a-z]+ )(?<![\w./-])([A-Z][A-Z0-9_-]*)\/(development|production|staging|preview|test)\b/g;
+
+/**
+ * Reescribe nombres de entorno dentro de un texto: "HYPERHUB/api-hyperhub-production" →
+ * "api-hyperhub (Prod)", "ORWEL/development" → "ORWEL (Local)". Sirve para los avisos viejos, que
+ * se guardaron con el nombre largo, y para cualquier texto que llegue con él. Puro.
+ */
+export function prettyEnvText(text: string): string {
+  return text
+    .replace(ONLY_STAGE, (_m, project: string, stage: Stage) => `${project} (${STAGE_LABEL[stage]})`)
+    .replace(WITH_REPO, (_m, repo: string, stage: Stage) => `${repo} (${STAGE_LABEL[stage]})`);
+}

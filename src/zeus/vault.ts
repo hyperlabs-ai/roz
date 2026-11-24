@@ -14,6 +14,7 @@ import { db } from '../db/supabase.js';
 import type { ZeusVaultEnvSummary, ZeusVaultGrantIntent, ZeusVaultKey, ZeusVaultOverview } from '../types/zeus.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { isUuid, logActivity, requireAdmin, resolveProject, actorActivity, type ZeusActor } from './core.js';
+import { envDisplay } from './env-label.js';
 import { inboxNotice, notifyEnvChange } from './inbox.js';
 
 export const VAULT_STALE_CODE = 'ZEUS_VAULT_STALE';
@@ -856,7 +857,7 @@ export async function createGrantIntent(
     throw new AppError('ZEUS_VAULT_NO_KEY', `${target.name} aún no registra la llave de su equipo: que corra \`zeus key init\` en su PC y vuelve a aprobar`, 409);
   }
   const pending = keys.filter((k) => !granted.has(k.id));
-  if (!pending.length) throw new AppError('ZEUS_VAULT_ALREADY_GRANTED', `${target.name} ya tiene acceso a ${project.key}/${env.name} en todos sus equipos`, 409);
+  if (!pending.length) throw new AppError('ZEUS_VAULT_ALREADY_GRANTED', `${target.name} ya tiene acceso a ${envDisplay(env.name, project.key)} en todos sus equipos`, 409);
 
   const open = async (): Promise<IntentRow | null> => {
     const { data, error } = await supabase
@@ -1024,9 +1025,9 @@ async function fulfillIntents(env: EnvRow, project: ProjectLite, devIds: string[
       await inboxNotice({
         toDevId: r.to_dev_id,
         fromDevId: actor.devId,
-        subject: `Ya tienes acceso a ${project.key}/${env.name}`,
+        subject: `Ya tienes acceso a ${envDisplay(env.name, project.key)}`,
         body: [
-          `${actor.name} cifró la llave de ${project.key}/${env.name} para ${theirs.length === 1 ? 'tu equipo' : `tus ${theirs.length} equipos`}${approver ? ` (lo aprobó ${approver})` : ''}.`,
+          `${actor.name} cifró la llave de ${envDisplay(env.name, project.key)} para ${theirs.length === 1 ? 'tu equipo' : `tus ${theirs.length} equipos`}${approver ? ` (lo aprobó ${approver})` : ''}.`,
           '',
           `Bájalo: zeus env pull ${project.key} ${env.name}   (dentro del repo basta la etapa: local o prod)`,
         ].join('\n'),

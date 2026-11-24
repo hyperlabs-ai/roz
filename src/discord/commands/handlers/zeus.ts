@@ -14,6 +14,7 @@ import type { ZeusLinearIssue, ZeusMessage } from '../../../types/zeus.js';
 import { ValidationError } from '../../../utils/errors.js';
 import { actorForDev, type ZeusActor } from '../../../zeus/core.js';
 import { getInbox } from '../../../zeus/inbox.js';
+import { prettyEnvText } from '../../../zeus/env-label.js';
 import { createIssueAs, linearCatalog, listIssues } from '../../../zeus/linear.js';
 import { buildCustomId } from '../custom-id.js';
 import { appLink } from '../links.js';
@@ -45,7 +46,7 @@ function issueBlock(issues: ZeusLinearIssue[]): string {
 
 function messageLine(m: ZeusMessage): string {
   const when = relativeTime(m.createdAt);
-  return `• **${inline(m.fromName, 40)}**: ${inline(m.subject ?? m.body, 90)}${when ? ` · ${when}` : ''}`;
+  return `• **${inline(m.fromName, 40)}**: ${inline(prettyEnvText(m.subject ?? m.body), 90)}${when ? ` · ${when}` : ''}`;
 }
 
 const inboxButton = (): ButtonComponent | null => {
@@ -97,7 +98,7 @@ async function bandejaMessage(actor: CommandActor) {
     parts.push(separator(), text(`**Mensajes sin leer**\n${unreadMsgs.slice(0, MAX_ITEMS).map(messageLine).join('\n')}${more}`));
   }
   if (unreadEnvs.length) {
-    const envs = unreadEnvs.slice(0, MAX_ITEMS).map((m) => `• ${inline(m.subject ?? '', 110)}`);
+    const envs = unreadEnvs.slice(0, MAX_ITEMS).map((m) => `• ${inline(prettyEnvText(m.subject ?? ''), 110)}`);
     parts.push(separator(), text(`**Variables que cambiaron**\n${envs.join('\n')}\n-# Ponte al día con \`zeus env status\` en tu PC.`));
   }
   if (inbox.waiting.length) parts.push(text(`-# Esperas respuesta de ${inbox.waiting.length} encargo(s) o plan(es) que mandaste.`));

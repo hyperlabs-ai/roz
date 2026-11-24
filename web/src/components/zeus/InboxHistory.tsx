@@ -16,6 +16,7 @@ import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { zeusApi, type ZeusMessage, type ZeusMessageKind, type ZeusOrgMember } from '@/lib/zeus';
 import { useZeusOrg, useZeusProjects } from './hooks';
+import { prettyEnvText } from './vault-groups';
 import { MESSAGE_KIND_LABEL, MESSAGE_STATUS, dateTime } from './zeus-ui';
 
 const ALL = '__todos__';
@@ -221,8 +222,8 @@ export function HistoryView({ people, onOpen }: { people: Map<string, ZeusOrgMem
                             {st && <Badge variant={st.variant}>{st.label}</Badge>}
                             {m.projectKey && <span className="truncate text-[11px] text-faint">{m.projectKey}</span>}
                           </span>
-                          {m.subject && <span className={cn('truncate text-[13px]', unread ? 'font-semibold' : 'text-foreground')}>{m.subject}</span>}
-                          <span className="truncate text-[12px] text-muted-foreground">{m.body.replace(/\s+/g, ' ')}</span>
+                          {m.subject && <span className={cn('truncate text-[13px]', unread ? 'font-semibold' : 'text-foreground')}>{prettyEnvText(m.subject)}</span>}
+                          <span className="truncate text-[12px] text-muted-foreground">{prettyEnvText(m.body.replace(/\s+/g, ' '))}</span>
                         </span>
                         <span className="shrink-0 pt-0.5 text-[11px] tabular-nums text-faint" data-tip={dateTime(m.createdAt)}>{timeOf(m.createdAt)}</span>
                       </button>

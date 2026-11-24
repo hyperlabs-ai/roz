@@ -12,6 +12,7 @@
 import { config } from '../config.js';
 import { db } from '../db/supabase.js';
 import { sendEmail } from '../adapters/email.js';
+import { envDisplay } from './env-label.js';
 import { claimOnce, releaseOnce } from '../events/outbox.js';
 import { emailAllowed } from '../notify/switches.js';
 import { renderEmail, zeusEnvDigestNotice, zeusWorkNotice, type ZeusEnvChangeItem, type ZeusWorkEvent } from '../notify/copy.js';
@@ -117,7 +118,9 @@ export function parseEnvNotice(subject: string | null, body: string, actor: stri
     return line ? line.slice(prefix.length).split(',').map((s) => s.trim()).filter(Boolean) : [];
   };
   const cmd = /zeus env pull (\S+) (\S+)/.exec(body);
-  const label = cmd ? `${cmd[1]}/${cmd[2]}` : (/de (\S+\/\S+)$/.exec(subject ?? '')?.[1] ?? null);
+  // Avisos viejos: "… de PROYECTO/entorno" al final del asunto.
+  const old = /de (\S+)\/(\S+)$/.exec(subject ?? '');
+  const label = cmd ? envDisplay(cmd[2]!, cmd[1]) : old ? envDisplay(old[2]!, old[1]) : null;
   if (!label) return null;
   return { label, actor, added: list('Nuevas:'), changed: list('Cambiaron:'), deleted: list('Se quitaron:'), rotated: /rotó la llave/i.test(body) };
 }

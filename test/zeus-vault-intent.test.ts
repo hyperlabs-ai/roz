@@ -118,7 +118,7 @@ describe('accesos aprobados en la web (zeus_vault_grant_intent)', () => {
     expect(await listGrantIntentsForCli(fer)).toEqual([]);
     const inbox = await pg.sql<{ subject: string; body: string }>(`select subject, body from roz.zeus_message where to_dev_id = $1`, [ids.ana]);
     expect(inbox).toHaveLength(1);
-    expect(inbox[0]!.subject).toBe(`Ya tienes acceso a ${P}/${E}`);
+    expect(inbox[0]!.subject).toBe("Ya tienes acceso a api-hyperhub (Prod)");
     expect(inbox[0]!.body).toContain(`zeus env pull ${P} ${E}`);
     // Una vez cifrada, ya no se cancela (para quitarla está `zeus env revoke`) y aprobar de nuevo se rechaza.
     const [{ id }] = (await pg.sql<{ id: string }>(`select id from roz.zeus_vault_grant_intent`)) as [{ id: string }];

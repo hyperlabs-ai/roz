@@ -25,6 +25,7 @@ import { GRAPH_KEY, NODES_KEY } from './hooks';
 import { AREA_META, McpDiagram, areaOf, type WorkArea } from './McpDiagram';
 import { McpTokenList, setupCommand, setupPrompt } from './McpTokens';
 import { CmdLine } from './zeus-steps';
+import { EnvName, isEnvName } from './EnvName';
 import { CopyButton, MESSAGE_STATUS, OnlineDot, RailTitle, ago, dateTime, describeActivity, viaLabel } from './zeus-ui';
 import './access.css';
 
@@ -168,11 +169,18 @@ function WorkRow({ g, person, now }: { g: WorkGroup; person: ZeusMcpConnection |
       <span className="grid min-w-0 flex-1 gap-1">
         <span className="text-[12.5px] leading-snug">
           <span className="font-semibold">{d.who}</span> <span className="text-muted-foreground">{d.verb}</span>
-          {g.targets.length === 1 && <> <span className="break-all font-mono text-[11.5px] font-medium">{g.targets[0]}</span></>}
+          {g.targets.length === 1 &&
+            (isEnvName(g.targets[0]!) ? (
+              <> <EnvName name={g.targets[0]!} className="text-[11.5px]" /></>
+            ) : (
+              <> <span className="break-all font-mono text-[11.5px] font-medium">{g.targets[0]}</span></>
+            ))}
         </span>
         {g.targets.length > 1 && (
           <span className="flex flex-wrap gap-1">
-            {g.targets.slice(0, 4).map((t) => (
+            {g.targets.slice(0, 4).map((t) => isEnvName(t) ? (
+              <span key={t} className="rounded-[4px] bg-panel px-1.5 py-0.5 text-[10.5px]"><EnvName name={t} /></span>
+            ) : (
               <span key={t} className="rounded-[4px] bg-panel px-1.5 py-0.5 font-mono text-[10.5px] font-medium">{t}</span>
             ))}
             {g.targets.length > 4 && <span className="px-1 py-0.5 text-[10.5px] text-faint">+{g.targets.length - 4}</span>}

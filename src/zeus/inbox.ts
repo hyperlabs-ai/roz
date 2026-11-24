@@ -6,6 +6,7 @@ import { pushToDev } from '../notify/push.js';
 import { AppError, NotFoundError, ValidationError } from '../utils/errors.js';
 import { inBackground } from '../utils/background.js';
 import { mailWorkEvent } from './mail.js';
+import { envDisplay } from './env-label.js';
 import { ZEUS_DUTIES, holdersOf, isDuty, loadDuties, type ZeusDuty } from './duties.js';
 import { claimOnce, releaseOnce } from '../events/outbox.js';
 import {
@@ -461,7 +462,8 @@ export function mergeEnvNames(prev: EnvNames, next: EnvNames): EnvNames {
 }
 
 function envNoticeText(actorName: string, projectKey: string, env: string, names: EnvNames, rotated: boolean): { subject: string; body: string } | null {
-  const label = `${projectKey}/${env}`;
+  // A la persona se le nombra como en Variables: "api-hyperhub (Prod)". El comando sí lleva el nombre real.
+  const label = envDisplay(env, projectKey);
   const lines: string[] = [];
   if (rotated) lines.push(`Se rotó la llave del entorno. Los valores no cambiaron; vuelve a bajar para seguir pudiendo subir cambios.`);
   if (names.added.length) lines.push(`Nuevas: ${names.added.join(', ')}`);
@@ -494,10 +496,14 @@ export async function notifyEnvChange(n: EnvChangeNotice): Promise<void> {
     .gte('created_at', since)
     .in('to_dev_id', n.devIds);
   if (openErr) throw openErr;
-  // El entorno va al final del asunto ("… de PROYECTO/entorno"): se compara aquí, no con LIKE (`_` es comodín).
-  const suffix = ` de ${n.projectKey}/${n.env}`;
+  // El entorno exacto sale del comando del cuerpo ("zeus env pull PROYECTO entorno"); los avisos
+  // viejos lo traían al final del asunto. Se compara aquí, no con LIKE (`_` es comodín).
+  const cmd = `zeus env pull ${n.projectKey} ${n.env} `;
+  const oldSuffix = ` de ${n.projectKey}/${n.env}`;
   const openByDev = new Map(
-    ((openRows ?? []) as Array<{ id: string; to_dev_id: string; subject: string | null; body: string }>).filter((r) => r.subject?.endsWith(suffix)).map((r) => [r.to_dev_id, r]),
+    ((openRows ?? []) as Array<{ id: string; to_dev_id: string; subject: string | null; body: string }>)
+      .filter((r) => r.body.includes(cmd) || r.subject?.endsWith(oldSuffix))
+      .map((r) => [r.to_dev_id, r]),
   );
 
   const fresh = envNoticeText(n.actor.name, n.projectKey, n.env, incoming, !!n.rotated);
