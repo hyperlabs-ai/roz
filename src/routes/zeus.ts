@@ -13,6 +13,7 @@ import { ZEUS_NODE_KINDS, ZEUS_NODE_STATUSES, type ZeusNodeKind, type ZeusNodeSt
 import { config } from '../config.js';
 import { actorForDev, authenticateZeusToken, isUuid, type ZeusActor } from '../zeus/core.js';
 import { decideDeviceRequest, getDeviceRequest, pollDeviceAuth, startDeviceAuth } from '../zeus/device-auth.js';
+import { decideAuthorize, getAuthorizeRequest, type AuthorizeParams } from '../zeus/oauth.js';
 import { bootstrapAdmin, getGraph, getOrg, setOrgDuty, updateOrgMember, type OrgMemberPatch } from '../zeus/graph.js';
 import {
   cancelRequest,
@@ -205,6 +206,16 @@ zeusDashboardRoutes.delete(
 zeusDashboardRoutes.get('/device/:userCode', web((c, actor) => getDeviceRequest(param(c, 'userCode'), actor)));
 zeusDashboardRoutes.post('/device/:userCode/approve', web((c, actor) => decideDeviceRequest(param(c, 'userCode'), 'approve', actor)));
 zeusDashboardRoutes.post('/device/:userCode/deny', web((c, actor) => decideDeviceRequest(param(c, 'userCode'), 'deny', actor)));
+
+// Conector de claude.ai (OAuth): la página /autorizar manda los parámetros tal cual llegaron del
+// cliente y recibe a dónde volver. Ver src/zeus/oauth.ts.
+const oauthParams = (src: Record<string, unknown>): AuthorizeParams => {
+  const keys = ['response_type', 'client_id', 'redirect_uri', 'code_challenge', 'code_challenge_method', 'state', 'scope', 'resource'] as const;
+  return Object.fromEntries(keys.filter((k) => src[k] != null).map((k) => [k, String(src[k])])) as AuthorizeParams;
+};
+zeusDashboardRoutes.get('/oauth/authorize', web((c, actor) => getAuthorizeRequest(oauthParams(c.req.query()), actor)));
+zeusDashboardRoutes.post('/oauth/authorize/approve', web(async (c, actor) => decideAuthorize(oauthParams(await body(c)), 'approve', actor)));
+zeusDashboardRoutes.post('/oauth/authorize/deny', web(async (c, actor) => decideAuthorize(oauthParams(await body(c)), 'deny', actor)));
 
 zeusDashboardRoutes.get('/inbox', web((_c, actor) => getInbox(actor)));
 // Tickets de Linear de quien mira, aparte de la bandeja: Linear puede tardar y no debe frenarla.

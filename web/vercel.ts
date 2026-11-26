@@ -24,6 +24,11 @@ export const config: VercelConfig = {
     // Cuando cada una se repunte directo a zeus (zeus.galaaxy.tech) su línea se puede borrar.
     routes.rewrite('/webhooks/(.*)', `${zeus}/webhooks/$1`),
     routes.rewrite('/mcp', `${zeus}/mcp`),
+    // OAuth del MCP como conector de claude.ai: descubrimiento, registro y canje viven en zeus. La
+    // página de aprobación (/autorizar) es del SPA y cae en el fallback de abajo.
+    routes.rewrite('/.well-known/oauth-(.*)', `${zeus}/.well-known/oauth-$1`),
+    routes.rewrite('/.well-known/openid-configuration', `${zeus}/.well-known/openid-configuration`),
+    routes.rewrite('/oauth/(.*)', `${zeus}/oauth/$1`),
     routes.rewrite('/v1/intake(.*)', `${zeus}/v1/intake$1`),
     routes.rewrite('/v1/runner/(.*)', `${zeus}/v1/runner/$1`),
     routes.rewrite('/v1/zeus/(.*)', `${zeus}/v1/zeus/$1`),

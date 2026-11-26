@@ -14,6 +14,7 @@ import { runnerRoutes } from './routes/runner.js';
 import { discordOauthRoutes } from './routes/discord-oauth.js';
 import { discordBridgeRoutes } from './routes/discord.js';
 import { zeusCliRoutes } from './routes/zeus.js';
+import { oauthRoutes, wellKnownRoutes } from './routes/oauth.js';
 import { config } from './config.js';
 import { runtimeStatus } from './runtime.js';
 import { mountSpa } from './spa.js';
@@ -45,6 +46,9 @@ if (config.cors.origins.length) {
 
 // Cara interactiva (Claude conversacional).
 app.route('/mcp', mcpRoutes);
+// OAuth del MCP para conectarlo como conector de claude.ai (descubrimiento, registro, canje).
+app.route('/.well-known', wellKnownRoutes);
+app.route('/oauth', oauthRoutes);
 // Afuera -> roz.
 app.route('/webhooks', webhookRoutes);
 // Webhook de Linear (roz v2): POST /webhooks/linear. Con ROZ_LINEAR_SOT apagado responde 200 sin emitir.
