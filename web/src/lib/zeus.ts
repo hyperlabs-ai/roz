@@ -221,6 +221,18 @@ export interface ZeusTokenSummary {
 export type ZeusDeviceStatus = 'pending' | 'approved' | 'denied' | 'delivered' | 'expired';
 
 /** Solicitud de `zeus setup` vista desde /conectar: qué equipo pide entrar y con qué código. */
+/** Conector (claude.ai u otro cliente MCP) que pide entrar por OAuth. Espejo de src/zeus/oauth.ts. */
+export interface ZeusOAuthRequest {
+  clientName: string;
+  clientUri: string | null;
+  /** Dominio exacto al que vuelve el código. */
+  redirectHost: string;
+  /** Vuelve a Claude (claude.ai / claude.com). */
+  verified: boolean;
+  /** Ya tienes un token de este conector (reconectar lo reemplaza). */
+  reconnect: boolean;
+}
+
 export interface ZeusDeviceRequest {
   userCode: string;
   /** Nombre del equipo que dio el CLI (hostname). */
@@ -619,6 +631,10 @@ export const zeusApi = {
   deviceRequest: (userCode: string) => apiGet<ZeusDeviceRequest>(`/zeus/device/${enc(userCode)}`),
   approveDevice: (userCode: string) => apiSend<ZeusDeviceRequest>('POST', `/zeus/device/${enc(userCode)}/approve`, {}),
   denyDevice: (userCode: string) => apiSend<ZeusDeviceRequest>('POST', `/zeus/device/${enc(userCode)}/deny`, {}),
+  /** Conector de claude.ai (OAuth, /autorizar): qué conector pide entrar, y aprobar o rechazar. */
+  oauthRequest: (params: Record<string, string>) => apiGet<ZeusOAuthRequest>(`/zeus/oauth/authorize?${new URLSearchParams(params)}`),
+  decideOAuth: (params: Record<string, string>, decision: 'approve' | 'deny') =>
+    apiSend<{ redirectTo: string }>('POST', `/zeus/oauth/authorize/${decision}`, params),
 
   inbox: () => apiGet<ZeusInbox>('/zeus/inbox'),
   linearBoard: () => apiGet<ZeusLinearBoard>('/zeus/linear/board'),

@@ -19,6 +19,8 @@ import { looksLikeRunnerToken } from '../plans/tokens.js';
 import { actorForDev, authenticateZeusToken, looksLikeZeusToken, type ZeusActor } from '../zeus/core.js';
 import { ZEUS_MCP_INSTRUCTIONS, ZEUS_MCP_PROMPTS, zeusTools, zeusToolsByName } from '../zeus/mcp.js';
 import { MCP_SERVER_VERSION } from '../zeus/mcp-status.js';
+import { resourceMetadataUrl } from '../zeus/oauth.js';
+import { oauthOrigins } from './oauth.js';
 
 export const mcpRoutes = new Hono<RozContext>();
 
@@ -84,10 +86,15 @@ function rpcError(id: unknown, code: number, message: string) {
   return { jsonrpc: '2.0', id, error: { code, message } };
 }
 
+// Sin stream SSE del servidor (Streamable HTTP lo permite): los clientes que abren GET reciben 405.
+mcpRoutes.get('/', (c) => c.body(null, 405, { Allow: 'POST' }));
+
 mcpRoutes.post('/', async (c) => {
   // Auth (comparación en tiempo constante; fail-closed si el token no está configurado).
   const caller = await mcpCaller(bearerToken(c.req.header('authorization')));
   if (!caller) {
+    // Sin token (o uno inválido): el conector de claude.ai descubre aquí dónde autorizarse (OAuth).
+    c.header('WWW-Authenticate', `Bearer resource_metadata="${resourceMetadataUrl(oauthOrigins(c))}"`);
     return c.json(rpcError(null, -32001, 'Unauthorized'), 401);
   }
 

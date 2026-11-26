@@ -22,6 +22,8 @@ export const R = {
   mcp: '/mcp',
   /** Aprobar el equipo que corrió `zeus setup` (?code=…). Con sesión, sin el chrome del dashboard. */
   conectar: '/conectar',
+  /** Aprobar un conector de claude.ai (OAuth, ?client_id&redirect_uri…). Con sesión, sin chrome. */
+  autorizar: '/autorizar',
   // Visibilidad
   pulso: '/pulso',
   resumen: '/resumen',

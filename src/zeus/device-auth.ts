@@ -59,6 +59,9 @@ function limited(key: string, max: number, windowMs: number, now = Date.now()): 
   return b.count > max;
 }
 
+/** Los mismos límites, para el OAuth del conector (src/zeus/oauth.ts). */
+export const rateLimited = limited;
+
 /** Para las pruebas. */
 export function resetDeviceRateLimits(): void {
   buckets.clear();

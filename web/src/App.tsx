@@ -22,6 +22,7 @@ import Meetings from '@/pages/Meetings';
 import Plans from '@/pages/Plans';
 import Zeus from '@/pages/Zeus';
 import Connect from '@/pages/Connect';
+import Authorize from '@/pages/Authorize';
 import { LEGACY_ROUTES, R, stripAppPrefix, zeusTabTarget } from '@/lib/routes';
 
 /**
@@ -232,6 +233,8 @@ export default function App() {
           {/* Aprobar una PC de `zeus setup`: con sesión (si no hay, el login se pinta aquí mismo y al
               entrar sigue en esta dirección), pero sin el chrome del dashboard. */}
           <Route path={R.conectar.slice(1)} element={<Connect />} />
+          {/* Aprobar un conector de claude.ai (OAuth del MCP). Mismo trato que /conectar. */}
+          <Route path={R.autorizar.slice(1)} element={<Authorize />} />
           {dashboardRoutes()}
         </Route>
     </Routes>
